@@ -1,0 +1,43 @@
+{
+  "took": 0.00006103515625,
+  "version": {
+    "core": {
+      "local": {
+        "branch": "master",
+        "hash": "d3bbfea9",
+        "version": "v6.4.1"
+      },
+      "remote": {
+        "hash": "3413768c",
+        "version": "v6.4.2"
+      }
+    },
+    "docker": {
+      "local": "2026.04.0",
+      "remote": "2026.04.1"
+    },
+    "ftl": {
+      "local": {
+        "branch": "master",
+        "date": "2026-04-03 17:41:59 +0100",
+        "hash": "71b6fc62",
+        "version": "v6.6"
+      },
+      "remote": {
+        "hash": "e1b4c1d5",
+        "version": "v6.6.1"
+      }
+    },
+    "web": {
+      "local": {
+        "branch": "master",
+        "hash": "7a17e01c",
+        "version": "v6.5"
+      },
+      "remote": {
+        "hash": "7a17e01c",
+        "version": "v6.5"
+      }
+    }
+  }
+}

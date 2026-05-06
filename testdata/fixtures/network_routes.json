@@ -1,0 +1,94 @@
+{
+  "routes": [
+    {
+      "dst": "default",
+      "family": "inet",
+      "flags": [],
+      "gateway": "172.18.0.1",
+      "oif": "eth0",
+      "protocol": "boot",
+      "scope": "universe",
+      "table": 254,
+      "type": "unicast"
+    },
+    {
+      "dst": "172.18.0.0",
+      "family": "inet",
+      "flags": [],
+      "oif": "eth0",
+      "prefsrc": "172.18.0.2",
+      "protocol": "kernel",
+      "scope": "link",
+      "table": 254,
+      "type": "unicast"
+    },
+    {
+      "dst": "127.0.0.0",
+      "family": "inet",
+      "flags": [],
+      "oif": "lo",
+      "prefsrc": "127.0.0.1",
+      "protocol": "kernel",
+      "scope": "host",
+      "table": 255,
+      "type": "local"
+    },
+    {
+      "dst": "127.0.0.1",
+      "family": "inet",
+      "flags": [],
+      "oif": "lo",
+      "prefsrc": "127.0.0.1",
+      "protocol": "kernel",
+      "scope": "host",
+      "table": 255,
+      "type": "local"
+    },
+    {
+      "dst": "127.255.255.255",
+      "family": "inet",
+      "flags": [],
+      "oif": "lo",
+      "prefsrc": "127.0.0.1",
+      "protocol": "kernel",
+      "scope": "link",
+      "table": 255,
+      "type": "broadcast"
+    },
+    {
+      "dst": "172.18.0.2",
+      "family": "inet",
+      "flags": [],
+      "oif": "eth0",
+      "prefsrc": "172.18.0.2",
+      "protocol": "kernel",
+      "scope": "host",
+      "table": 255,
+      "type": "local"
+    },
+    {
+      "dst": "172.18.255.255",
+      "family": "inet",
+      "flags": [],
+      "oif": "eth0",
+      "prefsrc": "172.18.0.2",
+      "protocol": "kernel",
+      "scope": "link",
+      "table": 255,
+      "type": "broadcast"
+    },
+    {
+      "dst": "::1",
+      "family": "inet6",
+      "flags": [],
+      "oif": "lo",
+      "pref": 0,
+      "priority": 0,
+      "protocol": "kernel",
+      "scope": "universe",
+      "table": 255,
+      "type": "local"
+    }
+  ],
+  "took": 0.001613616943359375
+}
