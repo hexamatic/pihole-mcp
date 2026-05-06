@@ -122,6 +122,16 @@ ci: fmt-check lint test
 release-dry:
     goreleaser release --snapshot --clean
 
+# Preview the release body that will be published for VERSION
+[group('release')]
+release-notes VERSION:
+    @scripts/release-notes.sh {{VERSION}}
+
+# Scaffold a CHANGELOG.md draft entry for VERSION from git log
+[group('release')]
+changelog-draft VERSION:
+    @scripts/changelog-draft.sh {{VERSION}}
+
 # Run the server with HTTP transport (for testing)
 [group('dev')]
 run-http: build

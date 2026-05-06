@@ -16,6 +16,8 @@ Closes #
 
 ## Checklist
 
+- [ ] Added an entry to `CHANGELOG.md` under `[Unreleased]` (or applied the `Skip-Changelog` label for internal-only changes: refactors, tests, CI, dev tooling, no-op dependency bumps)
+- [ ] Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, etc.)
 - [ ] `just check` passes (format, lint, test)
 - [ ] Unit tests added/updated for changed code
 - [ ] Integration tests pass (`just integration`) if API behaviour changed
