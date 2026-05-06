@@ -565,17 +565,19 @@ type FTLdb struct {
 }
 
 // DatabaseInfo is the response from GET /api/info/database.
+//
+// The Pi-hole v6 API returns the fields flat at the top level — no enclosing
+// `database` key — so we decode directly into this struct. The `Unit` field
+// is no longer present in v6 (size is always bytes); we keep it for
+// completeness but it will be empty.
 type DatabaseInfo struct {
-	Database DatabaseDetails `json:"database"`
-	Took     float64         `json:"took"`
-}
-
-// DatabaseDetails contains database size and query count.
-type DatabaseDetails struct {
-	Size    float64 `json:"size"`
-	Unit    string  `json:"unit"`
-	Queries int     `json:"queries"`
-	SQLite  string  `json:"sqlite_version"`
+	Size              float64 `json:"size"`
+	Unit              string  `json:"unit,omitempty"`
+	Queries           int     `json:"queries"`
+	QueriesDisk       int     `json:"queries_disk,omitempty"`
+	SQLite            string  `json:"sqlite_version"`
+	EarliestTimestamp float64 `json:"earliest_timestamp,omitempty"`
+	Took              float64 `json:"took"`
 }
 
 // MessagesResponse is the response from GET /api/info/messages.
@@ -649,6 +651,74 @@ type GatewayEntry struct {
 	Interface string   `json:"interface"`
 	Address   string   `json:"address"`
 	Local     []string `json:"local"`
+}
+
+// NetworkRoutesResponse is the response from GET /api/network/routes.
+type NetworkRoutesResponse struct {
+	Routes []NetworkRoute `json:"routes"`
+	Took   float64        `json:"took"`
+}
+
+// NetworkRoute is a single routing table entry.
+type NetworkRoute struct {
+	Family   string `json:"family"`
+	Scope    string `json:"scope,omitempty"`
+	Src      string `json:"src,omitempty"`
+	Dst      string `json:"dst,omitempty"`
+	Gateway  string `json:"gateway,omitempty"`
+	Dev      string `json:"dev,omitempty"`
+	OIF      string `json:"oif,omitempty"`
+	Protocol string `json:"protocol,omitempty"`
+}
+
+// NetworkInterfacesResponse is the response from GET /api/network/interfaces.
+type NetworkInterfacesResponse struct {
+	Interfaces []NetworkInterface `json:"interfaces"`
+	Took       float64            `json:"took"`
+}
+
+// NetworkInterface describes a network interface and its current state.
+//
+// Field names match the Pi-hole v6 response (see
+// testdata/fixtures/network_interfaces.json). `Speed` is a pointer because
+// the API returns null for interfaces without a meaningful link speed
+// (loopback, tunl0).
+type NetworkInterface struct {
+	Name      string                 `json:"name"`
+	Type      string                 `json:"type,omitempty"`
+	State     string                 `json:"state,omitempty"`
+	Speed     *int                   `json:"speed,omitempty"`
+	Carrier   *bool                  `json:"carrier,omitempty"`
+	Address   string                 `json:"address,omitempty"`
+	Broadcast string                 `json:"broadcast,omitempty"`
+	Flags     []string               `json:"flags,omitempty"`
+	Addresses []NetworkInterfaceAddr `json:"addresses,omitempty"`
+	Stats     *NetworkInterfaceStats `json:"stats,omitempty"`
+}
+
+// NetworkInterfaceAddr is an address bound to an interface.
+type NetworkInterfaceAddr struct {
+	Family    string `json:"family"`
+	Address   string `json:"address"`
+	PrefixLen int    `json:"prefixlen,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+	Local     string `json:"local,omitempty"`
+}
+
+// NetworkInterfaceStats holds traffic counters for an interface. The Pi-hole
+// API returns rx_bytes / tx_bytes as objects with a unit suffix, not raw
+// integers — see testdata/fixtures/network_interfaces.json.
+type NetworkInterfaceStats struct {
+	Bits    int                    `json:"bits,omitempty"`
+	RxBytes *NetworkInterfaceValue `json:"rx_bytes,omitempty"`
+	TxBytes *NetworkInterfaceValue `json:"tx_bytes,omitempty"`
+}
+
+// NetworkInterfaceValue is the {unit, value} envelope used by the
+// network_interfaces stats fields.
+type NetworkInterfaceValue struct {
+	Unit  string  `json:"unit"`
+	Value float64 `json:"value"`
 }
 
 // DHCPLeasesResponse is the response from GET /api/dhcp/leases.

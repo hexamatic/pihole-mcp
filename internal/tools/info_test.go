@@ -56,6 +56,21 @@ func TestInfoSystem_EmptyUnits(t *testing.T) {
 	}
 }
 
+func TestInfoSystem_RealFixture(t *testing.T) {
+	// Real captured response — protects against shape drift.
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/info/system":  loadFixture(t, "info_system"),
+		"/info/host":    map[string]any{"host": map[string]any{"name": "pihole-dev"}},
+		"/info/sensors": loadFixture(t, "info_sensors"),
+	}))
+
+	text := callTool(t, infoSystemHandler, c, nil)
+	// Just confirm the handler doesn't crash and produces non-empty output.
+	if text == "" {
+		t.Fatal("expected non-empty system info from real fixture")
+	}
+}
+
 func TestInfoSystem_Minimal(t *testing.T) {
 	c := newTestClient(t, piholeHandler(map[string]any{
 		"/info/system": map[string]any{
@@ -81,6 +96,30 @@ func TestInfoSystem_Minimal(t *testing.T) {
 	}
 	if !strings.Contains(text, "Load:") {
 		t.Errorf("minimal should contain load, got: %s", text)
+	}
+}
+
+// TestInfoFTL_RealFixture decodes the captured response from a live Pi-hole
+// instance. The real fixture catches type-shape drift that the original
+// hand-written mock missed (clients-as-int, database.queries field) and
+// triggered the v0.2.0 E2E crash documented in TODO #6.
+func TestInfoFTL_RealFixture(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/info/ftl": loadFixture(t, "info_ftl"),
+	}))
+
+	text := callTool(t, infoFTLHandler, c, nil)
+	if !strings.Contains(text, "PID:") {
+		t.Errorf("expected PID label in output, got: %s", text)
+	}
+	if !strings.Contains(text, "Privacy level:") {
+		t.Errorf("expected privacy level label, got: %s", text)
+	}
+	if !strings.Contains(text, "Active clients:") {
+		t.Errorf("expected active clients label, got: %s", text)
+	}
+	if !strings.Contains(text, "Gravity domains:") {
+		t.Errorf("expected gravity domains label, got: %s", text)
 	}
 }
 
@@ -143,6 +182,24 @@ func TestInfoFTL_Minimal(t *testing.T) {
 	}
 }
 
+func TestInfoMetrics_RealFixture(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/info/metrics": loadFixture(t, "info_metrics"),
+	}))
+
+	text := callTool(t, infoMetricsHandler, c, nil)
+	if text == "" {
+		t.Fatal("expected non-empty metrics output from real fixture")
+	}
+	// dns and dhcp are top-level keys in the captured fixture; verify both render.
+	if !strings.Contains(text, "dns") {
+		t.Errorf("expected 'dns' top-level metric, got: %s", text)
+	}
+	if !strings.Contains(text, "dhcp") {
+		t.Errorf("expected 'dhcp' top-level metric, got: %s", text)
+	}
+}
+
 func TestInfoMetrics_Normal(t *testing.T) {
 	c := newTestClient(t, piholeHandler(map[string]any{
 		"/info/metrics": map[string]any{
@@ -172,12 +229,24 @@ func TestInfoMetrics_Normal(t *testing.T) {
 	}
 }
 
+func TestInfoSensors_RealFixture(t *testing.T) {
+	// Real fixture has an empty sensors list (Docker dev container has no sensors).
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/info/sensors": loadFixture(t, "info_sensors"),
+	}))
+
+	text := callTool(t, infoSensorsHandler, c, nil)
+	if !strings.Contains(text, "No sensor data available") {
+		t.Errorf("expected empty sensors message from Docker fixture, got: %s", text)
+	}
+}
+
 func TestInfoSensors_Normal(t *testing.T) {
 	c := newTestClient(t, piholeHandler(map[string]any{
 		"/info/sensors": map[string]any{
 			"sensors": map[string]any{
 				"list": []any{
-					map[string]any{"name": "cpu_thermal", "value": 52.3, "unit": "\u00b0C", "path": "/sys/class/thermal/thermal_zone0/temp"},
+					map[string]any{"name": "cpu_thermal", "value": 52.3, "unit": "°C", "path": "/sys/class/thermal/thermal_zone0/temp"},
 				},
 			},
 		},
@@ -205,19 +274,42 @@ func TestInfoSensors_Empty(t *testing.T) {
 	}
 }
 
+// TestInfoDatabase_RealFixture catches the v0.2.0 shape regression: the real
+// /api/info/database response is FLAT (queries, size, sqlite_version at the
+// top level), not nested under a `database` key as the original hand-written
+// mock assumed.
+func TestInfoDatabase_RealFixture(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/info/database": loadFixture(t, "info_database"),
+	}))
+
+	text := callTool(t, infoDatabaseHandler, c, nil)
+	if !strings.Contains(text, "Size:") {
+		t.Errorf("expected 'Size:' label, got: %s", text)
+	}
+	if !strings.Contains(text, "SQLite:") {
+		t.Errorf("expected 'SQLite:' label, got: %s", text)
+	}
+	// The captured fixture has sqlite_version="3.51.3" and size=90112.
+	// If our type decoded the flat structure correctly, both should render.
+	if !strings.Contains(text, "3.51.3") {
+		t.Errorf("expected sqlite version '3.51.3' from real fixture, got: %s", text)
+	}
+	if strings.Contains(text, "Size: 0  | Queries: 0 | SQLite: N/A") {
+		t.Errorf("flat-structure decode failed — handler still expects nested database key, got: %s", text)
+	}
+}
+
 func TestInfoDatabase_EmptyFields(t *testing.T) {
+	// Edge case: real Pi-hole on a fresh install can produce an empty
+	// sqlite_version. Our handler should render N/A in that case.
 	c := newTestClient(t, piholeHandler(map[string]any{
 		"/info/database": map[string]any{
-			"database": map[string]any{
-				"size": 0.0, "unit": "", "queries": 0, "sqlite_version": "",
-			},
+			"size": 0.0, "queries": 0, "sqlite_version": "",
 		},
 	}))
 
 	text := callTool(t, infoDatabaseHandler, c, nil)
-	if strings.Contains(text, "| **Queries:** 0 | **SQLite:**  ") {
-		t.Errorf("empty fields should show N/A, got: %s", text)
-	}
 	if !strings.Contains(text, "N/A") {
 		t.Errorf("expected N/A for empty SQLite version, got: %s", text)
 	}

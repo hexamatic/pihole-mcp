@@ -146,12 +146,12 @@ func infoDatabaseHandler(c *pihole.Client) server.ToolHandlerFunc {
 			return toolError("get database info", err), nil
 		}
 
-		size := format.SizeWithUnit(db.Database.Size, db.Database.Unit)
-		sqlite := format.ValueOr(db.Database.SQLite, "N/A")
+		size := format.SizeWithUnit(db.Size, db.Unit)
+		sqlite := format.ValueOr(db.SQLite, "N/A")
 
 		return mcp.NewToolResultText(fmt.Sprintf(
 			"**Size:** %s | **Queries:** %s | **SQLite:** %s",
-			size, format.Number(db.Database.Queries), sqlite)), nil
+			size, format.Number(db.Queries), sqlite)), nil
 	}
 }
 

@@ -67,7 +67,7 @@ func TestNetworkDevices_CSV(t *testing.T) {
 	}))
 
 	text := callTool(t, networkDevicesHandler, c, map[string]any{"format": "csv"})
-	if !strings.Contains(text, "MAC,Vendor,IPs,Queries,LastQuery") {
+	if !strings.Contains(text, "ID,MAC,Vendor,IPs,Queries,LastQuery") {
 		t.Errorf("expected CSV headers, got: %s", text)
 	}
 	if !strings.Contains(text, "AA:BB:CC:DD:EE:FF") {
@@ -140,7 +140,7 @@ func TestNetworkGateway_Empty(t *testing.T) {
 
 func TestNetworkInfo_Normal(t *testing.T) {
 	c := newTestClient(t, piholeHandler(map[string]any{
-		"/network/routes":     map[string]any{"routes": []any{map[string]any{"dst": "default", "gateway": "192.168.1.1", "oif": "eth0"}}},
+		"/network/routes":     map[string]any{"routes": []any{map[string]any{"family": "inet", "dst": "default", "gateway": "192.168.1.1", "oif": "eth0"}}},
 		"/network/interfaces": map[string]any{"interfaces": []any{map[string]any{"name": "eth0", "type": "ether", "state": "UP"}}},
 	}))
 
