@@ -1,0 +1,27 @@
+name: Changelog
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  enforce:
+    name: Enforce CHANGELOG.md update
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dangoslen/changelog-enforcer@v3.7.0
+        with:
+          changeLogPath: CHANGELOG.md
+          skipLabels: Skip-Changelog
+          missingUpdateErrorMessage: >-
+            This PR does not update CHANGELOG.md. Add an entry under the
+            [Unreleased] section describing the user-visible change, or apply
+            the 'Skip-Changelog' label if this PR is internal-only (refactor,
+            tests, CI, dev tooling, no-op dependency bump).

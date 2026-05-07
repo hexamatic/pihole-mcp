@@ -29,9 +29,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract release notes from CHANGELOG.md
+        run: scripts/release-notes.sh "${GITHUB_REF_NAME}" > NOTES.md
+
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
-          args: release --clean
+          args: release --clean --release-notes=NOTES.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

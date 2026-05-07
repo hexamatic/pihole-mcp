@@ -57,11 +57,20 @@ changelog:
   sort: asc
   groups:
     - title: Features
-      regexp: "^.*feat"
+      regexp: '(?i)^.*?feat(\([^)]+\))?!?:.+$'
       order: 0
     - title: Bug Fixes
-      regexp: "^.*fix"
+      regexp: '(?i)^.*?fix(\([^)]+\))?!?:.+$'
       order: 1
+    - title: Performance
+      regexp: '(?i)^.*?perf(\([^)]+\))?!?:.+$'
+      order: 2
+    - title: Refactor
+      regexp: '(?i)^.*?refactor(\([^)]+\))?!?:.+$'
+      order: 3
+    - title: Dependencies
+      regexp: '(?i)^.*?(deps|dep|build)(\([^)]+\))?!?:.+$'
+      order: 4
     - title: Other
       order: 999
   filters:
@@ -71,6 +80,15 @@ changelog:
       - "^ci:"
       - "^chore:"
 
+# Release body comes from CHANGELOG.md via scripts/release-notes.sh — see
+# .github/workflows/release.yml. The footer/changelog blocks below only
+# apply when goreleaser runs without --release-notes (snapshot dry-runs and
+# emergency manual releases). mode: keep-existing means a workflow re-run
+# on an already-published tag will not overwrite the body — body amendments
+# go through `gh release edit`, never through a re-run.
 release:
-  draft: true
+  draft: false
   prerelease: auto
+  mode: keep-existing
+  footer: |
+    **Full Changelog**: https://github.com/hexamatic/pihole-mcp/compare/{{ .PreviousTag }}...{{ .Tag }}

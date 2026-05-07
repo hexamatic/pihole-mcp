@@ -102,10 +102,15 @@ dev-logs:
 integration:
     PIHOLE_URL=http://localhost:8081 PIHOLE_PASSWORD=test go test -tags=integration -race -count=1 ./...
 
-# Run E2E test of all 68 tools against local Pi-hole
+# Run E2E test of all tools against local Pi-hole
 [group('dev')]
 e2e: build
     PIHOLE_URL=http://localhost:8081 PIHOLE_PASSWORD=test scripts/e2e-test.sh ./bin/pihole-mcp
+
+# Refresh testdata/fixtures/ from the live dev Pi-hole
+[group('dev')]
+refresh-fixtures:
+    PIHOLE_URL=http://localhost:8081 PIHOLE_PASSWORD=test scripts/refresh-fixtures.sh
 
 # ─── CI ──────────────────────────────────────────────────────────────────────
 
@@ -121,6 +126,16 @@ ci: fmt-check lint test
 [group('release')]
 release-dry:
     goreleaser release --snapshot --clean
+
+# Preview the release body that will be published for VERSION
+[group('release')]
+release-notes VERSION:
+    @scripts/release-notes.sh {{VERSION}}
+
+# Scaffold a CHANGELOG.md draft entry for VERSION from git log
+[group('release')]
+changelog-draft VERSION:
+    @scripts/changelog-draft.sh {{VERSION}}
 
 # Run the server with HTTP transport (for testing)
 [group('dev')]

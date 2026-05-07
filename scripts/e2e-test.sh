@@ -88,6 +88,9 @@ echo ""
 echo "--- History ---"
 call_tool "pihole_history_graph"
 call_tool "pihole_history_clients" '{"count":3}'
+call_tool "pihole_history_database" '{"from":1712300000,"until":1712400000}' "history_database (range)"
+call_tool "pihole_history_database" '{}' "history_database (default 7d)"
+call_tool "pihole_history_database_clients" '{"from":1712300000,"until":1712400000}' "history_database_clients (range)"
 
 echo ""
 echo "--- Domain Search ---"
@@ -135,6 +138,11 @@ call_tool "pihole_network_devices" '{"max_devices":3,"detail":"minimal"}' "netwo
 call_tool "pihole_network_devices" '{"max_devices":3,"format":"csv"}' "network_devices (csv)"
 call_tool "pihole_network_gateway"
 call_tool "pihole_network_info"
+call_tool "pihole_network_routes"
+call_tool "pihole_network_interfaces"
+# pihole_network_delete_device intentionally not exercised against the live
+# instance — deleting an actual device record changes state for subsequent
+# runs. The handler is covered by unit tests in network_test.go.
 
 echo ""
 echo "--- DHCP ---"

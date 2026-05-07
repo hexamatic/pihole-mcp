@@ -10,6 +10,32 @@ pre-commit:
       run: goimports -w {staged_files}
       stage_fixed: true
 
+# Reject commit messages that do not follow Conventional Commits. CI re-runs
+# the same check via wagoid/commitlint-github-action on every PR (see
+# .github/workflows/commitlint.yml) — this hook is the primary enforcement
+# for direct pushes to main, where the PR-only CI workflow does not fire.
+# Allowed types: feat, fix, docs, test, ci, chore, refactor, perf, build,
+# style, revert. Scope is optional, `!` marks breaking changes.
+commit-msg:
+  commands:
+    conventional-commits:
+      run: |
+        head -1 {1} | grep -qE '^(feat|fix|docs|test|ci|chore|refactor|perf|build|style|revert)(\([^)]+\))?!?: .+' || {
+          echo "✗ Commit subject does not follow Conventional Commits."
+          echo ""
+          echo "Format: <type>(<optional scope>): <subject>"
+          echo "Allowed types: feat, fix, docs, test, ci, chore, refactor, perf, build, style, revert"
+          echo ""
+          echo "Examples:"
+          echo "  feat: add pihole_metrics_cache tool"
+          echo "  fix(auth): handle expired sessions on 401"
+          echo "  chore(deps): bump mcp-go from 0.49.0 to 0.50.0"
+          echo "  feat!: rename PIHOLE_HOST to PIHOLE_URL (breaking)"
+          echo ""
+          echo "See https://www.conventionalcommits.org for the full spec."
+          exit 1
+        }
+
 pre-push:
   commands:
     quality:

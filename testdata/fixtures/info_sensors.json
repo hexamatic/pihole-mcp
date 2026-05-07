@@ -1,0 +1,9 @@
+{
+  "sensors": {
+    "cpu_temp": null,
+    "hot_limit": 60,
+    "list": [],
+    "unit": "C"
+  },
+  "took": 0.00038504600524902344
+}
