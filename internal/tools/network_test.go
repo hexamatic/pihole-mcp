@@ -1,8 +1,10 @@
 package tools
 
 import (
+	"net/http"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestNetworkDevices_Normal(t *testing.T) {
@@ -83,6 +85,38 @@ func TestNetworkDevices_Empty(t *testing.T) {
 	text := callTool(t, networkDevicesHandler, c, nil)
 	if text != "No network devices found." {
 		t.Errorf("expected empty message, got: %s", text)
+	}
+}
+
+// TestNetworkDevices_InvalidUTF8Vendor locks in that invalid UTF-8 bytes
+// in the macVendor field do NOT crash the handler. Pi-hole FTL #2868
+// reports that the upstream API can emit non-UTF-8 bytes in this field
+// (corrupted OUI lookup-table rows). Go's encoding/json silently replaces
+// the invalid sequence with U+FFFD during unquoting, so the rendered
+// output contains the replacement character and remains valid UTF-8.
+// This test pins the behaviour so a future stricter decoder swap can't
+// regress it without the maintainer noticing.
+func TestNetworkDevices_InvalidUTF8Vendor(t *testing.T) {
+	// Inject a 0xb0 byte (the exact byte reported in FTL #2868) into the
+	// JSON response body. Cannot go through piholeHandler because that
+	// re-encodes through json.Marshal, which would sanitise on the way out
+	// before the client ever sees it.
+	body := []byte(`{"devices":[{"id":1,"hwaddr":"AA:BB:CC:DD:EE:FF","interface":"eth0","firstSeen":1700000000,"lastQuery":1700000000,"numQueries":50,"macVendor":"Vendor ` + string([]byte{0xb0}) + `Corp","ips":[]}]}`)
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/auth" {
+			writeTestJSON(w, map[string]any{"session": map[string]any{"valid": true, "sid": "test-sid"}})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+
+	text := callTool(t, networkDevicesHandler, c, nil)
+	if !utf8.ValidString(text) {
+		t.Fatalf("rendered output must remain valid UTF-8 even with corrupted vendor bytes, got bytes=%x", []byte(text))
+	}
+	if !strings.Contains(text, "AA:BB:CC:DD:EE:FF") {
+		t.Errorf("expected device to render despite vendor corruption, got: %s", text)
 	}
 }
 
