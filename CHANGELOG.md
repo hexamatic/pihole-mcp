@@ -8,6 +8,10 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ## [Unreleased]
 
+### Dependencies
+
+- `github.com/mark3labs/mcp-go` bumped 0.47.0 → 0.54.0. Brings panic recovery to the SSE message handler, stdio worker, task goroutines, and session hook goroutines; adds a transport-agnostic `Handle` entry point; adds OpenTelemetry server-side tracing hooks; adds `WithStrictInputSchemaDefault`. No breaking changes for our usage — all `server.NewMCPServer`, `server.NewStreamableHTTPServer`, and `server.NewSSEServer` call sites compile and pass tests unchanged.
+
 ## [v0.3.0] - 2026-05-07
 
 ### Highlights
