@@ -8,7 +8,13 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ## [Unreleased]
 
+### Added
+
+- HTTP transport now ships with two security middlewares applied to the `http` and `sse` transports (stdio is unaffected): a per-session token-bucket rate limiter and an Origin/Host validator that protects against DNS-rebinding attacks per the MCP 2025-11-25 spec recommendation. Both are configurable via new environment variables (see Configuration).
+
 ### Dependencies
+
+- `golang.org/x/time` v0.15.0 added as a direct dependency to back the rate-limit token bucket.
 
 - `github.com/mark3labs/mcp-go` bumped 0.47.0 → 0.54.0. Brings panic recovery to the SSE message handler, stdio worker, task goroutines, and session hook goroutines; adds a transport-agnostic `Handle` entry point; adds OpenTelemetry server-side tracing hooks; adds `WithStrictInputSchemaDefault`. No breaking changes for our usage — all `server.NewMCPServer`, `server.NewStreamableHTTPServer`, and `server.NewSSEServer` call sites compile and pass tests unchanged.
 
