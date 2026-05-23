@@ -13,6 +13,7 @@ The release body on GitHub for each tagged version is sourced from the matching 
 - HTTP transport now ships with two security middlewares applied to the `http` and `sse` transports (stdio is unaffected): a per-session token-bucket rate limiter and an Origin/Host validator that protects against DNS-rebinding attacks per the MCP 2025-11-25 spec recommendation. Both are configurable via new environment variables (see Configuration).
 - New `PIHOLE_RATE_LIMIT` env var. Defaults to `120` (requests per minute per session). `0` disables.
 - New `PIHOLE_ALLOWED_ORIGINS` env var. Comma-separated list. Defaults to `localhost,127.0.0.1,[::1]`. The literal `*` disables enforcement (documented as unsafe).
+- Input validation at handler entry for `pihole_domains_*`, `pihole_lists_*`, `pihole_clients_*`, `pihole_groups_*`, and `pihole_config_*` tools. Domain names are checked for RFC 1035 compliance (length, labels, no shell metacharacters); list URLs must parse as http/https/file with a non-empty host or path; comments and free-form names are length-capped. Invalid inputs return a friendly MCP error before any API call is made, instead of surfacing a raw 400 from the Pi-hole server.
 
 ### Changed
 

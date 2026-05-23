@@ -54,6 +54,9 @@ func configGetHandler(c *pihole.Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := "/config"
 		if section := req.GetString("section", ""); section != "" {
+			if err := validateMaxLength("section", section, maxConfigPathLen); err != nil {
+				return mcp.NewToolResultError("Invalid " + err.Error()), nil
+			}
 			path += "/" + section
 		}
 
@@ -131,6 +134,9 @@ func configGetValueHandler(c *pihole.Client) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'element' is required"), nil
 		}
+		if err := validateMaxLength("element", element, maxConfigPathLen); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
 
 		element = strings.ReplaceAll(element, ".", "/")
 		path := "/config/" + element
@@ -171,6 +177,12 @@ func configAddValueHandler(c *pihole.Client) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'value' is required"), nil
 		}
+		if err := validateMaxLength("element", element, maxConfigPathLen); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+		if err := validateMaxLength("value", value, maxCommentLength); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
 
 		element = strings.ReplaceAll(element, ".", "/")
 		path := "/config/" + element + "/" + value
@@ -197,6 +209,12 @@ func configRemoveValueHandler(c *pihole.Client) server.ToolHandlerFunc {
 		value, err := req.RequireString("value")
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'value' is required"), nil
+		}
+		if err := validateMaxLength("element", element, maxConfigPathLen); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+		if err := validateMaxLength("value", value, maxCommentLength); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
 		element = strings.ReplaceAll(element, ".", "/")

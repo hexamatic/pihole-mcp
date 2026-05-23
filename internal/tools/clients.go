@@ -133,8 +133,15 @@ func clientsAddHandler(c *pihole.Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		client, _ := req.RequireString("client")
 
+		if err := validateMaxLength("client", client, maxNameLength); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+
 		body := map[string]any{"client": client}
 		if comment := req.GetString("comment", ""); comment != "" {
+			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
+				return mcp.NewToolResultError("Invalid " + err.Error()), nil
+			}
 			body["comment"] = comment
 		}
 
@@ -151,8 +158,15 @@ func clientsUpdateHandler(c *pihole.Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		client, _ := req.RequireString("client")
 
+		if err := validateMaxLength("client", client, maxNameLength); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+
 		body := make(map[string]any)
 		if comment := req.GetString("comment", ""); comment != "" {
+			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
+				return mcp.NewToolResultError("Invalid " + err.Error()), nil
+			}
 			body["comment"] = comment
 		}
 
@@ -168,6 +182,10 @@ func clientsUpdateHandler(c *pihole.Client) server.ToolHandlerFunc {
 func clientsDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		client, _ := req.RequireString("client")
+
+		if err := validateMaxLength("client", client, maxNameLength); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
 
 		if err := c.Delete(ctx, "/clients/"+client); err != nil {
 			return toolError("delete client", err), nil
