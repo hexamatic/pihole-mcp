@@ -1,5 +1,10 @@
+//go:build !slim
+
 // Package telemetry provides optional OpenTelemetry tracing.
 // Tracing is only enabled when OTEL_EXPORTER_OTLP_ENDPOINT is set.
+// Build with `-tags slim` to strip all OpenTelemetry code paths — this
+// drops the otel/grpc/protobuf dependencies entirely, shrinking the
+// binary by ~5-8MB at the cost of losing OTel support.
 package telemetry
 
 import (
@@ -14,8 +19,8 @@ import (
 )
 
 // Init creates a TracerProvider if OTEL_EXPORTER_OTLP_ENDPOINT is set.
-// Returns nil TracerProvider if tracing is not configured (zero overhead).
-func Init(serviceName, version string) (*sdktrace.TracerProvider, error) {
+// Returns a nil Provider if tracing is not configured (zero overhead).
+func Init(serviceName, version string) (Provider, error) {
 	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
 		return nil, nil
 	}

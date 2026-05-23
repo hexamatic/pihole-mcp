@@ -32,6 +32,11 @@ deps:
 build:
     go build -ldflags="-s -w -X github.com/hexamatic/pihole-mcp/internal/server.Version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" -o bin/pihole-mcp ./cmd/pihole-mcp
 
+# Build the slim binary (no OpenTelemetry; ~45% smaller)
+[group('build')]
+build-slim:
+    go build -tags slim -ldflags="-s -w -X github.com/hexamatic/pihole-mcp/internal/server.Version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" -o bin/pihole-mcp-slim ./cmd/pihole-mcp
+
 # Install to $GOPATH/bin
 [group('build')]
 install:

@@ -20,6 +20,7 @@ The release body on GitHub for each tagged version is sourced from the matching 
 ### Changed
 
 - The `http` and `sse` transports now run inside a `net/http.Server` constructed by `cmd/pihole-mcp/main.go` rather than mcp-go's built-in `.Start()` helper. This is what allows the middleware chain to wrap the MCP handler. Behaviourally identical for clients that respect the existing graceful-shutdown signal handling.
+- New `slim` build tag — `go build -tags slim` (or `just build-slim`) excludes OpenTelemetry support entirely. The slim Linux amd64 binary drops from ~17 MB to ~9 MB stripped (~45% smaller, ~3.5 MB compressed vs ~6 MB). Default builds remain feature-complete with OTel. Users who run a tracing backend keep the standard build; users who don't can opt into the lean binary without losing any other functionality.
 - `pihole_history_graph` / `_history_clients` / `_history_database` / `_history_database_clients` descriptions now lead with the data source ("in-memory" vs "database") and cross-reference each other. Removes the cognitive overhead of working out which tool you want from name alone.
 - `pihole_network_info` description clarified to point users to `pihole_network_routes` / `pihole_network_interfaces` for richer per-route or per-interface detail.
 - `pihole_config_set` is now annotated `openWorldHint: true`. The tool can affect DNS resolution and other services system-wide; the hint surfaces that to MCP clients that gate destructive operations.
