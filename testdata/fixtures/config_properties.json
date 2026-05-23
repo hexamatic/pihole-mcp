@@ -1,0 +1,22 @@
+{
+  "config": {
+    "read_only": [
+      {
+        "key": "misc.readOnly",
+        "reason": "read_only",
+        "description": "Variable can only be set in pihole.toml, not via API"
+      },
+      {
+        "key": "files.pid",
+        "reason": "read_only",
+        "description": "The location of FTL's PID file"
+      },
+      {
+        "key": "files.database",
+        "reason": "env_var",
+        "description": "The location of FTL's long-term query database (overridden by FTLCONF_files_database)"
+      }
+    ]
+  },
+  "took": 0.000123
+}

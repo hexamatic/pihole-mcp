@@ -613,6 +613,24 @@ type ConfigResponse struct {
 	Took   float64        `json:"took"`
 }
 
+// ConfigPropertiesResponse is the response from GET /api/config/_properties.
+// Lists configuration keys that are read-only (set via pihole.toml or
+// environment variable) and cannot be modified through the API. Added in
+// FTL v6.6.1 — calls against earlier versions return 404.
+type ConfigPropertiesResponse struct {
+	Config struct {
+		ReadOnly []ReadOnlyProperty `json:"read_only"`
+	} `json:"config"`
+	Took float64 `json:"took"`
+}
+
+// ReadOnlyProperty describes a single read-only config key.
+type ReadOnlyProperty struct {
+	Key         string `json:"key"`
+	Reason      string `json:"reason"`
+	Description string `json:"description"`
+}
+
 // NetworkDevicesResponse is the response from GET /api/network/devices.
 type NetworkDevicesResponse struct {
 	Devices []NetworkDevice `json:"devices"`

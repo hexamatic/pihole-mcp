@@ -130,6 +130,7 @@ call_tool "pihole_config_get" '{"detail":"minimal"}' "config_get (minimal)"
 call_tool "pihole_config_get_value" '{"element":"dns.upstreams"}' "config_get_value (dns.upstreams)"
 call_tool "pihole_config_add_value" '{"element":"dns.upstreams","value":"127.0.0.99#53","restart":false}' "config_add_value (round-trip add)"
 call_tool "pihole_config_remove_value" '{"element":"dns.upstreams","value":"127.0.0.99#53","restart":false}' "config_remove_value (round-trip remove)"
+call_tool "pihole_config_properties" '{}' "config_properties (FTL v6.6.1+)"
 
 echo ""
 echo "--- Network ---"
