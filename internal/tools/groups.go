@@ -87,8 +87,15 @@ func groupsAddHandler(c *pihole.Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		name, _ := req.RequireString("name")
 
+		if err := validateMaxLength("name", name, maxNameLength); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+
 		body := map[string]any{"name": name}
 		if comment := req.GetString("comment", ""); comment != "" {
+			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
+				return mcp.NewToolResultError("Invalid " + err.Error()), nil
+			}
 			body["comment"] = comment
 		}
 		if !req.GetBool("enabled", true) {
@@ -108,11 +115,21 @@ func groupsUpdateHandler(c *pihole.Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		name, _ := req.RequireString("name")
 
+		if err := validateMaxLength("name", name, maxNameLength); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+
 		body := make(map[string]any)
 		if newName := req.GetString("new_name", ""); newName != "" {
+			if err := validateMaxLength("new_name", newName, maxNameLength); err != nil {
+				return mcp.NewToolResultError("Invalid " + err.Error()), nil
+			}
 			body["name"] = newName
 		}
 		if comment := req.GetString("comment", ""); comment != "" {
+			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
+				return mcp.NewToolResultError("Invalid " + err.Error()), nil
+			}
 			body["comment"] = comment
 		}
 		if enabled := req.GetBool("enabled", true); !enabled {
@@ -131,6 +148,10 @@ func groupsUpdateHandler(c *pihole.Client) server.ToolHandlerFunc {
 func groupsDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		name, _ := req.RequireString("name")
+
+		if err := validateMaxLength("name", name, maxNameLength); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
 
 		if err := c.Delete(ctx, "/groups/"+name); err != nil {
 			return toolError("delete group", err), nil

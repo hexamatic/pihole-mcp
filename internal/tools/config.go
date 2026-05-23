@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hexamatic/pihole-mcp/internal/format"
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -21,9 +22,10 @@ func RegisterConfig(s *server.MCPServer, c *pihole.Client) {
 	), configGetHandler(c))
 
 	addTool(s, mcp.NewTool("pihole_config_set",
-		mcp.WithDescription("Modify Pi-hole configuration. Provide nested JSON properties to change. Changes take effect immediately."),
+		mcp.WithDescription("Modify Pi-hole configuration. Provide nested JSON properties to change. Changes take effect immediately and can affect DNS behaviour system-wide."),
 		mcp.WithString("config", mcp.Required(), mcp.Description("JSON config object, e.g. {\"dns\":{\"blocking\":{\"active\":true}}}")),
 		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(true),
 	), configSetHandler(c))
 
 	addTool(s, mcp.NewTool("pihole_config_get_value",
@@ -48,12 +50,21 @@ func RegisterConfig(s *server.MCPServer, c *pihole.Client) {
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
 	), configRemoveValueHandler(c))
+
+	addTool(s, mcp.NewTool("pihole_config_properties",
+		mcp.WithDescription("List Pi-hole config keys that are read-only — set via pihole.toml or env var, not modifiable through the API. Use after a pihole_config_set error to confirm whether a key is intentionally locked."),
+		formatParam,
+		mcp.WithReadOnlyHintAnnotation(true),
+	), configPropertiesHandler(c))
 }
 
 func configGetHandler(c *pihole.Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path := "/config"
 		if section := req.GetString("section", ""); section != "" {
+			if err := validateMaxLength("section", section, maxConfigPathLen); err != nil {
+				return mcp.NewToolResultError("Invalid " + err.Error()), nil
+			}
 			path += "/" + section
 		}
 
@@ -131,6 +142,9 @@ func configGetValueHandler(c *pihole.Client) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'element' is required"), nil
 		}
+		if err := validateMaxLength("element", element, maxConfigPathLen); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
 
 		element = strings.ReplaceAll(element, ".", "/")
 		path := "/config/" + element
@@ -171,6 +185,12 @@ func configAddValueHandler(c *pihole.Client) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'value' is required"), nil
 		}
+		if err := validateMaxLength("element", element, maxConfigPathLen); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+		if err := validateMaxLength("value", value, maxCommentLength); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
 
 		element = strings.ReplaceAll(element, ".", "/")
 		path := "/config/" + element + "/" + value
@@ -198,6 +218,12 @@ func configRemoveValueHandler(c *pihole.Client) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'value' is required"), nil
 		}
+		if err := validateMaxLength("element", element, maxConfigPathLen); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+		if err := validateMaxLength("value", value, maxCommentLength); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
 
 		element = strings.ReplaceAll(element, ".", "/")
 		path := "/config/" + element + "/" + value
@@ -211,5 +237,35 @@ func configRemoveValueHandler(c *pihole.Client) server.ToolHandlerFunc {
 		}
 
 		return mcp.NewToolResultText(fmt.Sprintf("**Removed** `%s` from `%s`.", value, element)), nil
+	}
+}
+
+func configPropertiesHandler(c *pihole.Client) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var result pihole.ConfigPropertiesResponse
+		if err := c.Get(ctx, "/config/_properties", &result); err != nil {
+			return toolError("list config properties (requires Pi-hole FTL v6.6.1+)", err), nil
+		}
+
+		ros := result.Config.ReadOnly
+		if len(ros) == 0 {
+			return mcp.NewToolResultText("No read-only config keys reported."), nil
+		}
+
+		if wantCSV(req) {
+			headers := []string{"Key", "Reason", "Description"}
+			rows := make([][]string, 0, len(ros))
+			for _, p := range ros {
+				rows = append(rows, []string{p.Key, p.Reason, p.Description})
+			}
+			return mcp.NewToolResultText(format.CSV(headers, rows)), nil
+		}
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "**%d read-only config keys:**\n", len(ros))
+		for _, p := range ros {
+			fmt.Fprintf(&b, "- `%s` (%s) — %s\n", p.Key, p.Reason, p.Description)
+		}
+		return mcp.NewToolResultText(b.String()), nil
 	}
 }

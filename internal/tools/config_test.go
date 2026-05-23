@@ -167,3 +167,48 @@ func TestConfigRemoveValue_Success(t *testing.T) {
 		t.Errorf("expected value in output, got: %s", text)
 	}
 }
+
+func TestConfigProperties_Fixture(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/config/_properties": loadFixture(t, "config_properties"),
+	}))
+
+	text := callTool(t, configPropertiesHandler, c, nil)
+	if !strings.Contains(text, "3 read-only") {
+		t.Errorf("expected count header in output, got: %s", text)
+	}
+	if !strings.Contains(text, "misc.readOnly") {
+		t.Errorf("expected misc.readOnly key in output, got: %s", text)
+	}
+	if !strings.Contains(text, "env_var") {
+		t.Errorf("expected env_var reason in output, got: %s", text)
+	}
+}
+
+func TestConfigProperties_CSV(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/config/_properties": loadFixture(t, "config_properties"),
+	}))
+
+	text := callTool(t, configPropertiesHandler, c, map[string]any{"format": "csv"})
+	if !strings.Contains(text, "Key,Reason,Description") {
+		t.Errorf("expected CSV header, got: %s", text)
+	}
+	if !strings.Contains(text, "misc.readOnly,read_only,") {
+		t.Errorf("expected CSV row for misc.readOnly, got: %s", text)
+	}
+}
+
+func TestConfigProperties_Empty(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/config/_properties": map[string]any{
+			"config": map[string]any{"read_only": []any{}},
+			"took":   0.0,
+		},
+	}))
+
+	text := callTool(t, configPropertiesHandler, c, nil)
+	if !strings.Contains(text, "No read-only config keys reported") {
+		t.Errorf("expected empty-state message, got: %s", text)
+	}
+}

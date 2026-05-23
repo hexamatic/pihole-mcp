@@ -15,25 +15,25 @@ import (
 // RegisterHistory registers activity history tools.
 func RegisterHistory(s *server.MCPServer, c *pihole.Client) {
 	addTool(s, mcp.NewTool("pihole_history_graph",
-		mcp.WithDescription("Recent in-memory activity over time: total, cached, blocked, and forwarded per slot. Covers the last ~24 hours of FTL memory."),
+		mcp.WithDescription("In-memory query activity (FTL memory, last ~24h): total/cached/blocked/forwarded per slot. For arbitrary date ranges, use pihole_history_database."),
 		mcp.WithReadOnlyHintAnnotation(true),
 	), historyGraphHandler(c))
 
 	addTool(s, mcp.NewTool("pihole_history_clients",
-		mcp.WithDescription("Recent in-memory per-client query activity for top N clients (last ~24 hours of FTL memory)."),
+		mcp.WithDescription("In-memory per-client query activity (FTL memory, last ~24h). For arbitrary date ranges, use pihole_history_database_clients."),
 		mcp.WithNumber("count", mcp.Description("Max clients to return (default 10, 0=all).")),
 		mcp.WithReadOnlyHintAnnotation(true),
 	), historyClientsHandler(c))
 
 	addTool(s, mcp.NewTool("pihole_history_database",
-		mcp.WithDescription("Long-term query activity from the Pi-hole database over a date range. Returns time-bucketed totals for total, cached, blocked, and forwarded queries."),
+		mcp.WithDescription("Long-term query activity from the FTL database (durable, arbitrary date range). Returns time-bucketed totals for total/cached/blocked/forwarded queries."),
 		mcp.WithNumber("from", mcp.Description("Start Unix timestamp (default: 7 days ago).")),
 		mcp.WithNumber("until", mcp.Description("End Unix timestamp (default: now).")),
 		mcp.WithReadOnlyHintAnnotation(true),
 	), historyDatabaseHandler(c))
 
 	addTool(s, mcp.NewTool("pihole_history_database_clients",
-		mcp.WithDescription("Long-term per-client query activity from the Pi-hole database over a date range."),
+		mcp.WithDescription("Long-term per-client query activity from the FTL database (durable, arbitrary date range)."),
 		mcp.WithNumber("from", mcp.Description("Start Unix timestamp (default: 7 days ago).")),
 		mcp.WithNumber("until", mcp.Description("End Unix timestamp (default: now).")),
 		mcp.WithReadOnlyHintAnnotation(true),

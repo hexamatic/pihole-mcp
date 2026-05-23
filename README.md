@@ -6,7 +6,7 @@
 
 A production-grade [MCP](https://modelcontextprotocol.io/) server for [Pi-hole](https://pi-hole.net/) v6.
 
-**68 tools** | **9 prompts** | **5 resources** | Single Go binary | 9MB Docker image
+**74 tools** | **9 prompts** | **5 resources** | Single Go binary | ~6MB compressed (slim: ~3.5MB)
 
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/hexamatic/pihole-mcp)](https://goreportcard.com/report/github.com/hexamatic/pihole-mcp)
@@ -61,8 +61,12 @@ Pre-built binaries for Linux, macOS, and Windows (amd64 and arm64) are available
 | `PIHOLE_URL` | Yes | — | Pi-hole base URL (e.g. `http://192.168.1.2`) |
 | `PIHOLE_PASSWORD` | Yes | — | Admin password or [application password](https://docs.pi-hole.net/api/auth/) |
 | `PIHOLE_REQUEST_TIMEOUT` | No | `30s` | HTTP request timeout |
+| `PIHOLE_RATE_LIMIT` | No | `120` | Per-session requests-per-minute cap on the HTTP/SSE transports. `0` disables. |
+| `PIHOLE_ALLOWED_ORIGINS` | No | `localhost,127.0.0.1,[::1]` | Comma-separated Origin/Host allowlist for HTTP/SSE transports. The literal `*` disables enforcement (unsafe). |
 
 Application passwords are recommended for automation — they bypass TOTP 2FA and can be revoked independently.
+
+`PIHOLE_RATE_LIMIT` and `PIHOLE_ALLOWED_ORIGINS` only apply to the `http` and `sse` transports; stdio is a single-process, single-user channel by definition and isn't gated.
 
 ## Client Setup
 
@@ -277,6 +281,8 @@ Useful when you don't have Go installed or want to run the server on a remote ho
 | `pihole_info_messages` | FTL diagnostic messages |
 | `pihole_search_domains` | Cross-list domain search |
 | `pihole_config_get/set` | Read/modify Pi-hole configuration |
+| `pihole_config_get_value/add_value/remove_value` | Granular dotted-path config access |
+| `pihole_config_properties` | List read-only config keys (Pi-hole v6.6.1+) |
 
 ### Actions and Network
 | Tool | Description |
@@ -295,7 +301,7 @@ Useful when you don't have Go installed or want to run the server on a remote ho
 Most tools accept optional parameters for controlling output:
 
 - **`detail`** (`minimal` | `normal` | `full`) — Controls response depth. Default: `normal`. Use `minimal` for one-line summaries, `full` for complete API data.
-- **`format`** (`text` | `csv`) — Output format for tabular data. Default: `text`. CSV saves ~29% tokens.
+- **`format`** (`text` | `csv`) — Output format for tabular data. Default: `text`. CSV saves ~29% tokens. Available on `pihole_domains_list`, `pihole_lists_list`, `pihole_clients_list`, `pihole_queries_search`, `pihole_network_devices`, `pihole_stats_top_domains`, `pihole_stats_top_clients`, `pihole_stats_upstreams`, `pihole_stats_query_types`, `pihole_stats_recent_blocked`, `pihole_stats_database_top_domains`, `pihole_stats_database_top_clients`, `pihole_stats_database_upstreams`, `pihole_dhcp_leases`, and `pihole_config_properties`.
 
 ## Prompts
 
@@ -327,6 +333,28 @@ pihole-mcp -transport http -address localhost:8080
 pihole-mcp -transport sse -address localhost:8080
 ```
 
+### Security (HTTP and SSE transports)
+
+The `http` and `sse` transports apply two security middlewares to every request, in line with the MCP 2025-11-25 spec's DNS-rebinding protection guidance. stdio is unaffected (single-process, single-user).
+
+- **Origin and Host validation.** Both headers must resolve to a host in `PIHOLE_ALLOWED_ORIGINS` (default loopback only). Missing `Origin` is allowed for non-browser MCP clients. Mismatches return HTTP 403. To expose pihole-mcp on a LAN, extend the allowlist:
+
+  ```bash
+  export PIHOLE_ALLOWED_ORIGINS="localhost,127.0.0.1,[::1],pihole-mcp.lan"
+  ```
+
+  The literal `*` disables enforcement entirely — only use it if you're behind a reverse proxy doing its own access control.
+
+- **Per-session rate limiting.** A token bucket keyed by `Mcp-Session-Id` (fallback to client IP) caps requests at `PIHOLE_RATE_LIMIT` per minute (default `120`, burst `max(120/4, 30)`). Throttled requests return HTTP 429 with `Retry-After: 1`. `0` disables.
+
+  ```bash
+  # Tighter limit for a small fleet
+  export PIHOLE_RATE_LIMIT=60
+
+  # Disable (only when running behind a proxy with its own rate limit)
+  export PIHOLE_RATE_LIMIT=0
+  ```
+
 ### OpenTelemetry
 
 Tracing is opt-in. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable:
@@ -337,6 +365,16 @@ pihole-mcp
 ```
 
 All tool calls are automatically traced with tool name, duration, and error status.
+
+If you don't need tracing, you can build a slim binary that strips the OpenTelemetry SDK, gRPC, protobuf, and grpc-gateway dependencies entirely (~45% smaller — from 17 MB to 9 MB stripped, 6 MB to 3.5 MB compressed):
+
+```bash
+just build-slim
+# or
+go build -tags slim -o bin/pihole-mcp-slim ./cmd/pihole-mcp
+```
+
+The slim binary is functionally identical apart from `OTEL_EXPORTER_OTLP_ENDPOINT` being ignored.
 
 ## Development
 

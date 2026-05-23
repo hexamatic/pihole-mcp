@@ -67,8 +67,35 @@ capture "info_system"   "/api/info/system"
 capture "info_database" "/api/info/database"
 capture "info_version"  "/api/info/version"
 
-# Stats summary — used by the daily_report and security_audit prompts.
-capture "stats_summary" "/api/stats/summary"
+# Stats family — covers the read paths exercised by stats_test.go fixtures.
+capture "stats_summary"        "/api/stats/summary"
+capture "stats_top_domains"    "/api/stats/top_domains"
+capture "stats_top_clients"    "/api/stats/top_clients"
+capture "stats_upstreams"      "/api/stats/upstreams"
+capture "stats_query_types"    "/api/stats/query_types"
+capture "stats_recent_blocked" "/api/stats/recent_blocked?count=10"
+
+# Stats database family — long-term DB lookups, windowed.
+capture "stats_database_top_domains"  "/api/stats/database/top_domains?from=$DAY_AGO&until=$HOUR_START"
+capture "stats_database_top_clients"  "/api/stats/database/top_clients?from=$DAY_AGO&until=$HOUR_START"
+capture "stats_database_upstreams"    "/api/stats/database/upstreams?from=$DAY_AGO&until=$HOUR_START"
+capture "stats_database_query_types"  "/api/stats/database/query_types?from=$DAY_AGO&until=$HOUR_START"
+
+# Config properties — new in Pi-hole v6.6.1. On older dev Pi-holes the
+# endpoint may exist but return an empty config object, which would mask
+# the realistic shape (the unit test asserts on read_only entries). We
+# skip the capture if the response has no read_only entries so the
+# hand-curated reference fixture stays in place.
+TMP_PROPS="$(mktemp)"
+if curl -fsS "$PIHOLE_URL/api/config/_properties" -H "X-FTL-SID: $SID" \
+    | jq -S '.' > "$TMP_PROPS" 2>/dev/null \
+    && [ "$(jq '.config.read_only | length // 0' "$TMP_PROPS")" -gt 0 ]; then
+    mv "$TMP_PROPS" "$FIXTURES_DIR/config_properties.json"
+    echo "  -> config_properties (/api/config/_properties)"
+else
+    rm -f "$TMP_PROPS"
+    echo "  -> config_properties (skipped — endpoint empty or missing on this Pi-hole version)"
+fi
 
 # Auth sessions — the security_audit prompt entry point.
 capture "auth_sessions" "/api/auth/sessions"

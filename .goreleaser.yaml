@@ -7,7 +7,11 @@ before:
     - go mod tidy
 
 builds:
-  - main: ./cmd/pihole-mcp
+  # Default build — includes OpenTelemetry support. This is what users get
+  # via `go install`, the standard release tarballs, and the unsuffixed
+  # Docker tags.
+  - id: pihole-mcp
+    main: ./cmd/pihole-mcp
     binary: pihole-mcp
     env:
       - CGO_ENABLED=0
@@ -22,8 +26,34 @@ builds:
       - -s -w
       - -X github.com/hexamatic/pihole-mcp/internal/server.Version={{.Version}}
 
+  # Slim build — strips OpenTelemetry deps via the `slim` build tag. ~45%
+  # smaller binary (17 MB → 9 MB on linux/amd64, 6 MB → 3.5 MB compressed).
+  # Functionally identical aside from OTEL_EXPORTER_OTLP_ENDPOINT being a
+  # no-op. Distributed alongside the default build for users who want a
+  # leaner footprint (resource-constrained homelabs, no-tracing setups).
+  - id: pihole-mcp-slim
+    main: ./cmd/pihole-mcp
+    binary: pihole-mcp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    tags:
+      - slim
+    ldflags:
+      - -s -w
+      - -X github.com/hexamatic/pihole-mcp/internal/server.Version={{.Version}}
+
 archives:
-  - formats:
+  - id: default
+    ids:
+      - pihole-mcp
+    formats:
       - tar.gz
     format_overrides:
       - goos: windows
@@ -34,12 +64,53 @@ archives:
       - LICENSE
       - README.md
 
+  - id: slim
+    ids:
+      - pihole-mcp-slim
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}-slim_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
 dockers_v2:
-  - images:
+  # Default Docker image: ghcr.io/hexamatic/pihole-mcp:{version} + :latest.
+  # The :latest tag only moves on stable releases — prereleases (any tag
+  # detected as prerelease by `release.prerelease: auto`, e.g. -rc1, -beta)
+  # publish their version tag only, so existing :latest users don't get
+  # auto-bumped to an unstable build.
+  - id: pihole-mcp-default-docker
+    ids:
+      - pihole-mcp
+    images:
       - "ghcr.io/hexamatic/pihole-mcp"
     tags:
       - "{{ .Version }}"
-      - latest
+      - '{{ if not .Prerelease }}latest{{ end }}'
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    build_args:
+      VERSION: "{{ .Version }}"
+      COMMIT: "{{ .FullCommit }}"
+      DATE: "{{ .Date }}"
+    dockerfile: Dockerfile.goreleaser
+
+  # Slim Docker image: ghcr.io/hexamatic/pihole-mcp:{version}-slim +
+  # :latest-slim. Same prerelease guard as the default image.
+  - id: pihole-mcp-slim-docker
+    ids:
+      - pihole-mcp-slim
+    images:
+      - "ghcr.io/hexamatic/pihole-mcp"
+    tags:
+      - "{{ .Version }}-slim"
+      - '{{ if not .Prerelease }}latest-slim{{ end }}'
     platforms:
       - linux/amd64
       - linux/arm64

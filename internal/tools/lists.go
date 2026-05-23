@@ -111,8 +111,15 @@ func listsAddHandler(c *pihole.Client) server.ToolHandlerFunc {
 		address, _ := req.RequireString("address")
 		t, _ := req.RequireString("type")
 
+		if err := validateURL(address); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid address: %v", err)), nil
+		}
+
 		body := map[string]any{"address": address}
 		if comment := req.GetString("comment", ""); comment != "" {
+			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
+				return mcp.NewToolResultError("Invalid " + err.Error()), nil
+			}
 			body["comment"] = comment
 		}
 		if !req.GetBool("enabled", true) {
@@ -134,8 +141,15 @@ func listsUpdateHandler(c *pihole.Client) server.ToolHandlerFunc {
 		address, _ := req.RequireString("address")
 		t, _ := req.RequireString("type")
 
+		if err := validateURL(address); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid address: %v", err)), nil
+		}
+
 		body := make(map[string]any)
 		if comment := req.GetString("comment", ""); comment != "" {
+			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
+				return mcp.NewToolResultError("Invalid " + err.Error()), nil
+			}
 			body["comment"] = comment
 		}
 		if enabled := req.GetBool("enabled", true); !enabled {
@@ -157,6 +171,10 @@ func listsDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		address, _ := req.RequireString("address")
 		t, _ := req.RequireString("type")
+
+		if err := validateURL(address); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid address: %v", err)), nil
+		}
 
 		path := "/lists/" + address + "?type=" + t
 		if err := c.Delete(ctx, path); err != nil {

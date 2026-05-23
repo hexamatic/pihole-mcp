@@ -32,6 +32,7 @@ func New(client *pihole.Client) *server.MCPServer {
 				"For time-range queries, use pihole_stats_database_* tools with from/until timestamps. "+
 				"pihole_info_ftl provides dnsmasq-internal metrics not available in pihole_info_system. "+
 				"When adding multiple upstream DNS servers, use pihole_config_add_value with restart=false for all but the last change. "+
+				"If a pihole_config_set call is rejected as read-only, run pihole_config_properties to confirm which keys are locked by pihole.toml or env vars. "+
 				"Tools accept optional 'detail' (minimal/normal/full) and 'format' (text/csv) parameters.",
 		),
 	)

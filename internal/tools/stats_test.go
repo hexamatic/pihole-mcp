@@ -191,3 +191,172 @@ func TestStatsDatabaseQueryTypes_Normal(t *testing.T) {
 		t.Errorf("expected query type MX, got: %s", text)
 	}
 }
+
+func TestStatsUpstreams_CSV(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/upstreams": map[string]any{
+			"upstreams": []any{
+				map[string]any{"name": "Cloudflare", "ip": "1.1.1.1", "port": 53, "count": 1500,
+					"statistics": map[string]any{"response": 12.5}},
+			},
+			"forwarded_queries": 1500,
+			"total_queries":     5000,
+		},
+	}))
+
+	text := callTool(t, statsUpstreamsHandler, c, map[string]any{"format": "csv"})
+	if !strings.Contains(text, "Name,IP,Port,Queries,AvgResponseMs") {
+		t.Errorf("CSV should have header row, got: %s", text)
+	}
+	if !strings.Contains(text, "Cloudflare,1.1.1.1,53,") {
+		t.Errorf("CSV should contain upstream row, got: %s", text)
+	}
+}
+
+func TestStatsQueryTypes_CSV(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/query_types": map[string]any{
+			"types": map[string]any{"A": 4000, "AAAA": 800},
+		},
+	}))
+
+	text := callTool(t, statsQueryTypesHandler, c, map[string]any{"format": "csv"})
+	if !strings.Contains(text, "Type,Count") {
+		t.Errorf("CSV should have header row, got: %s", text)
+	}
+	if !strings.Contains(text, "A,") {
+		t.Errorf("CSV should contain type A, got: %s", text)
+	}
+}
+
+func TestStatsRecentBlocked_CSV(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/recent_blocked": map[string]any{
+			"blocked": []any{"ads.example.com", "tracker.com"},
+		},
+	}))
+
+	text := callTool(t, statsRecentBlockedHandler, c, map[string]any{"format": "csv"})
+	if !strings.Contains(text, "Rank,Domain") {
+		t.Errorf("CSV should have header row, got: %s", text)
+	}
+	if !strings.Contains(text, "1,ads.example.com") {
+		t.Errorf("CSV should contain ranked rows, got: %s", text)
+	}
+}
+
+func TestStatsDatabaseUpstreams_CSV(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/database/upstreams": map[string]any{
+			"upstreams": []any{
+				map[string]any{"name": "Quad9", "ip": "9.9.9.9", "port": 53, "count": 2000,
+					"statistics": map[string]any{"response": 18.0}},
+			},
+			"forwarded_queries": 2000,
+			"total_queries":     6000,
+		},
+	}))
+
+	text := callTool(t, statsDatabaseUpstreamsHandler, c, map[string]any{"format": "csv"})
+	if !strings.Contains(text, "Name,IP,Port,Queries,AvgResponseMs") {
+		t.Errorf("CSV should have header row, got: %s", text)
+	}
+	if !strings.Contains(text, "Quad9,9.9.9.9,53,") {
+		t.Errorf("CSV should contain upstream row, got: %s", text)
+	}
+}
+
+// Real-fixture tests below — protect against Pi-hole API shape drift by
+// running the handler against a captured response from the live dev
+// instance. Hand-written mocks above continue to cover specific value
+// assertions and edge cases the live fixture can't synthesise.
+
+func TestStatsSummary_RealFixture(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/summary": loadFixture(t, "stats_summary"),
+	}))
+	text := callTool(t, statsSummaryHandler, c, nil)
+	if text == "" {
+		t.Fatal("expected non-empty stats summary from real fixture")
+	}
+}
+
+func TestStatsTopDomains_RealFixture(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/top_domains": loadFixture(t, "stats_top_domains"),
+	}))
+	text := callTool(t, statsTopDomainsHandler, c, nil)
+	if text == "" {
+		t.Fatal("expected non-empty top_domains output from real fixture")
+	}
+}
+
+func TestStatsTopClients_RealFixture(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/top_clients": loadFixture(t, "stats_top_clients"),
+	}))
+	text := callTool(t, statsTopClientsHandler, c, nil)
+	if text == "" {
+		t.Fatal("expected non-empty top_clients output from real fixture")
+	}
+}
+
+func TestStatsUpstreams_RealFixture(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/upstreams": loadFixture(t, "stats_upstreams"),
+	}))
+	text := callTool(t, statsUpstreamsHandler, c, nil)
+	if text == "" {
+		t.Fatal("expected non-empty upstreams output from real fixture")
+	}
+}
+
+func TestStatsQueryTypes_RealFixture(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/query_types": loadFixture(t, "stats_query_types"),
+	}))
+	text := callTool(t, statsQueryTypesHandler, c, nil)
+	if text == "" {
+		t.Fatal("expected non-empty query_types output from real fixture")
+	}
+}
+
+func TestStatsRecentBlocked_RealFixture(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/recent_blocked": loadFixture(t, "stats_recent_blocked"),
+	}))
+	text := callTool(t, statsRecentBlockedHandler, c, nil)
+	if text == "" {
+		t.Fatal("expected non-empty recent_blocked output from real fixture")
+	}
+}
+
+func TestStatsDatabaseTopDomains_RealFixture(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/database/top_domains": loadFixture(t, "stats_database_top_domains"),
+	}))
+	text := callTool(t, statsDatabaseTopDomainsHandler, c, nil)
+	if text == "" {
+		t.Fatal("expected non-empty database top_domains output from real fixture")
+	}
+}
+
+func TestStatsDatabaseUpstreams_RealFixture(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/database/upstreams": loadFixture(t, "stats_database_upstreams"),
+	}))
+	text := callTool(t, statsDatabaseUpstreamsHandler, c, nil)
+	if text == "" {
+		t.Fatal("expected non-empty database upstreams output from real fixture")
+	}
+}
+
+func TestStatsDatabaseQueryTypes_RealFixture(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/database/query_types": loadFixture(t, "stats_database_query_types"),
+	}))
+	text := callTool(t, statsDatabaseQueryTypesHandler, c, nil)
+	if text == "" {
+		t.Fatal("expected non-empty database query_types output from real fixture")
+	}
+}

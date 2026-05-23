@@ -56,6 +56,29 @@ func TestDHCPLeases_Empty(t *testing.T) {
 	}
 }
 
+func TestDHCPLeases_CSV(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/dhcp/leases": map[string]any{
+			"leases": []any{
+				map[string]any{
+					"ip":      "192.168.1.42",
+					"name":    "kid-tablet",
+					"hwaddr":  "AA:BB:CC:DD:EE:FF",
+					"expires": 1777608098,
+				},
+			},
+		},
+	}))
+
+	text := callTool(t, dhcpLeasesHandler, c, map[string]any{"format": "csv"})
+	if !strings.Contains(text, "IP,Hostname,MAC,Expires") {
+		t.Errorf("CSV should have header row, got: %s", text)
+	}
+	if !strings.Contains(text, "192.168.1.42,kid-tablet,AA:BB:CC:DD:EE:FF,") {
+		t.Errorf("CSV should contain lease row, got: %s", text)
+	}
+}
+
 func TestDHCPDeleteLease_Success(t *testing.T) {
 	c := newTestClient(t, piholeHandler(map[string]any{
 		"/dhcp/leases/192.168.1.10": nil,

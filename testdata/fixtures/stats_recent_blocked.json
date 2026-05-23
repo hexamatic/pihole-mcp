@@ -1,0 +1,9 @@
+{
+  "blocked": [
+    "adservice.google.com",
+    "google-analytics.com",
+    "googleads.g.doubleclick.net",
+    "doubleclick.net"
+  ],
+  "took": 0.000029325485229492188
+}

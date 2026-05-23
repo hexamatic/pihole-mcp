@@ -3,19 +3,27 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/hexamatic/pihole-mcp/internal/config"
+	"github.com/hexamatic/pihole-mcp/internal/middleware"
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	piholeserver "github.com/hexamatic/pihole-mcp/internal/server"
 	"github.com/hexamatic/pihole-mcp/internal/telemetry"
 	"github.com/mark3labs/mcp-go/server"
+)
+
+const (
+	httpReadHeaderTimeout = 10 * time.Second
+	shutdownGracePeriod   = 5 * time.Second
 )
 
 func main() {
@@ -54,7 +62,7 @@ func run(transport, address string) error {
 	}
 	if tp != nil {
 		defer func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), shutdownGracePeriod)
 			defer cancel()
 			_ = tp.Shutdown(ctx)
 		}()
@@ -65,42 +73,51 @@ func run(transport, address string) error {
 		return server.ServeStdio(srv)
 
 	case "http":
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer cancel()
-
-		httpSrv := server.NewStreamableHTTPServer(srv)
-		log.Printf("starting HTTP transport on %s", address)
-
-		go func() {
-			<-ctx.Done()
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer shutdownCancel()
-			if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-				log.Printf("shutdown error: %v", err)
-			}
-		}()
-
-		return httpSrv.Start(address)
+		return serveHTTP(cfg, address, server.NewStreamableHTTPServer(srv))
 
 	case "sse":
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer cancel()
-
-		sseSrv := server.NewSSEServer(srv)
-		log.Printf("starting SSE transport on %s", address)
-
-		go func() {
-			<-ctx.Done()
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer shutdownCancel()
-			if err := sseSrv.Shutdown(shutdownCtx); err != nil {
-				log.Printf("shutdown error: %v", err)
-			}
-		}()
-
-		return sseSrv.Start(address)
+		return serveHTTP(cfg, address, server.NewSSEServer(srv))
 
 	default:
 		return fmt.Errorf("unknown transport: %s (expected stdio, http, or sse)", transport)
 	}
+}
+
+// serveHTTP wraps an MCP HTTP/SSE handler with the configured middleware
+// chain and runs it with graceful shutdown on SIGINT/SIGTERM.
+func serveHTTP(cfg *config.Config, address string, mcpHandler http.Handler) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	rl := middleware.NewRateLimiter(cfg.RateLimit, middleware.ComputeBurst(cfg.RateLimit))
+	rl.BindShutdown(ctx)
+	ov := middleware.NewOriginValidator(cfg.AllowedOrigins)
+
+	handler := middleware.Chain(
+		ov.Middleware,
+		rl.Middleware,
+	)(mcpHandler)
+
+	s := &http.Server{
+		Addr:              address,
+		Handler:           handler,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+	}
+
+	log.Printf("starting %T on %s (rate-limit=%d/min, allowed-origins=%v)",
+		mcpHandler, address, cfg.RateLimit, cfg.AllowedOrigins)
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownGracePeriod)
+		defer shutdownCancel()
+		if err := s.Shutdown(shutdownCtx); err != nil {
+			log.Printf("shutdown error: %v", err)
+		}
+	}()
+
+	if err := s.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }

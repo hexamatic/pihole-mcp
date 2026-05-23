@@ -136,8 +136,22 @@ func domainsAddHandler(c *pihole.Client) server.ToolHandlerFunc {
 		k, _ := req.RequireString("kind")
 		domain, _ := req.RequireString("domain")
 
+		// Bulk add accepts comma-separated domains; validate each.
+		for _, d := range strings.Split(domain, ",") {
+			d = strings.TrimSpace(d)
+			if d == "" {
+				continue
+			}
+			if err := validateDomainName(d); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("Invalid domain %q: %v", d, err)), nil
+			}
+		}
+
 		body := map[string]any{"domain": domain}
 		if comment := req.GetString("comment", ""); comment != "" {
+			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
+				return mcp.NewToolResultError("Invalid " + err.Error()), nil
+			}
 			body["comment"] = comment
 		}
 		if !req.GetBool("enabled", true) {
@@ -164,8 +178,15 @@ func domainsUpdateHandler(c *pihole.Client) server.ToolHandlerFunc {
 		k, _ := req.RequireString("kind")
 		domain, _ := req.RequireString("domain")
 
+		if err := validateDomainName(domain); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid domain: %v", err)), nil
+		}
+
 		body := make(map[string]any)
 		if comment := req.GetString("comment", ""); comment != "" {
+			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
+				return mcp.NewToolResultError("Invalid " + err.Error()), nil
+			}
 			body["comment"] = comment
 		}
 		if enabled := req.GetBool("enabled", true); !enabled {
@@ -187,6 +208,10 @@ func domainsDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
 		t, _ := req.RequireString("type")
 		k, _ := req.RequireString("kind")
 		domain, _ := req.RequireString("domain")
+
+		if err := validateDomainName(domain); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid domain: %v", err)), nil
+		}
 
 		path := fmt.Sprintf("/domains/%s/%s/%s", t, k, domain)
 		if err := c.Delete(ctx, path); err != nil {

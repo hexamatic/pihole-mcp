@@ -15,6 +15,7 @@ import (
 func RegisterDHCP(s *server.MCPServer, c *pihole.Client) {
 	addTool(s, mcp.NewTool("pihole_dhcp_leases",
 		mcp.WithDescription("Active DHCP leases: IP, hostname, MAC address, and expiry. Empty if Pi-hole's DHCP server is disabled."),
+		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 	), dhcpLeasesHandler(c))
 
@@ -27,7 +28,7 @@ func RegisterDHCP(s *server.MCPServer, c *pihole.Client) {
 }
 
 func dhcpLeasesHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var result pihole.DHCPLeasesResponse
 		if err := c.Get(ctx, "/dhcp/leases", &result); err != nil {
 			return toolError("get DHCP leases", err), nil
@@ -35,6 +36,19 @@ func dhcpLeasesHandler(c *pihole.Client) server.ToolHandlerFunc {
 
 		if len(result.Leases) == 0 {
 			return mcp.NewToolResultText("No active DHCP leases (DHCP server may be disabled)."), nil
+		}
+
+		if wantCSV(req) {
+			headers := []string{"IP", "Hostname", "MAC", "Expires"}
+			rows := make([][]string, 0, len(result.Leases))
+			for _, l := range result.Leases {
+				expiry := "never"
+				if l.Expires > 0 {
+					expiry = format.Timestamp(float64(l.Expires))
+				}
+				rows = append(rows, []string{l.IP, l.Name, l.HWAddr, expiry})
+			}
+			return mcp.NewToolResultText(format.CSV(headers, rows)), nil
 		}
 
 		var b strings.Builder
