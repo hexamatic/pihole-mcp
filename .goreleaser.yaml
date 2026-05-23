@@ -79,7 +79,11 @@ archives:
       - README.md
 
 dockers_v2:
-  # Default Docker image: ghcr.io/hexamatic/pihole-mcp:{version} + :latest
+  # Default Docker image: ghcr.io/hexamatic/pihole-mcp:{version} + :latest.
+  # The :latest tag only moves on stable releases — prereleases (any tag
+  # detected as prerelease by `release.prerelease: auto`, e.g. -rc1, -beta)
+  # publish their version tag only, so existing :latest users don't get
+  # auto-bumped to an unstable build.
   - id: pihole-mcp-default-docker
     ids:
       - pihole-mcp
@@ -87,7 +91,7 @@ dockers_v2:
       - "ghcr.io/hexamatic/pihole-mcp"
     tags:
       - "{{ .Version }}"
-      - latest
+      - '{{ if not .Prerelease }}latest{{ end }}'
     platforms:
       - linux/amd64
       - linux/arm64
@@ -97,7 +101,8 @@ dockers_v2:
       DATE: "{{ .Date }}"
     dockerfile: Dockerfile.goreleaser
 
-  # Slim Docker image: ghcr.io/hexamatic/pihole-mcp:{version}-slim + :latest-slim
+  # Slim Docker image: ghcr.io/hexamatic/pihole-mcp:{version}-slim +
+  # :latest-slim. Same prerelease guard as the default image.
   - id: pihole-mcp-slim-docker
     ids:
       - pihole-mcp-slim
@@ -105,7 +110,7 @@ dockers_v2:
       - "ghcr.io/hexamatic/pihole-mcp"
     tags:
       - "{{ .Version }}-slim"
-      - latest-slim
+      - '{{ if not .Prerelease }}latest-slim{{ end }}'
     platforms:
       - linux/amd64
       - linux/arm64
