@@ -8,37 +8,86 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ## [Unreleased]
 
+## [v0.4.0] - 2026-05-23
+
+### Highlights
+
+This release hardens the HTTP and SSE transports so that pihole-mcp can safely be exposed beyond stdio — a per-session token-bucket rate limiter and an Origin/Host validator now wrap every HTTP and SSE request, matching the DNS-rebinding protection that the MCP 2025-11-25 specification recommends and that the reference Go SDK has shipped since early 2026. Defaults protect loopback only, so existing setups stay safe; LAN exposure now needs an explicit `PIHOLE_ALLOWED_ORIGINS` extension. Alongside the security work, every mutating tool now validates user-supplied domains, URLs, and free-form strings before any Pi-hole API call. A new `pihole_config_properties` tool surfaces the read-only config keys introduced in Pi-hole FTL v6.6.1 (tool count 73 → 74), and a new `slim` build tag strips OpenTelemetry support to drop the binary ~45% (17 MB → 9 MB stripped) for users who don't run a tracing backend. Both default and slim builds are now shipped as first-class release artefacts — same six platforms, separate tarball and Docker tag families.
+
 ### Added
 
-- HTTP transport now ships with two security middlewares applied to the `http` and `sse` transports (stdio is unaffected): a per-session token-bucket rate limiter and an Origin/Host validator that protects against DNS-rebinding attacks per the MCP 2025-11-25 spec recommendation. Both are configurable via new environment variables (see Configuration).
-- New `PIHOLE_RATE_LIMIT` env var. Defaults to `120` (requests per minute per session). `0` disables.
-- New `PIHOLE_ALLOWED_ORIGINS` env var. Comma-separated list. Defaults to `localhost,127.0.0.1,[::1]`. The literal `*` disables enforcement (documented as unsafe).
-- Input validation at handler entry for `pihole_domains_*`, `pihole_lists_*`, `pihole_clients_*`, `pihole_groups_*`, and `pihole_config_*` tools. Domain names are checked for RFC 1035 compliance (length, labels, no shell metacharacters); list URLs must parse as http/https/file with a non-empty host or path; comments and free-form names are length-capped. Invalid inputs return a friendly MCP error before any API call is made, instead of surfacing a raw 400 from the Pi-hole server.
-- **`pihole_config_properties`** — new tool that lists configuration keys locked as read-only by `pihole.toml` or environment variable, with reason and description. Useful after a `pihole_config_set` rejection to confirm whether a key is intentionally immutable. Requires Pi-hole FTL v6.6.1+; the handler surfaces a friendly "endpoint requires Pi-hole FTL v6.6.1+" error against older releases. Tool count is now 74.
-- `format=csv` parameter added to `pihole_stats_recent_blocked`, `pihole_stats_query_types`, `pihole_stats_upstreams`, `pihole_stats_database_upstreams`, and `pihole_dhcp_leases`. Renders the same data as a comma-separated table — a ~30-40% token saving for callers that don't need the narrative summary.
+- **HTTP and SSE transport hardening** — two new middlewares wrap the `http` and `sse` handlers (stdio is unaffected):
+  - **Rate limiting** — per-session token bucket keyed by `Mcp-Session-Id` (fallback to client IP), default 120 req/min with burst `max(perMinute/4, 30)`. Configure via `PIHOLE_RATE_LIMIT`; `0` disables. Throttled requests return HTTP 429 with `Retry-After: 1`.
+  - **Origin and Host validation** — DNS-rebinding protection per the MCP 2025-11-25 spec recommendation. Configure via `PIHOLE_ALLOWED_ORIGINS` (comma-separated). Default `localhost,127.0.0.1,[::1]`; the literal `*` disables (documented as unsafe). Missing `Origin` is allowed for non-browser clients (LibreChat, custom Go clients). Mismatches return HTTP 403.
+- **`pihole_config_properties`** — new tool that lists configuration keys locked as read-only by `pihole.toml` or environment variable, with reason and human-readable description. Useful after a `pihole_config_set` rejection to confirm whether a key is intentionally immutable. Requires Pi-hole FTL v6.6.1+; the handler surfaces a friendly fallback error against older releases. Tool count is now **74**.
+- **Slim build variant** — `go build -tags slim` (or `just build-slim`) excludes OpenTelemetry support entirely. The slim Linux amd64 binary drops from ~17 MB to ~9 MB stripped (~45% smaller; ~3.5 MB compressed vs ~6 MB). Both default and slim artefacts are now published for every release: tarballs as `pihole-mcp-slim_X.Y.Z_*` and Docker images as `:X.Y.Z-slim` / `:latest-slim`.
+- **Input validation** at handler entry for every mutating tool — `pihole_domains_*`, `pihole_lists_*`, `pihole_clients_*`, `pihole_groups_*`, and `pihole_config_*`. Domain names are checked for RFC 1035 compliance (length, labels, no shell metacharacters); list URLs must parse as `http`/`https`/`file` with a non-empty host or path; comments and free-form names are length-capped (1024 / 255 characters). Invalid inputs now return a friendly MCP error before any Pi-hole API call is made, instead of surfacing a raw 400 from the Pi-hole server.
+- **`format=csv`** added to `pihole_stats_recent_blocked`, `pihole_stats_query_types`, `pihole_stats_upstreams`, `pihole_stats_database_upstreams`, and `pihole_dhcp_leases`. Total CSV-capable tool count is now 15, saving ~30-40% tokens on large tables.
 
 ### Changed
 
-- The `http` and `sse` transports now run inside a `net/http.Server` constructed by `cmd/pihole-mcp/main.go` rather than mcp-go's built-in `.Start()` helper. This is what allows the middleware chain to wrap the MCP handler. Behaviourally identical for clients that respect the existing graceful-shutdown signal handling.
-- New `slim` build tag — `go build -tags slim` (or `just build-slim`) excludes OpenTelemetry support entirely. The slim Linux amd64 binary drops from ~17 MB to ~9 MB stripped (~45% smaller, ~3.5 MB compressed vs ~6 MB). Default builds remain feature-complete with OTel. Users who run a tracing backend keep the standard build; users who don't can opt into the lean binary without losing any other functionality.
-- `pihole_history_graph` / `_history_clients` / `_history_database` / `_history_database_clients` descriptions now lead with the data source ("in-memory" vs "database") and cross-reference each other. Removes the cognitive overhead of working out which tool you want from name alone.
+- The `http` and `sse` transports now run inside a `net/http.Server` constructed by `cmd/pihole-mcp/main.go` rather than mcp-go's built-in `.Start()` helper. This is what allows the middleware chain to wrap the MCP handler. Behaviourally identical for clients that respect the existing graceful-shutdown signal handling. A `ReadHeaderTimeout` of 10 seconds is now enforced (mitigates slowloris).
+- `pihole_history_graph` / `_history_clients` / `_history_database` / `_history_database_clients` descriptions now lead with the data source ("in-memory" vs "database") and cross-reference each other — removes the cognitive overhead of working out which tool you want from name alone.
 - `pihole_network_info` description clarified to point users to `pihole_network_routes` / `pihole_network_interfaces` for richer per-route or per-interface detail.
-- `pihole_config_set` is now annotated `openWorldHint: true`. The tool can affect DNS resolution and other services system-wide; the hint surfaces that to MCP clients that gate destructive operations.
+- `pihole_config_set` is now annotated `openWorldHint: true` — the tool can affect DNS resolution and other services system-wide, and the hint surfaces that to MCP clients that gate destructive operations.
 
 ### Fixed
 
 - Hardened `pihole_network_devices` against invalid UTF-8 bytes in the upstream `macVendor` field (Pi-hole FTL upstream issue [#2868](https://github.com/pi-hole/FTL/issues/2868)). Go's `encoding/json` already silently replaces non-UTF-8 sequences with U+FFFD during decode, so this MCP server was unaffected — a regression-prevention test is now in place to lock that behaviour in.
 
-### Tests
+### Quality
 
-- Fixture suite expanded from 13 → 22 captured Pi-hole responses. `scripts/refresh-fixtures.sh` now also captures `stats_top_domains`, `stats_top_clients`, `stats_upstreams`, `stats_query_types`, `stats_recent_blocked`, the four `stats_database_*` endpoints, and `config_properties` (skipped on older Pi-hole instances that return an empty body for that endpoint).
-- New `_RealFixture` shape-validation tests across stats and auth surfaces — each runs the handler against the captured response and confirms the handler doesn't crash and emits non-empty output. Hand-written value-assertion mocks remain in place for tests that pin specific numbers.
+- Fixture suite expanded from 13 → 22 captured Pi-hole API responses. `scripts/refresh-fixtures.sh` now also captures the full stats family (`top_domains`, `top_clients`, `upstreams`, `query_types`, `recent_blocked`), the four `stats_database_*` endpoints, and `config_properties` (skipped on older Pi-hole versions that return an empty body for the endpoint).
+- New `_RealFixture` shape-validation tests across the stats and auth surfaces. Each runs the handler against the captured response and confirms the handler doesn't crash and emits non-empty output. Hand-written value-assertion mocks remain in place for tests that pin specific numbers.
 
 ### Dependencies
 
+- `github.com/mark3labs/mcp-go` bumped 0.47.0 → 0.54.0. Brings panic recovery to the SSE message handler, stdio worker, task goroutines, and session hook goroutines; adds a transport-agnostic `Handle` entry point; adds OpenTelemetry server-side tracing hooks; adds `WithStrictInputSchemaDefault`. No breaking changes for our usage — every `server.NewMCPServer`, `server.NewStreamableHTTPServer`, and `server.NewSSEServer` call site compiles and passes tests unchanged.
 - `golang.org/x/time` v0.15.0 added as a direct dependency to back the rate-limit token bucket.
 
-- `github.com/mark3labs/mcp-go` bumped 0.47.0 → 0.54.0. Brings panic recovery to the SSE message handler, stdio worker, task goroutines, and session hook goroutines; adds a transport-agnostic `Handle` entry point; adds OpenTelemetry server-side tracing hooks; adds `WithStrictInputSchemaDefault`. No breaking changes for our usage — all `server.NewMCPServer`, `server.NewStreamableHTTPServer`, and `server.NewSSEServer` call sites compile and pass tests unchanged.
+### Migration Notes
+
+- **HTTP and SSE transports now enforce Origin and Host validation by default.** Requests are accepted only when the `Host` (and `Origin`, if present) header resolves to a host in `PIHOLE_ALLOWED_ORIGINS`. The default allowlist covers loopback (`localhost,127.0.0.1,[::1]`) only — if you're exposing pihole-mcp on a LAN or behind a reverse proxy, extend the list:
+  ```sh
+  export PIHOLE_ALLOWED_ORIGINS="localhost,127.0.0.1,[::1],pihole-mcp.lan"
+  ```
+  Set `PIHOLE_ALLOWED_ORIGINS=*` to disable the check entirely (only when behind a proxy doing its own access control). stdio is unaffected.
+- **Per-session rate limiting is on by default** at 120 req/min with burst 30. If your client legitimately exceeds that during batch refreshes, raise `PIHOLE_RATE_LIMIT` (e.g. `600`) or set `PIHOLE_RATE_LIMIT=0` to disable.
+- **Slim build variant is opt-in by archive or tag name** — defaults are unchanged. To pull the lean binary, grab `pihole-mcp-slim_0.4.0_*.tar.gz` from the release assets or the `ghcr.io/hexamatic/pihole-mcp:0.4.0-slim` Docker tag. `OTEL_EXPORTER_OTLP_ENDPOINT` is silently ignored in slim builds.
+
+### Installation
+
+**Go install:**
+```
+go install github.com/hexamatic/pihole-mcp/cmd/pihole-mcp@v0.4.0
+```
+For the slim variant (no OpenTelemetry): `go install -tags slim github.com/hexamatic/pihole-mcp/cmd/pihole-mcp@v0.4.0`
+
+**Docker (multi-arch):**
+```
+docker pull ghcr.io/hexamatic/pihole-mcp:0.4.0           # default (includes OpenTelemetry)
+docker pull ghcr.io/hexamatic/pihole-mcp:0.4.0-slim      # slim (~45% smaller, no OTel)
+```
+
+**Binary download:** grab the archive for your platform from the release assets — `pihole-mcp_0.4.0_{os}_{arch}.tar.gz` for the default build, `pihole-mcp-slim_0.4.0_{os}_{arch}.tar.gz` for the slim build.
+
+### Requirements
+
+- Pi-hole v6.6+ with the REST API enabled (v6.6.1+ for `pihole_config_properties`)
+- An admin password or [application password](https://docs.pi-hole.net/api/auth/)
+
+### Configuration
+
+| Variable                      | Required | Default                       | Description                                                                |
+| ----------------------------- | -------- | ----------------------------- | -------------------------------------------------------------------------- |
+| `PIHOLE_URL`                  | Yes      | —                             | Pi-hole base URL                                                           |
+| `PIHOLE_PASSWORD`             | Yes      | —                             | Admin or application password                                              |
+| `PIHOLE_REQUEST_TIMEOUT`      | No       | `30s`                         | HTTP request timeout                                                       |
+| `PIHOLE_RATE_LIMIT`           | No       | `120`                         | Per-session requests/min cap on HTTP/SSE transports; `0` disables          |
+| `PIHOLE_ALLOWED_ORIGINS`      | No       | `localhost,127.0.0.1,[::1]`   | Origin/Host allowlist for HTTP/SSE transports; `*` disables (unsafe)       |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No       | —                             | OpenTelemetry endpoint (enables tracing; ignored in slim builds)           |
+
+See the [README](https://github.com/hexamatic/pihole-mcp#readme) for client-specific setup guides (Claude Desktop, Cursor, Windsurf, VS Code, Cline) and the [Security section](https://github.com/hexamatic/pihole-mcp#security-http-and-sse-transports) for the transport hardening details.
 
 ## [v0.3.0] - 2026-05-07
 
@@ -232,7 +281,8 @@ docker pull ghcr.io/hexamatic/pihole-mcp:0.1.0
 
 See the [README](https://github.com/hexamatic/pihole-mcp#readme) for client-specific setup guides (Claude Desktop, Cursor, Windsurf, VS Code, Cline).
 
-[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.4.0...HEAD
+[v0.4.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.3.0...v0.4.0
 [v0.3.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.2.0...v0.3.0
 [v0.2.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.1.0...v0.2.0
 [v0.1.0]: https://github.com/hexamatic/pihole-mcp/releases/tag/v0.1.0
