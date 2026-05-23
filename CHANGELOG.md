@@ -15,10 +15,14 @@ The release body on GitHub for each tagged version is sourced from the matching 
 - New `PIHOLE_ALLOWED_ORIGINS` env var. Comma-separated list. Defaults to `localhost,127.0.0.1,[::1]`. The literal `*` disables enforcement (documented as unsafe).
 - Input validation at handler entry for `pihole_domains_*`, `pihole_lists_*`, `pihole_clients_*`, `pihole_groups_*`, and `pihole_config_*` tools. Domain names are checked for RFC 1035 compliance (length, labels, no shell metacharacters); list URLs must parse as http/https/file with a non-empty host or path; comments and free-form names are length-capped. Invalid inputs return a friendly MCP error before any API call is made, instead of surfacing a raw 400 from the Pi-hole server.
 - **`pihole_config_properties`** — new tool that lists configuration keys locked as read-only by `pihole.toml` or environment variable, with reason and description. Useful after a `pihole_config_set` rejection to confirm whether a key is intentionally immutable. Requires Pi-hole FTL v6.6.1+; the handler surfaces a friendly "endpoint requires Pi-hole FTL v6.6.1+" error against older releases. Tool count is now 74.
+- `format=csv` parameter added to `pihole_stats_recent_blocked`, `pihole_stats_query_types`, `pihole_stats_upstreams`, `pihole_stats_database_upstreams`, and `pihole_dhcp_leases`. Renders the same data as a comma-separated table — a ~30-40% token saving for callers that don't need the narrative summary.
 
 ### Changed
 
 - The `http` and `sse` transports now run inside a `net/http.Server` constructed by `cmd/pihole-mcp/main.go` rather than mcp-go's built-in `.Start()` helper. This is what allows the middleware chain to wrap the MCP handler. Behaviourally identical for clients that respect the existing graceful-shutdown signal handling.
+- `pihole_history_graph` / `_history_clients` / `_history_database` / `_history_database_clients` descriptions now lead with the data source ("in-memory" vs "database") and cross-reference each other. Removes the cognitive overhead of working out which tool you want from name alone.
+- `pihole_network_info` description clarified to point users to `pihole_network_routes` / `pihole_network_interfaces` for richer per-route or per-interface detail.
+- `pihole_config_set` is now annotated `openWorldHint: true`. The tool can affect DNS resolution and other services system-wide; the hint surfaces that to MCP clients that gate destructive operations.
 
 ### Fixed
 

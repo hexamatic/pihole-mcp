@@ -28,7 +28,7 @@ func RegisterNetwork(s *server.MCPServer, c *pihole.Client) {
 	), networkGatewayHandler(c))
 
 	addTool(s, mcp.NewTool("pihole_network_info",
-		mcp.WithDescription("Combined routing table and interface summary. Use pihole_network_routes or pihole_network_interfaces for richer per-domain detail."),
+		mcp.WithDescription("Lightweight summary of routing table and interface state. For detailed per-route or per-interface data, use pihole_network_routes or pihole_network_interfaces."),
 		mcp.WithReadOnlyHintAnnotation(true),
 	), networkInfoHandler(c))
 

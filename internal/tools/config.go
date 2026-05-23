@@ -22,9 +22,10 @@ func RegisterConfig(s *server.MCPServer, c *pihole.Client) {
 	), configGetHandler(c))
 
 	addTool(s, mcp.NewTool("pihole_config_set",
-		mcp.WithDescription("Modify Pi-hole configuration. Provide nested JSON properties to change. Changes take effect immediately."),
+		mcp.WithDescription("Modify Pi-hole configuration. Provide nested JSON properties to change. Changes take effect immediately and can affect DNS behaviour system-wide."),
 		mcp.WithString("config", mcp.Required(), mcp.Description("JSON config object, e.g. {\"dns\":{\"blocking\":{\"active\":true}}}")),
 		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(true),
 	), configSetHandler(c))
 
 	addTool(s, mcp.NewTool("pihole_config_get_value",

@@ -40,17 +40,20 @@ func RegisterStats(s *server.MCPServer, c *pihole.Client) {
 
 	addTool(s, mcp.NewTool("pihole_stats_upstreams",
 		mcp.WithDescription("Upstream DNS server performance: query counts, average response time, and standard deviation per server."),
+		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 	), statsUpstreamsHandler(c))
 
 	addTool(s, mcp.NewTool("pihole_stats_query_types",
 		mcp.WithDescription("Distribution of DNS query types (A, AAAA, MX, PTR, HTTPS, etc.) with counts."),
+		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 	), statsQueryTypesHandler(c))
 
 	addTool(s, mcp.NewTool("pihole_stats_recent_blocked",
 		mcp.WithDescription("Most recently blocked domains — useful for spotting new tracking domains or false positives in real-time."),
 		mcp.WithNumber("count", mcp.Description("Number of domains (default 10).")),
+		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 	), statsRecentBlockedHandler(c))
 
@@ -85,6 +88,7 @@ func RegisterStats(s *server.MCPServer, c *pihole.Client) {
 		mcp.WithDescription("Historical upstream DNS server performance for a date range: query counts and average response times."),
 		mcp.WithNumber("from", mcp.Description("Start Unix timestamp.")),
 		mcp.WithNumber("until", mcp.Description("End Unix timestamp.")),
+		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 	), statsDatabaseUpstreamsHandler(c))
 
@@ -245,10 +249,25 @@ func statsTopClientsHandler(c *pihole.Client) server.ToolHandlerFunc {
 }
 
 func statsUpstreamsHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var result pihole.Upstreams
 		if err := c.Get(ctx, "/stats/upstreams", &result); err != nil {
 			return toolError("get upstreams", err), nil
+		}
+
+		if wantCSV(req) {
+			headers := []string{"Name", "IP", "Port", "Queries", "AvgResponseMs"}
+			rows := make([][]string, 0, len(result.Upstreams))
+			for _, u := range result.Upstreams {
+				rows = append(rows, []string{
+					format.StringOr(u.Name, ""),
+					format.StringOr(u.IP, ""),
+					format.Number(u.Port),
+					format.Number(u.Count),
+					format.ResponseTime(u.Statistics.Response),
+				})
+			}
+			return mcp.NewToolResultText(format.CSV(headers, rows)), nil
 		}
 
 		var b strings.Builder
@@ -264,13 +283,23 @@ func statsUpstreamsHandler(c *pihole.Client) server.ToolHandlerFunc {
 }
 
 func statsQueryTypesHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var result pihole.QueryTypes
 		if err := c.Get(ctx, "/stats/query_types", &result); err != nil {
 			return toolError("get query types", err), nil
 		}
 
 		sorted := sortMapByValue(result.Types)
+
+		if wantCSV(req) {
+			headers := []string{"Type", "Count"}
+			rows := make([][]string, 0, len(sorted))
+			for _, kv := range sorted {
+				rows = append(rows, []string{kv.Key, format.Number(kv.Value)})
+			}
+			return mcp.NewToolResultText(format.CSV(headers, rows)), nil
+		}
+
 		var b strings.Builder
 		b.WriteString("**Query types:**\n")
 		for _, kv := range sorted {
@@ -294,6 +323,15 @@ func statsRecentBlockedHandler(c *pihole.Client) server.ToolHandlerFunc {
 
 		if len(result.Blocked) == 0 {
 			return mcp.NewToolResultText("No recently blocked domains."), nil
+		}
+
+		if wantCSV(req) {
+			headers := []string{"Rank", "Domain"}
+			rows := make([][]string, 0, len(result.Blocked))
+			for i, domain := range result.Blocked {
+				rows = append(rows, []string{format.Number(i + 1), domain})
+			}
+			return mcp.NewToolResultText(format.CSV(headers, rows)), nil
 		}
 
 		var b strings.Builder
@@ -426,6 +464,21 @@ func statsDatabaseUpstreamsHandler(c *pihole.Client) server.ToolHandlerFunc {
 		var result pihole.Upstreams
 		if err := c.Get(ctx, path, &result); err != nil {
 			return toolError("get database upstreams", err), nil
+		}
+
+		if wantCSV(req) {
+			headers := []string{"Name", "IP", "Port", "Queries", "AvgResponseMs"}
+			rows := make([][]string, 0, len(result.Upstreams))
+			for _, u := range result.Upstreams {
+				rows = append(rows, []string{
+					format.StringOr(u.Name, ""),
+					format.StringOr(u.IP, ""),
+					format.Number(u.Port),
+					format.Number(u.Count),
+					format.ResponseTime(u.Statistics.Response),
+				})
+			}
+			return mcp.NewToolResultText(format.CSV(headers, rows)), nil
 		}
 
 		var b strings.Builder

@@ -191,3 +191,77 @@ func TestStatsDatabaseQueryTypes_Normal(t *testing.T) {
 		t.Errorf("expected query type MX, got: %s", text)
 	}
 }
+
+func TestStatsUpstreams_CSV(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/upstreams": map[string]any{
+			"upstreams": []any{
+				map[string]any{"name": "Cloudflare", "ip": "1.1.1.1", "port": 53, "count": 1500,
+					"statistics": map[string]any{"response": 12.5}},
+			},
+			"forwarded_queries": 1500,
+			"total_queries":     5000,
+		},
+	}))
+
+	text := callTool(t, statsUpstreamsHandler, c, map[string]any{"format": "csv"})
+	if !strings.Contains(text, "Name,IP,Port,Queries,AvgResponseMs") {
+		t.Errorf("CSV should have header row, got: %s", text)
+	}
+	if !strings.Contains(text, "Cloudflare,1.1.1.1,53,") {
+		t.Errorf("CSV should contain upstream row, got: %s", text)
+	}
+}
+
+func TestStatsQueryTypes_CSV(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/query_types": map[string]any{
+			"types": map[string]any{"A": 4000, "AAAA": 800},
+		},
+	}))
+
+	text := callTool(t, statsQueryTypesHandler, c, map[string]any{"format": "csv"})
+	if !strings.Contains(text, "Type,Count") {
+		t.Errorf("CSV should have header row, got: %s", text)
+	}
+	if !strings.Contains(text, "A,") {
+		t.Errorf("CSV should contain type A, got: %s", text)
+	}
+}
+
+func TestStatsRecentBlocked_CSV(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/recent_blocked": map[string]any{
+			"blocked": []any{"ads.example.com", "tracker.com"},
+		},
+	}))
+
+	text := callTool(t, statsRecentBlockedHandler, c, map[string]any{"format": "csv"})
+	if !strings.Contains(text, "Rank,Domain") {
+		t.Errorf("CSV should have header row, got: %s", text)
+	}
+	if !strings.Contains(text, "1,ads.example.com") {
+		t.Errorf("CSV should contain ranked rows, got: %s", text)
+	}
+}
+
+func TestStatsDatabaseUpstreams_CSV(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/database/upstreams": map[string]any{
+			"upstreams": []any{
+				map[string]any{"name": "Quad9", "ip": "9.9.9.9", "port": 53, "count": 2000,
+					"statistics": map[string]any{"response": 18.0}},
+			},
+			"forwarded_queries": 2000,
+			"total_queries":     6000,
+		},
+	}))
+
+	text := callTool(t, statsDatabaseUpstreamsHandler, c, map[string]any{"format": "csv"})
+	if !strings.Contains(text, "Name,IP,Port,Queries,AvgResponseMs") {
+		t.Errorf("CSV should have header row, got: %s", text)
+	}
+	if !strings.Contains(text, "Quad9,9.9.9.9,53,") {
+		t.Errorf("CSV should contain upstream row, got: %s", text)
+	}
+}
