@@ -50,6 +50,21 @@ func TestAuthSessions_Empty(t *testing.T) {
 	}
 }
 
+func TestAuthSessions_RealFixture(t *testing.T) {
+	// Real captured response — protects against shape drift.
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/auth/sessions": loadFixture(t, "auth_sessions"),
+	}))
+
+	text := callTool(t, authSessionsHandler, c, nil)
+	if text == "" {
+		t.Fatal("expected non-empty sessions output from real fixture")
+	}
+	if !strings.Contains(strings.ToLower(text), "session") {
+		t.Errorf("expected the word 'session' (any case) in fixture output, got: %s", text)
+	}
+}
+
 func TestAuthRevokeSession_Success(t *testing.T) {
 	c := newTestClient(t, piholeHandler(map[string]any{
 		"/auth/session/5": nil,

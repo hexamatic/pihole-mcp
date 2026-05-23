@@ -3,18 +3,18 @@
     {
       "app": false,
       "cli": false,
-      "current_session": true,
+      "current_session": false,
       "id": 0,
-      "last_active": 1777693770,
-      "login_at": 1777693770,
+      "last_active": 1779505423,
+      "login_at": 1779505423,
       "remote_addr": "192.168.65.1",
       "tls": {
         "login": false,
         "mixed": false
       },
-      "user_agent": "curl/8.7.1",
+      "user_agent": "Go-http-client/1.1",
       "valid": true,
-      "valid_until": 1777695570,
+      "valid_until": 1779507223,
       "x_forwarded_for": null
     },
     {
@@ -22,16 +22,16 @@
       "cli": false,
       "current_session": false,
       "id": 1,
-      "last_active": 1777687675,
-      "login_at": 1777687675,
+      "last_active": 1779505423,
+      "login_at": 1779505423,
       "remote_addr": "192.168.65.1",
       "tls": {
         "login": false,
         "mixed": false
       },
       "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777689475,
+      "valid": true,
+      "valid_until": 1779507223,
       "x_forwarded_for": null
     },
     {
@@ -39,16 +39,16 @@
       "cli": false,
       "current_session": false,
       "id": 2,
-      "last_active": 1777687676,
-      "login_at": 1777687675,
+      "last_active": 1779505424,
+      "login_at": 1779505423,
       "remote_addr": "192.168.65.1",
       "tls": {
         "login": false,
         "mixed": false
       },
       "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777689476,
+      "valid": true,
+      "valid_until": 1779507224,
       "x_forwarded_for": null
     },
     {
@@ -56,16 +56,16 @@
       "cli": false,
       "current_session": false,
       "id": 3,
-      "last_active": 1777687676,
-      "login_at": 1777687676,
+      "last_active": 1779505424,
+      "login_at": 1779505424,
       "remote_addr": "192.168.65.1",
       "tls": {
         "login": false,
         "mixed": false
       },
       "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777689476,
+      "valid": true,
+      "valid_until": 1779507224,
       "x_forwarded_for": null
     },
     {
@@ -73,16 +73,16 @@
       "cli": false,
       "current_session": false,
       "id": 4,
-      "last_active": 1777687676,
-      "login_at": 1777687676,
+      "last_active": 1779505424,
+      "login_at": 1779505424,
       "remote_addr": "192.168.65.1",
       "tls": {
         "login": false,
         "mixed": false
       },
       "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777689476,
+      "valid": true,
+      "valid_until": 1779507224,
       "x_forwarded_for": null
     },
     {
@@ -90,16 +90,16 @@
       "cli": false,
       "current_session": false,
       "id": 5,
-      "last_active": 1777687676,
-      "login_at": 1777687676,
+      "last_active": 1779505424,
+      "login_at": 1779505424,
       "remote_addr": "192.168.65.1",
       "tls": {
         "login": false,
         "mixed": false
       },
       "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777689476,
+      "valid": true,
+      "valid_until": 1779507224,
       "x_forwarded_for": null
     },
     {
@@ -107,16 +107,16 @@
       "cli": false,
       "current_session": false,
       "id": 6,
-      "last_active": 1777687676,
-      "login_at": 1777687676,
+      "last_active": 1779505424,
+      "login_at": 1779505424,
       "remote_addr": "192.168.65.1",
       "tls": {
         "login": false,
         "mixed": false
       },
       "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777689476,
+      "valid": true,
+      "valid_until": 1779507224,
       "x_forwarded_for": null
     },
     {
@@ -124,16 +124,16 @@
       "cli": false,
       "current_session": false,
       "id": 7,
-      "last_active": 1777687983,
-      "login_at": 1777687983,
+      "last_active": 1779505875,
+      "login_at": 1779505875,
       "remote_addr": "192.168.65.1",
       "tls": {
         "login": false,
         "mixed": false
       },
       "user_agent": "curl/8.7.1",
-      "valid": false,
-      "valid_until": 1777689783,
+      "valid": true,
+      "valid_until": 1779507675,
       "x_forwarded_for": null
     },
     {
@@ -141,256 +141,35 @@
       "cli": false,
       "current_session": false,
       "id": 8,
-      "last_active": 1777687983,
-      "login_at": 1777687983,
+      "last_active": 1779505936,
+      "login_at": 1779505936,
       "remote_addr": "192.168.65.1",
       "tls": {
         "login": false,
         "mixed": false
       },
       "user_agent": "curl/8.7.1",
-      "valid": false,
-      "valid_until": 1777689783,
+      "valid": true,
+      "valid_until": 1779507736,
       "x_forwarded_for": null
     },
     {
       "app": false,
       "cli": false,
-      "current_session": false,
+      "current_session": true,
       "id": 9,
-      "last_active": 1777688118,
-      "login_at": 1777688118,
+      "last_active": 1779505944,
+      "login_at": 1779505944,
       "remote_addr": "192.168.65.1",
       "tls": {
         "login": false,
         "mixed": false
       },
-      "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777689918,
-      "x_forwarded_for": null
-    },
-    {
-      "app": false,
-      "cli": false,
-      "current_session": false,
-      "id": 10,
-      "last_active": 1777688118,
-      "login_at": 1777688118,
-      "remote_addr": "192.168.65.1",
-      "tls": {
-        "login": false,
-        "mixed": false
-      },
-      "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777689918,
-      "x_forwarded_for": null
-    },
-    {
-      "app": false,
-      "cli": false,
-      "current_session": false,
-      "id": 11,
-      "last_active": 1777688118,
-      "login_at": 1777688118,
-      "remote_addr": "192.168.65.1",
-      "tls": {
-        "login": false,
-        "mixed": false
-      },
-      "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777689918,
-      "x_forwarded_for": null
-    },
-    {
-      "app": false,
-      "cli": false,
-      "current_session": false,
-      "id": 12,
-      "last_active": 1777688118,
-      "login_at": 1777688118,
-      "remote_addr": "192.168.65.1",
-      "tls": {
-        "login": false,
-        "mixed": false
-      },
-      "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777689918,
-      "x_forwarded_for": null
-    },
-    {
-      "app": false,
-      "cli": false,
-      "current_session": false,
-      "id": 13,
-      "last_active": 1777688118,
-      "login_at": 1777688118,
-      "remote_addr": "192.168.65.1",
-      "tls": {
-        "login": false,
-        "mixed": false
-      },
-      "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777689918,
-      "x_forwarded_for": null
-    },
-    {
-      "app": false,
-      "cli": false,
-      "current_session": false,
-      "id": 14,
-      "last_active": 1777688118,
-      "login_at": 1777688118,
-      "remote_addr": "192.168.65.1",
-      "tls": {
-        "login": false,
-        "mixed": false
-      },
-      "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777689918,
-      "x_forwarded_for": null
-    },
-    {
-      "app": false,
-      "cli": false,
-      "current_session": false,
-      "id": 15,
-      "last_active": 1777688119,
-      "login_at": 1777688118,
-      "remote_addr": "192.168.65.1",
-      "tls": {
-        "login": false,
-        "mixed": false
-      },
-      "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777689919,
-      "x_forwarded_for": null
-    },
-    {
-      "app": false,
-      "cli": false,
-      "current_session": false,
-      "id": 16,
-      "last_active": 1777688388,
-      "login_at": 1777688388,
-      "remote_addr": "192.168.65.1",
-      "tls": {
-        "login": false,
-        "mixed": false
-      },
-      "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777690188,
-      "x_forwarded_for": null
-    },
-    {
-      "app": false,
-      "cli": false,
-      "current_session": false,
-      "id": 17,
-      "last_active": 1777688388,
-      "login_at": 1777688388,
-      "remote_addr": "192.168.65.1",
-      "tls": {
-        "login": false,
-        "mixed": false
-      },
-      "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777690188,
-      "x_forwarded_for": null
-    },
-    {
-      "app": false,
-      "cli": false,
-      "current_session": false,
-      "id": 18,
-      "last_active": 1777688388,
-      "login_at": 1777688388,
-      "remote_addr": "192.168.65.1",
-      "tls": {
-        "login": false,
-        "mixed": false
-      },
-      "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777690188,
-      "x_forwarded_for": null
-    },
-    {
-      "app": false,
-      "cli": false,
-      "current_session": false,
-      "id": 19,
-      "last_active": 1777688389,
-      "login_at": 1777688388,
-      "remote_addr": "192.168.65.1",
-      "tls": {
-        "login": false,
-        "mixed": false
-      },
-      "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777690189,
-      "x_forwarded_for": null
-    },
-    {
-      "app": false,
-      "cli": false,
-      "current_session": false,
-      "id": 20,
-      "last_active": 1777688389,
-      "login_at": 1777688389,
-      "remote_addr": "192.168.65.1",
-      "tls": {
-        "login": false,
-        "mixed": false
-      },
-      "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777690189,
-      "x_forwarded_for": null
-    },
-    {
-      "app": false,
-      "cli": false,
-      "current_session": false,
-      "id": 21,
-      "last_active": 1777688389,
-      "login_at": 1777688389,
-      "remote_addr": "192.168.65.1",
-      "tls": {
-        "login": false,
-        "mixed": false
-      },
-      "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777690189,
-      "x_forwarded_for": null
-    },
-    {
-      "app": false,
-      "cli": false,
-      "current_session": false,
-      "id": 22,
-      "last_active": 1777688389,
-      "login_at": 1777688389,
-      "remote_addr": "192.168.65.1",
-      "tls": {
-        "login": false,
-        "mixed": false
-      },
-      "user_agent": "Go-http-client/1.1",
-      "valid": false,
-      "valid_until": 1777690189,
+      "user_agent": "curl/8.7.1",
+      "valid": true,
+      "valid_until": 1779507744,
       "x_forwarded_for": null
     }
   ],
-  "took": 0.000055074691772460938
+  "took": 0.000039577484130859375
 }

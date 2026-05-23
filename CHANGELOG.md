@@ -29,6 +29,11 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 - Hardened `pihole_network_devices` against invalid UTF-8 bytes in the upstream `macVendor` field (Pi-hole FTL upstream issue [#2868](https://github.com/pi-hole/FTL/issues/2868)). Go's `encoding/json` already silently replaces non-UTF-8 sequences with U+FFFD during decode, so this MCP server was unaffected — a regression-prevention test is now in place to lock that behaviour in.
 
+### Tests
+
+- Fixture suite expanded from 13 → 22 captured Pi-hole responses. `scripts/refresh-fixtures.sh` now also captures `stats_top_domains`, `stats_top_clients`, `stats_upstreams`, `stats_query_types`, `stats_recent_blocked`, the four `stats_database_*` endpoints, and `config_properties` (skipped on older Pi-hole instances that return an empty body for that endpoint).
+- New `_RealFixture` shape-validation tests across stats and auth surfaces — each runs the handler against the captured response and confirms the handler doesn't crash and emits non-empty output. Hand-written value-assertion mocks remain in place for tests that pin specific numbers.
+
 ### Dependencies
 
 - `golang.org/x/time` v0.15.0 added as a direct dependency to back the rate-limit token bucket.

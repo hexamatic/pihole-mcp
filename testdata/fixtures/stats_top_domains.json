@@ -1,0 +1,47 @@
+{
+  "blocked_queries": 4,
+  "domains": [
+    {
+      "count": 1,
+      "domain": "google.com"
+    },
+    {
+      "count": 1,
+      "domain": "cloudflare.com"
+    },
+    {
+      "count": 1,
+      "domain": "github.com"
+    },
+    {
+      "count": 1,
+      "domain": "youtube.com"
+    },
+    {
+      "count": 1,
+      "domain": "facebook.com"
+    },
+    {
+      "count": 1,
+      "domain": "twitter.com"
+    },
+    {
+      "count": 1,
+      "domain": "1.65.168.192.in-addr.arpa"
+    },
+    {
+      "count": 1,
+      "domain": "hexamatic.com"
+    },
+    {
+      "count": 1,
+      "domain": "pihole.net"
+    },
+    {
+      "count": 1,
+      "domain": "cloudflare-dns.com"
+    }
+  ],
+  "took": 0.000039339065551757812,
+  "total_queries": 22
+}

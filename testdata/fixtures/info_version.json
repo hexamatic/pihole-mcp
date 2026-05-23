@@ -1,5 +1,5 @@
 {
-  "took": 0.00006103515625,
+  "took": 0.00021243095397949219,
   "version": {
     "core": {
       "local": {
@@ -14,7 +14,7 @@
     },
     "docker": {
       "local": "2026.04.0",
-      "remote": "2026.04.1"
+      "remote": "2026.05.0"
     },
     "ftl": {
       "local": {
@@ -24,8 +24,8 @@
         "version": "v6.6"
       },
       "remote": {
-        "hash": "e1b4c1d5",
-        "version": "v6.6.1"
+        "hash": "82c58cc4",
+        "version": "v6.6.2"
       }
     },
     "web": {
