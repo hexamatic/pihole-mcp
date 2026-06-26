@@ -90,6 +90,8 @@ jobs:
 
       - name: Multi-instance E2E
         env:
+          PIHOLE_URL: http://localhost:8081
+          PIHOLE_PASSWORD: test
           PIHOLE_1_URL: http://localhost:8081
           PIHOLE_1_PASSWORD: test
           PIHOLE_2_URL: http://localhost:8082
