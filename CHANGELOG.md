@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 The release body on GitHub for each tagged version is sourced from the matching section in this file. The `[Unreleased]` section accumulates user-visible changes between releases.
 
-## [0.5.0] - 2026-06-26
+## [v0.5.0] - 2026-06-26
 
 ### Highlights
 
