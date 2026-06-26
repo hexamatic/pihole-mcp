@@ -13,11 +13,17 @@ func TestLoad_ValidConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.URL != "http://localhost:8081" {
-		t.Errorf("URL = %q, want %q", cfg.URL, "http://localhost:8081")
+	if len(cfg.Instances) != 1 {
+		t.Fatalf("Instances len = %d, want 1", len(cfg.Instances))
 	}
-	if cfg.Password != "test" {
-		t.Errorf("Password = %q, want %q", cfg.Password, "test")
+	if cfg.Instances[0].Name != "primary" {
+		t.Errorf("Name = %q, want %q", cfg.Instances[0].Name, "primary")
+	}
+	if cfg.Instances[0].URL != "http://localhost:8081" {
+		t.Errorf("URL = %q, want %q", cfg.Instances[0].URL, "http://localhost:8081")
+	}
+	if cfg.Instances[0].Password != "test" {
+		t.Errorf("Password = %q, want %q", cfg.Instances[0].Password, "test")
 	}
 	if cfg.RequestTimeout != 30*time.Second {
 		t.Errorf("RequestTimeout = %v, want %v", cfg.RequestTimeout, 30*time.Second)
@@ -32,8 +38,8 @@ func TestLoad_EmptyPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Password != "" {
-		t.Errorf("Password = %q, want empty", cfg.Password)
+	if cfg.Instances[0].Password != "" {
+		t.Errorf("Password = %q, want empty", cfg.Instances[0].Password)
 	}
 }
 
@@ -74,8 +80,8 @@ func TestLoad_MissingPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("empty password should be accepted: %v", err)
 	}
-	if cfg.Password != "" {
-		t.Errorf("Password = %q, want empty", cfg.Password)
+	if cfg.Instances[0].Password != "" {
+		t.Errorf("Password = %q, want empty", cfg.Instances[0].Password)
 	}
 }
 

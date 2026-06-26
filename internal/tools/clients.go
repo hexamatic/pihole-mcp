@@ -12,49 +12,59 @@ import (
 )
 
 // RegisterClients registers client management tools.
-func RegisterClients(s *server.MCPServer, c *pihole.Client) {
-	addTool(s, mcp.NewTool("pihole_clients_list",
+func RegisterClients(s *server.MCPServer, r *pihole.Registry) {
+	addTool(s, r, mcp.NewTool("pihole_clients_list",
+		mcp.WithTitleAnnotation("List Clients"),
 		mcp.WithDescription("List configured clients with their group assignments. Clients can be identified by IP, MAC, hostname, subnet, or interface."),
 		mcp.WithString("client", mcp.Description("Specific client to look up (IP, MAC, hostname).")),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), clientsListHandler(c))
+	), clientsListHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_clients_suggestions",
+	addTool(s, r, mcp.NewTool("pihole_clients_suggestions",
+		mcp.WithTitleAnnotation("Suggest Clients"),
 		mcp.WithDescription("Unconfigured network clients seen by Pi-hole that don't have group assignments yet. Useful for discovering new devices."),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), clientsSuggestionsHandler(c))
+	), clientsSuggestionsHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_clients_add",
+	addTool(s, r, mcp.NewTool("pihole_clients_add",
+		mcp.WithTitleAnnotation("Add Client"),
 		mcp.WithDescription("Add a client by IP, MAC, hostname, CIDR subnet, or interface name (prefixed with colon, e.g. :eth0)."),
 		mcp.WithString("client", mcp.Required(), mcp.Description("Client identifier.")),
 		mcp.WithString("comment", mcp.Description("Optional comment.")),
 		mcp.WithOpenWorldHintAnnotation(true),
-	), clientsAddHandler(c))
+	), clientsAddHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_clients_update",
+	addTool(s, r, mcp.NewTool("pihole_clients_update",
+		mcp.WithTitleAnnotation("Update Client"),
 		mcp.WithDescription("Update a configured client's comment or group assignments."),
 		mcp.WithString("client", mcp.Required(), mcp.Description("Client identifier.")),
 		mcp.WithString("comment", mcp.Description("Updated comment.")),
 		mcp.WithIdempotentHintAnnotation(true),
-	), clientsUpdateHandler(c))
+	), clientsUpdateHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_clients_delete",
+	addTool(s, r, mcp.NewTool("pihole_clients_delete",
+		mcp.WithTitleAnnotation("Delete Client"),
 		mcp.WithDescription("Remove a configured client. The device remains on the network but loses group-based blocking rules."),
 		mcp.WithString("client", mcp.Required(), mcp.Description("Client identifier to remove.")),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
-	), clientsDeleteHandler(c))
+	), clientsDeleteHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_clients_batch_delete",
+	addTool(s, r, mcp.NewTool("pihole_clients_batch_delete",
+		mcp.WithTitleAnnotation("Batch Delete Clients"),
 		mcp.WithDescription("Remove multiple configured clients at once. Provide a JSON array of client identifiers."),
 		mcp.WithString("items", mcp.Required(), mcp.Description("JSON array of client identifiers, e.g. [\"192.168.1.10\",\"192.168.1.20\"]")),
 		mcp.WithDestructiveHintAnnotation(true),
-	), clientsBatchDeleteHandler(c))
+	), clientsBatchDeleteHandler(r))
 }
 
-func clientsListHandler(c *pihole.Client) server.ToolHandlerFunc {
+func clientsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		path := "/clients"
 		if client := req.GetString("client", ""); client != "" {
 			path += "/" + client
@@ -95,8 +105,12 @@ func clientsListHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func clientsSuggestionsHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func clientsSuggestionsHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var result pihole.ClientSuggestionsResponse
 		if err := c.Get(ctx, "/clients/_suggestions", &result); err != nil {
 			return toolError("get client suggestions", err), nil
@@ -129,8 +143,12 @@ func clientsSuggestionsHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func clientsAddHandler(c *pihole.Client) server.ToolHandlerFunc {
+func clientsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		client, _ := req.RequireString("client")
 
 		if err := validateMaxLength("client", client, maxNameLength); err != nil {
@@ -154,8 +172,12 @@ func clientsAddHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func clientsUpdateHandler(c *pihole.Client) server.ToolHandlerFunc {
+func clientsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		client, _ := req.RequireString("client")
 
 		if err := validateMaxLength("client", client, maxNameLength); err != nil {
@@ -179,8 +201,12 @@ func clientsUpdateHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func clientsDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
+func clientsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		client, _ := req.RequireString("client")
 
 		if err := validateMaxLength("client", client, maxNameLength); err != nil {
@@ -195,8 +221,12 @@ func clientsDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func clientsBatchDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
+func clientsBatchDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		items, err := req.RequireString("items")
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'items' is required (JSON array)"), nil

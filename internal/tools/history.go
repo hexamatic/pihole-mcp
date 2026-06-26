@@ -13,35 +13,43 @@ import (
 )
 
 // RegisterHistory registers activity history tools.
-func RegisterHistory(s *server.MCPServer, c *pihole.Client) {
-	addTool(s, mcp.NewTool("pihole_history_graph",
+func RegisterHistory(s *server.MCPServer, r *pihole.Registry) {
+	addTool(s, r, mcp.NewTool("pihole_history_graph",
+		mcp.WithTitleAnnotation("Activity Graph"),
 		mcp.WithDescription("In-memory query activity (FTL memory, last ~24h): total/cached/blocked/forwarded per slot. For arbitrary date ranges, use pihole_history_database."),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), historyGraphHandler(c))
+	), historyGraphHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_history_clients",
+	addTool(s, r, mcp.NewTool("pihole_history_clients",
+		mcp.WithTitleAnnotation("Per-Client Activity"),
 		mcp.WithDescription("In-memory per-client query activity (FTL memory, last ~24h). For arbitrary date ranges, use pihole_history_database_clients."),
 		mcp.WithNumber("count", mcp.Description("Max clients to return (default 10, 0=all).")),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), historyClientsHandler(c))
+	), historyClientsHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_history_database",
+	addTool(s, r, mcp.NewTool("pihole_history_database",
+		mcp.WithTitleAnnotation("Long-Term Activity"),
 		mcp.WithDescription("Long-term query activity from the FTL database (durable, arbitrary date range). Returns time-bucketed totals for total/cached/blocked/forwarded queries."),
 		mcp.WithNumber("from", mcp.Description("Start Unix timestamp (default: 7 days ago).")),
 		mcp.WithNumber("until", mcp.Description("End Unix timestamp (default: now).")),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), historyDatabaseHandler(c))
+	), historyDatabaseHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_history_database_clients",
+	addTool(s, r, mcp.NewTool("pihole_history_database_clients",
+		mcp.WithTitleAnnotation("Long-Term Per-Client Activity"),
 		mcp.WithDescription("Long-term per-client query activity from the FTL database (durable, arbitrary date range)."),
 		mcp.WithNumber("from", mcp.Description("Start Unix timestamp (default: 7 days ago).")),
 		mcp.WithNumber("until", mcp.Description("End Unix timestamp (default: now).")),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), historyDatabaseClientsHandler(c))
+	), historyDatabaseClientsHandler(r))
 }
 
-func historyGraphHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func historyGraphHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var result pihole.HistoryResponse
 		if err := c.Get(ctx, "/history", &result); err != nil {
 			return toolError("get history", err), nil
@@ -51,8 +59,12 @@ func historyGraphHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func historyClientsHandler(c *pihole.Client) server.ToolHandlerFunc {
+func historyClientsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		count := int(req.GetFloat("count", 10))
 
 		params := make(map[string]string)
@@ -69,8 +81,12 @@ func historyClientsHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func historyDatabaseHandler(c *pihole.Client) server.ToolHandlerFunc {
+func historyDatabaseHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		from, until := getTimeRange(req, 7*24*time.Hour)
 		path := "/history/database" + format.QueryParams(map[string]string{
 			"from":  from,
@@ -86,8 +102,12 @@ func historyDatabaseHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func historyDatabaseClientsHandler(c *pihole.Client) server.ToolHandlerFunc {
+func historyDatabaseClientsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		from, until := getTimeRange(req, 7*24*time.Hour)
 		path := "/history/database/clients" + format.QueryParams(map[string]string{
 			"from":  from,

@@ -12,8 +12,9 @@ import (
 )
 
 // RegisterDomains registers domain management tools.
-func RegisterDomains(s *server.MCPServer, c *pihole.Client) {
-	addTool(s, mcp.NewTool("pihole_domains_list",
+func RegisterDomains(s *server.MCPServer, r *pihole.Registry) {
+	addTool(s, r, mcp.NewTool("pihole_domains_list",
+		mcp.WithTitleAnnotation("List Domain Rules"),
 		mcp.WithDescription("List domains on allow/deny lists. Filter by type (allow/deny) and kind (exact/regex). Use pihole_search_domains for cross-list search."),
 		mcp.WithString("type", mcp.Description("Filter: 'allow' or 'deny'."), mcp.Enum("allow", "deny")),
 		mcp.WithString("kind", mcp.Description("Filter: 'exact' or 'regex'."), mcp.Enum("exact", "regex")),
@@ -21,9 +22,10 @@ func RegisterDomains(s *server.MCPServer, c *pihole.Client) {
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithOutputSchema[DomainsListOutput](),
-	), domainsListHandler(c))
+	), domainsListHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_domains_add",
+	addTool(s, r, mcp.NewTool("pihole_domains_add",
+		mcp.WithTitleAnnotation("Add Domain Rule"),
 		mcp.WithDescription("Add domains to an allow or deny list. Supports bulk add via comma-separated domains. Use pihole_search_domains first to avoid duplicates."),
 		mcp.WithString("type", mcp.Required(), mcp.Description("'allow' or 'deny'."), mcp.Enum("allow", "deny")),
 		mcp.WithString("kind", mcp.Required(), mcp.Description("'exact' or 'regex'."), mcp.Enum("exact", "regex")),
@@ -31,9 +33,10 @@ func RegisterDomains(s *server.MCPServer, c *pihole.Client) {
 		mcp.WithString("comment", mcp.Description("Comment for the entry.")),
 		mcp.WithBoolean("enabled", mcp.Description("Enabled state (default true).")),
 		mcp.WithOpenWorldHintAnnotation(true),
-	), domainsAddHandler(c))
+	), domainsAddHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_domains_update",
+	addTool(s, r, mcp.NewTool("pihole_domains_update",
+		mcp.WithTitleAnnotation("Update Domain Rule"),
 		mcp.WithDescription("Update a domain entry's comment, enabled status, or move it between allow/deny lists."),
 		mcp.WithString("type", mcp.Required(), mcp.Description("Current type: 'allow' or 'deny'."), mcp.Enum("allow", "deny")),
 		mcp.WithString("kind", mcp.Required(), mcp.Description("Current kind: 'exact' or 'regex'."), mcp.Enum("exact", "regex")),
@@ -41,26 +44,32 @@ func RegisterDomains(s *server.MCPServer, c *pihole.Client) {
 		mcp.WithString("comment", mcp.Description("Updated comment.")),
 		mcp.WithBoolean("enabled", mcp.Description("Updated enabled status.")),
 		mcp.WithIdempotentHintAnnotation(true),
-	), domainsUpdateHandler(c))
+	), domainsUpdateHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_domains_delete",
+	addTool(s, r, mcp.NewTool("pihole_domains_delete",
+		mcp.WithTitleAnnotation("Delete Domain Rule"),
 		mcp.WithDescription("Remove a domain from an allow or deny list. Requires the exact type, kind, and domain."),
 		mcp.WithString("type", mcp.Required(), mcp.Description("'allow' or 'deny'."), mcp.Enum("allow", "deny")),
 		mcp.WithString("kind", mcp.Required(), mcp.Description("'exact' or 'regex'."), mcp.Enum("exact", "regex")),
 		mcp.WithString("domain", mcp.Required(), mcp.Description("Domain to remove.")),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
-	), domainsDeleteHandler(c))
+	), domainsDeleteHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_domains_batch_delete",
+	addTool(s, r, mcp.NewTool("pihole_domains_batch_delete",
+		mcp.WithTitleAnnotation("Batch Delete Domain Rules"),
 		mcp.WithDescription("Remove multiple domains at once. Each item needs domain, type (allow/deny), and kind (exact/regex)."),
 		mcp.WithString("items", mcp.Required(), mcp.Description("JSON array: [{\"item\":\"domain\",\"type\":\"deny\",\"kind\":\"exact\"}]")),
 		mcp.WithDestructiveHintAnnotation(true),
-	), domainsBatchDeleteHandler(c))
+	), domainsBatchDeleteHandler(r))
 }
 
-func domainsListHandler(c *pihole.Client) server.ToolHandlerFunc {
+func domainsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		path := "/domains"
 		if t := req.GetString("type", ""); t != "" {
 			path += "/" + t
@@ -130,8 +139,12 @@ func domainsListHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func domainsAddHandler(c *pihole.Client) server.ToolHandlerFunc {
+func domainsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		t, _ := req.RequireString("type")
 		k, _ := req.RequireString("kind")
 		domain, _ := req.RequireString("domain")
@@ -172,8 +185,12 @@ func domainsAddHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func domainsUpdateHandler(c *pihole.Client) server.ToolHandlerFunc {
+func domainsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		t, _ := req.RequireString("type")
 		k, _ := req.RequireString("kind")
 		domain, _ := req.RequireString("domain")
@@ -203,8 +220,12 @@ func domainsUpdateHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func domainsDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
+func domainsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		t, _ := req.RequireString("type")
 		k, _ := req.RequireString("kind")
 		domain, _ := req.RequireString("domain")
@@ -222,8 +243,12 @@ func domainsDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func domainsBatchDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
+func domainsBatchDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		items, err := req.RequireString("items")
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'items' is required (JSON array)"), nil

@@ -15,24 +15,30 @@ import (
 )
 
 // RegisterTeleporter registers teleporter export and import tools.
-func RegisterTeleporter(s *server.MCPServer, c *pihole.Client) {
-	addTool(s, mcp.NewTool("pihole_teleporter_export",
+func RegisterTeleporter(s *server.MCPServer, r *pihole.Registry) {
+	addTool(s, r, mcp.NewTool("pihole_teleporter_export",
+		mcp.WithTitleAnnotation("Export Backup"),
 		mcp.WithDescription("Export a full Pi-hole configuration backup as a zip archive. Returns the saved file path and size."),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), teleporterExportHandler(c))
+	), teleporterExportHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_teleporter_import",
+	addTool(s, r, mcp.NewTool("pihole_teleporter_import",
+		mcp.WithTitleAnnotation("Import Backup"),
 		mcp.WithDescription("Import a Pi-hole configuration backup from a zip archive. Selectively import config, gravity tables, and DHCP leases."),
 		mcp.WithString("file_path", mcp.Required(), mcp.Description("Absolute path to the backup zip file.")),
 		mcp.WithBoolean("config", mcp.Description("Import Pi-hole configuration (default true).")),
 		mcp.WithBoolean("gravity", mcp.Description("Import gravity database tables (default true).")),
 		mcp.WithBoolean("dhcp_leases", mcp.Description("Import DHCP leases (default true).")),
 		mcp.WithDestructiveHintAnnotation(true),
-	), teleporterImportHandler(c))
+	), teleporterImportHandler(r))
 }
 
-func teleporterExportHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func teleporterExportHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		resp, err := c.DoRaw(ctx, "GET", "/teleporter", nil)
 		if err != nil {
 			return toolError("export backup", err), nil
@@ -59,8 +65,12 @@ func teleporterExportHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func teleporterImportHandler(c *pihole.Client) server.ToolHandlerFunc {
+func teleporterImportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		filePath, err := req.RequireString("file_path")
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'file_path' is required"), nil

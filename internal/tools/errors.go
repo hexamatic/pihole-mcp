@@ -9,8 +9,8 @@ import (
 )
 
 // toolError creates an actionable MCP tool error from a Pi-hole API error.
-// It inspects the error type and adds contextual guidance to help the user or LLM
-// understand what went wrong and how to fix it.
+// It inspects the error type and adds contextual guidance for tool clients
+// to understand what went wrong and how to fix it.
 func toolError(action string, err error) *mcp.CallToolResult {
 	msg := fmt.Sprintf("Failed to %s", action)
 

@@ -12,45 +12,55 @@ import (
 )
 
 // RegisterNetwork registers network information tools.
-func RegisterNetwork(s *server.MCPServer, c *pihole.Client) {
-	addTool(s, mcp.NewTool("pihole_network_devices",
+func RegisterNetwork(s *server.MCPServer, r *pihole.Registry) {
+	addTool(s, r, mcp.NewTool("pihole_network_devices",
+		mcp.WithTitleAnnotation("Network Devices"),
 		mcp.WithDescription("Devices seen on the network: MAC, IPs, hostnames, vendor, query count, and first/last seen timestamps. Returns 20 by default."),
 		mcp.WithNumber("max_devices", mcp.Description("Max devices (default 20).")),
 		mcp.WithNumber("max_addresses", mcp.Description("Max IPs per device (default 3).")),
 		detailParam,
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), networkDevicesHandler(c))
+	), networkDevicesHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_network_gateway",
+	addTool(s, r, mcp.NewTool("pihole_network_gateway",
+		mcp.WithTitleAnnotation("Network Gateway"),
 		mcp.WithDescription("Network gateway details: address, interface, address family, and local interface IPs."),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), networkGatewayHandler(c))
+	), networkGatewayHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_network_info",
+	addTool(s, r, mcp.NewTool("pihole_network_info",
+		mcp.WithTitleAnnotation("Network Summary"),
 		mcp.WithDescription("Lightweight summary of routing table and interface state. For detailed per-route or per-interface data, use pihole_network_routes or pihole_network_interfaces."),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), networkInfoHandler(c))
+	), networkInfoHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_network_routes",
+	addTool(s, r, mcp.NewTool("pihole_network_routes",
+		mcp.WithTitleAnnotation("Routing Table"),
 		mcp.WithDescription("System routing table entries with family, scope, source, destination, gateway, and outbound interface."),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), networkRoutesHandler(c))
+	), networkRoutesHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_network_interfaces",
+	addTool(s, r, mcp.NewTool("pihole_network_interfaces",
+		mcp.WithTitleAnnotation("Network Interfaces"),
 		mcp.WithDescription("Network interfaces with addresses, link state, speed, and traffic counters."),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), networkInterfacesHandler(c))
+	), networkInterfacesHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_network_delete_device",
+	addTool(s, r, mcp.NewTool("pihole_network_delete_device",
+		mcp.WithTitleAnnotation("Delete Network Device"),
 		mcp.WithDescription("Permanently delete a network device record by ID. Use pihole_network_devices first to find the ID. Devices may reappear if active on the network."),
 		mcp.WithNumber("id", mcp.Required(), mcp.Description("Numeric device ID from pihole_network_devices output.")),
 		mcp.WithDestructiveHintAnnotation(true),
-	), networkDeleteDeviceHandler(c))
+	), networkDeleteDeviceHandler(r))
 }
 
-func networkDevicesHandler(c *pihole.Client) server.ToolHandlerFunc {
+func networkDevicesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		maxDev := int(req.GetFloat("max_devices", 20))
 		maxAddr := int(req.GetFloat("max_addresses", 3))
 
@@ -105,8 +115,12 @@ func networkDevicesHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func networkGatewayHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func networkGatewayHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var result pihole.GatewayResponse
 		if err := c.Get(ctx, "/network/gateway", &result); err != nil {
 			return toolError("get gateway", err), nil
@@ -127,8 +141,12 @@ func networkGatewayHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func networkInfoHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func networkInfoHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var routes pihole.NetworkRoutesResponse
 		var interfaces pihole.NetworkInterfacesResponse
 
@@ -165,8 +183,12 @@ func networkInfoHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func networkRoutesHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func networkRoutesHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var result pihole.NetworkRoutesResponse
 		if err := c.Get(ctx, "/network/routes", &result); err != nil {
 			return toolError("get routes", err), nil
@@ -197,8 +219,12 @@ func networkRoutesHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func networkInterfacesHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func networkInterfacesHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var result pihole.NetworkInterfacesResponse
 		if err := c.Get(ctx, "/network/interfaces", &result); err != nil {
 			return toolError("get interfaces", err), nil
@@ -252,8 +278,12 @@ func formatStatValue(v *pihole.NetworkInterfaceValue) string {
 	return fmt.Sprintf("%.2f%sB", v.Value, v.Unit)
 }
 
-func networkDeleteDeviceHandler(c *pihole.Client) server.ToolHandlerFunc {
+func networkDeleteDeviceHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		id := int(req.GetFloat("id", 0))
 		if id <= 0 {
 			return mcp.NewToolResultError("Parameter 'id' is required and must be a positive integer. Use pihole_network_devices to find the ID."), nil

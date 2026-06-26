@@ -13,53 +13,63 @@ import (
 )
 
 // RegisterConfig registers Pi-hole configuration tools.
-func RegisterConfig(s *server.MCPServer, c *pihole.Client) {
-	addTool(s, mcp.NewTool("pihole_config_get",
+func RegisterConfig(s *server.MCPServer, r *pihole.Registry) {
+	addTool(s, r, mcp.NewTool("pihole_config_get",
+		mcp.WithTitleAnnotation("Get Configuration"),
 		mcp.WithDescription("Get Pi-hole configuration. Specify a section (dns, webserver, dhcp, etc.) for a subset, or omit for full config."),
 		mcp.WithString("section", mcp.Description("Config section: dns, webserver, dhcp, files, misc, etc.")),
 		detailParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), configGetHandler(c))
+	), configGetHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_config_set",
+	addTool(s, r, mcp.NewTool("pihole_config_set",
+		mcp.WithTitleAnnotation("Set Configuration"),
 		mcp.WithDescription("Modify Pi-hole configuration. Provide nested JSON properties to change. Changes take effect immediately and can affect DNS behaviour system-wide."),
 		mcp.WithString("config", mcp.Required(), mcp.Description("JSON config object, e.g. {\"dns\":{\"blocking\":{\"active\":true}}}")),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(true),
-	), configSetHandler(c))
+	), configSetHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_config_get_value",
+	addTool(s, r, mcp.NewTool("pihole_config_get_value",
+		mcp.WithTitleAnnotation("Get Config Value"),
 		mcp.WithDescription("Get a specific configuration value by dotted path (e.g. dns.upstreams, webserver.port, dhcp.active)."),
 		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams or dns/upstreams.")),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), configGetValueHandler(c))
+	), configGetValueHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_config_add_value",
+	addTool(s, r, mcp.NewTool("pihole_config_add_value",
+		mcp.WithTitleAnnotation("Add Config Array Value"),
 		mcp.WithDescription("Add a value to a configuration array (e.g. add an upstream DNS server). Set restart=false to defer FTL restart."),
 		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams.")),
 		mcp.WithString("value", mcp.Required(), mcp.Description("Value to add.")),
 		mcp.WithBoolean("restart", mcp.Description("Restart FTL after change (default true).")),
 		mcp.WithIdempotentHintAnnotation(true),
-	), configAddValueHandler(c))
+	), configAddValueHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_config_remove_value",
+	addTool(s, r, mcp.NewTool("pihole_config_remove_value",
+		mcp.WithTitleAnnotation("Remove Config Array Value"),
 		mcp.WithDescription("Remove a value from a configuration array (e.g. remove an upstream DNS server). Set restart=false to defer FTL restart."),
 		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams.")),
 		mcp.WithString("value", mcp.Required(), mcp.Description("Value to remove.")),
 		mcp.WithBoolean("restart", mcp.Description("Restart FTL after change (default true).")),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
-	), configRemoveValueHandler(c))
+	), configRemoveValueHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_config_properties",
+	addTool(s, r, mcp.NewTool("pihole_config_properties",
+		mcp.WithTitleAnnotation("List Read-Only Config Keys"),
 		mcp.WithDescription("List Pi-hole config keys that are read-only — set via pihole.toml or env var, not modifiable through the API. Use after a pihole_config_set error to confirm whether a key is intentionally locked."),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), configPropertiesHandler(c))
+	), configPropertiesHandler(r))
 }
 
-func configGetHandler(c *pihole.Client) server.ToolHandlerFunc {
+func configGetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		path := "/config"
 		if section := req.GetString("section", ""); section != "" {
 			if err := validateMaxLength("section", section, maxConfigPathLen); err != nil {
@@ -113,8 +123,12 @@ func configGetHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func configSetHandler(c *pihole.Client) server.ToolHandlerFunc {
+func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		configStr, err := req.RequireString("config")
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'config' is required (JSON object)"), nil
@@ -124,6 +138,8 @@ func configSetHandler(c *pihole.Client) server.ToolHandlerFunc {
 		if err := c.Do(ctx, "PATCH", "/config", rawJSON(configStr), &result); err != nil {
 			return toolError("update config", err), nil
 		}
+
+		sendLog(ctx, mcp.LoggingLevelInfo, "config", map[string]any{"instance": c.Name(), "event": "config_updated"})
 
 		configJSON, _ := json.MarshalIndent(result.Config, "", "  ")
 
@@ -136,8 +152,12 @@ func configSetHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func configGetValueHandler(c *pihole.Client) server.ToolHandlerFunc {
+func configGetValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		element, err := req.RequireString("element")
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'element' is required"), nil
@@ -175,8 +195,12 @@ func configGetValueHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func configAddValueHandler(c *pihole.Client) server.ToolHandlerFunc {
+func configAddValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		element, err := req.RequireString("element")
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'element' is required"), nil
@@ -208,8 +232,12 @@ func configAddValueHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func configRemoveValueHandler(c *pihole.Client) server.ToolHandlerFunc {
+func configRemoveValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		element, err := req.RequireString("element")
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'element' is required"), nil
@@ -240,8 +268,12 @@ func configRemoveValueHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func configPropertiesHandler(c *pihole.Client) server.ToolHandlerFunc {
+func configPropertiesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var result pihole.ConfigPropertiesResponse
 		if err := c.Get(ctx, "/config/_properties", &result); err != nil {
 			return toolError("list config properties (requires Pi-hole FTL v6.6.1+)", err), nil

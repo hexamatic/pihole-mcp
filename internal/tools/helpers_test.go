@@ -93,10 +93,11 @@ func writeTestJSON(w http.ResponseWriter, v any) {
 }
 
 // callTool invokes a handler function directly and returns the text content.
-// Fatals on handler error or tool error.
-func callTool(t *testing.T, handlerFn func(*pihole.Client) server.ToolHandlerFunc, c *pihole.Client, args map[string]any) string {
+// Fatals on handler error or tool error. The client is wrapped in a
+// single-instance registry so existing call sites need no changes.
+func callTool(t *testing.T, handlerFn func(*pihole.Registry) server.ToolHandlerFunc, c *pihole.Client, args map[string]any) string {
 	t.Helper()
-	h := handlerFn(c)
+	h := handlerFn(pihole.SingleRegistry(c))
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = args
 	result, err := h(context.Background(), req)
@@ -117,9 +118,9 @@ func callTool(t *testing.T, handlerFn func(*pihole.Client) server.ToolHandlerFun
 
 // callToolExpectError invokes a handler and asserts the result is an error.
 // Returns the error text.
-func callToolExpectError(t *testing.T, handlerFn func(*pihole.Client) server.ToolHandlerFunc, c *pihole.Client, args map[string]any) string {
+func callToolExpectError(t *testing.T, handlerFn func(*pihole.Registry) server.ToolHandlerFunc, c *pihole.Client, args map[string]any) string {
 	t.Helper()
-	h := handlerFn(c)
+	h := handlerFn(pihole.SingleRegistry(c))
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = args
 	result, err := h(context.Background(), req)

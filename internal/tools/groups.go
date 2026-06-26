@@ -11,46 +11,55 @@ import (
 )
 
 // RegisterGroups registers group management tools.
-func RegisterGroups(s *server.MCPServer, c *pihole.Client) {
-	addTool(s, mcp.NewTool("pihole_groups_list",
+func RegisterGroups(s *server.MCPServer, r *pihole.Registry) {
+	addTool(s, r, mcp.NewTool("pihole_groups_list",
+		mcp.WithTitleAnnotation("List Groups"),
 		mcp.WithDescription("List groups used for organising domains and clients into sets with independent blocking rules."),
 		mcp.WithString("name", mcp.Description("Specific group name to look up.")),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), groupsListHandler(c))
+	), groupsListHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_groups_add",
+	addTool(s, r, mcp.NewTool("pihole_groups_add",
+		mcp.WithTitleAnnotation("Add Group"),
 		mcp.WithDescription("Create a group for organising domains and clients into sets with independent blocking rules."),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Group name.")),
 		mcp.WithString("comment", mcp.Description("Optional comment.")),
 		mcp.WithBoolean("enabled", mcp.Description("Enabled state (default true).")),
 		mcp.WithOpenWorldHintAnnotation(true),
-	), groupsAddHandler(c))
+	), groupsAddHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_groups_update",
+	addTool(s, r, mcp.NewTool("pihole_groups_update",
+		mcp.WithTitleAnnotation("Update Group"),
 		mcp.WithDescription("Update or rename a group. Changing the name updates all associated domain and client references."),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Current group name.")),
 		mcp.WithString("new_name", mcp.Description("New name (rename).")),
 		mcp.WithString("comment", mcp.Description("Updated comment.")),
 		mcp.WithBoolean("enabled", mcp.Description("Updated enabled status.")),
 		mcp.WithIdempotentHintAnnotation(true),
-	), groupsUpdateHandler(c))
+	), groupsUpdateHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_groups_delete",
+	addTool(s, r, mcp.NewTool("pihole_groups_delete",
+		mcp.WithTitleAnnotation("Delete Group"),
 		mcp.WithDescription("Delete a group by name. Domains and clients assigned to this group lose the association."),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Group name to delete.")),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
-	), groupsDeleteHandler(c))
+	), groupsDeleteHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_groups_batch_delete",
+	addTool(s, r, mcp.NewTool("pihole_groups_batch_delete",
+		mcp.WithTitleAnnotation("Batch Delete Groups"),
 		mcp.WithDescription("Delete multiple groups at once. Provide a JSON array of group names."),
 		mcp.WithString("items", mcp.Required(), mcp.Description("JSON array: [{\"item\":\"group_name\"}]")),
 		mcp.WithDestructiveHintAnnotation(true),
-	), groupsBatchDeleteHandler(c))
+	), groupsBatchDeleteHandler(r))
 }
 
-func groupsListHandler(c *pihole.Client) server.ToolHandlerFunc {
+func groupsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		path := "/groups"
 		if name := req.GetString("name", ""); name != "" {
 			path += "/" + name
@@ -83,8 +92,12 @@ func groupsListHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func groupsAddHandler(c *pihole.Client) server.ToolHandlerFunc {
+func groupsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		name, _ := req.RequireString("name")
 
 		if err := validateMaxLength("name", name, maxNameLength); err != nil {
@@ -111,8 +124,12 @@ func groupsAddHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func groupsUpdateHandler(c *pihole.Client) server.ToolHandlerFunc {
+func groupsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		name, _ := req.RequireString("name")
 
 		if err := validateMaxLength("name", name, maxNameLength); err != nil {
@@ -145,8 +162,12 @@ func groupsUpdateHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func groupsDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
+func groupsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		name, _ := req.RequireString("name")
 
 		if err := validateMaxLength("name", name, maxNameLength); err != nil {
@@ -161,8 +182,12 @@ func groupsDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func groupsBatchDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
+func groupsBatchDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		items, err := req.RequireString("items")
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'items' is required (JSON array)"), nil
