@@ -138,6 +138,7 @@ brews:
       owner: hexamatic
       name: homebrew-tap
       branch: main
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/hexamatic/pihole-mcp"
     description: "Pi-hole v6 MCP server — DNS blocking, domain management, statistics and network administration"
     license: "MIT"
@@ -158,6 +159,7 @@ scoops:
       owner: hexamatic
       name: scoop-bucket
       branch: main
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/hexamatic/pihole-mcp"
     description: "Pi-hole v6 MCP server — DNS blocking, domain management, statistics and network administration"
     license: MIT
