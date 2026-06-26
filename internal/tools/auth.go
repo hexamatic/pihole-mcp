@@ -12,22 +12,28 @@ import (
 )
 
 // RegisterAuth registers session management tools.
-func RegisterAuth(s *server.MCPServer, c *pihole.Client) {
-	addTool(s, mcp.NewTool("pihole_auth_sessions",
+func RegisterAuth(s *server.MCPServer, r *pihole.Registry) {
+	addTool(s, r, mcp.NewTool("pihole_auth_sessions",
+		mcp.WithTitleAnnotation("List Sessions"),
 		mcp.WithDescription("List active API sessions: remote address, user agent, and expiry. Useful for detecting unauthorised access."),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), authSessionsHandler(c))
+	), authSessionsHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_auth_revoke_session",
+	addTool(s, r, mcp.NewTool("pihole_auth_revoke_session",
+		mcp.WithTitleAnnotation("Revoke Session"),
 		mcp.WithDescription("Revoke an active API session by ID. Cannot revoke the current session used by this server."),
 		mcp.WithNumber("id", mcp.Required(), mcp.Description("Session ID to revoke.")),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
-	), authRevokeSessionHandler(c))
+	), authRevokeSessionHandler(r))
 }
 
-func authSessionsHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func authSessionsHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var result pihole.SessionsResponse
 		if err := c.Get(ctx, "/auth/sessions", &result); err != nil {
 			return toolError("get sessions", err), nil
@@ -52,8 +58,12 @@ func authSessionsHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func authRevokeSessionHandler(c *pihole.Client) server.ToolHandlerFunc {
+func authRevokeSessionHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		id := int(req.GetFloat("id", 0))
 		if id <= 0 {
 			return mcp.NewToolResultError("Parameter 'id' is required"), nil

@@ -12,18 +12,23 @@ import (
 )
 
 // RegisterSearch registers the domain search tool.
-func RegisterSearch(s *server.MCPServer, c *pihole.Client) {
-	addTool(s, mcp.NewTool("pihole_search_domains",
+func RegisterSearch(s *server.MCPServer, r *pihole.Registry) {
+	addTool(s, r, mcp.NewTool("pihole_search_domains",
+		mcp.WithTitleAnnotation("Search Domains in Lists"),
 		mcp.WithDescription("Search for a domain across all allow/deny lists and gravity blocklists. Use before modifying lists to check current state."),
 		mcp.WithString("domain", mcp.Required(), mcp.Description("Domain to search for.")),
 		mcp.WithBoolean("partial", mcp.Description("Enable partial/substring matching (default false).")),
 		mcp.WithNumber("max_results", mcp.Description("Max results per category (default 20).")),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), searchDomainsHandler(c))
+	), searchDomainsHandler(r))
 }
 
-func searchDomainsHandler(c *pihole.Client) server.ToolHandlerFunc {
+func searchDomainsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		domain, err := req.RequireString("domain")
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'domain' is required"), nil

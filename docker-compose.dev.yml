@@ -7,7 +7,7 @@
 
 services:
   pihole:
-    image: pihole/pihole:latest
+    image: pihole/pihole:2026.05.0
     container_name: pihole-dev
     ports:
       - "8081:80"       # Web UI + API
@@ -29,6 +29,35 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+  # Second Pi-hole for multi-instance development and testing. Gated behind the
+  # "multi" Compose profile so the default `just dev-up` flow is unchanged.
+  # Start both with `just dev-up-multi`.
+  pihole-secondary:
+    image: pihole/pihole:2026.05.0
+    container_name: pihole-dev-secondary
+    profiles: ["multi"]
+    ports:
+      - "8082:80"       # Web UI + API
+      - "5355:53/udp"   # DNS (non-standard port to avoid conflicts)
+      - "5355:53/tcp"
+    environment:
+      TZ: "UTC"
+      FTLCONF_webserver_api_password: "test"
+      FTLCONF_webserver_api_max_sessions: "128"
+      FTLCONF_dns_listeningMode: "single"
+    volumes:
+      - pihole_secondary_config:/etc/pihole
+      - pihole_secondary_dnsmasq:/etc/dnsmasq.d
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL -o /dev/null http://localhost/admin/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    restart: unless-stopped
+
 volumes:
   pihole_config:
   pihole_dnsmasq:
+  pihole_secondary_config:
+  pihole_secondary_dnsmasq:

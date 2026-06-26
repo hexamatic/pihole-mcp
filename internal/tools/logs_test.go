@@ -10,13 +10,13 @@ import (
 )
 
 // dnsLogHandler wraps logHandler for use with callTool.
-func dnsLogHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return logHandler(c, "/logs/dnsmasq")
+func dnsLogHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return logHandler(r, "/logs/dnsmasq")
 }
 
 // ftlLogHandler wraps logHandler for use with callTool.
-func ftlLogHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return logHandler(c, "/logs/ftl")
+func ftlLogHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return logHandler(r, "/logs/ftl")
 }
 
 func TestLogsDNS_Normal(t *testing.T) {

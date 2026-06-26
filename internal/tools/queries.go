@@ -12,8 +12,9 @@ import (
 )
 
 // RegisterQueries registers query log tools.
-func RegisterQueries(s *server.MCPServer, c *pihole.Client) {
-	addTool(s, mcp.NewTool("pihole_queries_search",
+func RegisterQueries(s *server.MCPServer, r *pihole.Registry) {
+	addTool(s, r, mcp.NewTool("pihole_queries_search",
+		mcp.WithTitleAnnotation("Search Query Log"),
 		mcp.WithDescription("Search DNS query log with filters by domain, client, type, status, and time range. Returns 25 most recent by default with cursor pagination."),
 		mcp.WithString("domain", mcp.Description("Domain filter (wildcards * supported).")),
 		mcp.WithString("client_ip", mcp.Description("Client IP filter (wildcards supported).")),
@@ -30,16 +31,21 @@ func RegisterQueries(s *server.MCPServer, c *pihole.Client) {
 		detailParam,
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), queriesSearchHandler(c))
+	), queriesSearchHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_queries_suggestions",
+	addTool(s, r, mcp.NewTool("pihole_queries_suggestions",
+		mcp.WithTitleAnnotation("Query Filter Suggestions"),
 		mcp.WithDescription("Available filter values for pihole_queries_search: known domains, clients, types, statuses, and reply types."),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), queriesSuggestionsHandler(c))
+	), queriesSuggestionsHandler(r))
 }
 
-func queriesSearchHandler(c *pihole.Client) server.ToolHandlerFunc {
+func queriesSearchHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		params := make(map[string]string)
 		for _, key := range []string{"domain", "client_ip", "client_name", "upstream", "type", "status", "reply", "dnssec"} {
 			if v := req.GetString(key, ""); v != "" {
@@ -119,8 +125,12 @@ func queriesSearchHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func queriesSuggestionsHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func queriesSuggestionsHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var result pihole.QuerySuggestions
 		if err := c.Get(ctx, "/queries/suggestions", &result); err != nil {
 			return toolError("get query suggestions", err), nil

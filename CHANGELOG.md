@@ -6,7 +6,41 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 The release body on GitHub for each tagged version is sourced from the matching section in this file. The `[Unreleased]` section accumulates user-visible changes between releases.
 
-## [Unreleased]
+## [0.5.0] - 2026-06-26
+
+### Highlights
+
+This release makes pihole-mcp a first-class tool for households and homelabs that run more than one Pi-hole. **Multiple instances** can now be configured side by side (`PIHOLE_1_URL`, `PIHOLE_2_URL`, …); every tool takes an optional `instance` argument, results are labelled with their source instance, and read-only tools accept `instance=all` to query the whole fleet concurrently and return a single structured aggregate. Two new tools turn the server into a safe alternative to standalone sync utilities: **`pihole_instance_diff`** reports exactly how two Pi-holes differ (adlists, allow/deny rules, groups, clients, local DNS), and **`pihole_instance_sync`** reconciles a target towards a source as a dry-run plan you confirm before anything is written — one direction only, host-specific and secret settings never touched. A new **`pihole_padd` dashboard tool** collapses what used to be half a dozen calls — queries, blocking state, top domain/client, cache, versions, and host health — into one snapshot, making it the natural first call for any status check. Alignment with the latest MCP best practices deepens across the board: every tool now carries a human-readable **title** with consistent behaviour hints, long-running actions emit **progress notifications**, the server emits **structured log messages** (with credential redaction), and the `investigate_domain` prompt offers **argument completions** sourced from your live domain rules. Tracks the current Pi-hole release (FTL v6.6.2 / docker `2026.05.0`) and toolchain (mcp-go v0.54.1).
+
+### Added
+
+- **Multi-instance support** — configure several Pi-holes with `PIHOLE_1_URL`/`PIHOLE_1_PASSWORD` (optional `PIHOLE_1_NAME`), `PIHOLE_2_URL`, and so on. The single-instance `PIHOLE_URL`/`PIHOLE_PASSWORD` form is unchanged and is named `primary`. Every tool gains an optional `instance` argument (advertised on the schema only when more than one instance is configured) and labels its result with the source instance. Read-only tools also accept `instance=all`, which now queries every instance **concurrently** and returns a **structured aggregate** (`summary` counts plus a per-instance array, each entry labelled and carrying its own data or error) alongside the `### instance: <name>` text fallback; a failure on one instance no longer fails the whole call. State-changing tools reject `instance=all`. The first-declared instance is the default and backs all resources.
+- **`pihole_instance_diff`** — compare configuration between two instances (groups, adlists/allowlists, allow/deny exact and regex rules, clients, local DNS A/AAAA records, and CNAME records) and report what is added, changed, or only on the target. Read-only; runs no writes. Only registered when more than one instance is configured.
+- **`pihole_instance_sync`** — reconcile a target Pi-hole towards a source, one direction only. Runs as a dry-run **plan** by default and returns a `confirm_token`; re-run with `mode=apply` and that token to apply. The token is derived from the planned changes, so a configuration that drifts between planning and applying is rejected rather than silently overwritten. Adds and updates by default; deletions require `prune=true`. A teleporter backup of the target is taken before any change (disable with `snapshot=false`). Host-specific and identity/secret settings (DHCP, interface bindings, passwords, TLS, sessions, 2FA) are never synced; group-membership associations are not synced because Pi-hole group IDs are instance-local.
+- **`pihole_padd`** — a single-call dashboard snapshot (queries incl. `query_frequency`, blocking state, top domain/blocked/client, recent blocked, cache counters, FTL CPU/memory, CPU temperature, component versions, and — at `detail=full` — the primary network interface and host model). Structured output schema included. Recommended as the first call for a status overview.
+- **Tool titles** — all 77 tools now set a human-readable `title` annotation (e.g. "Dashboard Snapshot", "Top Domains") distinct from the programmatic name, which MCP clients can surface in their UI.
+- **Progress notifications** — `pihole_action_gravity_update` streams `notifications/progress` as the gravity rebuild proceeds (when the client supplies a `progressToken`); the flush actions emit start/complete progress.
+- **MCP logging** — the server now emits `notifications/message` log events for notable operations (gravity update lifecycle, DNS restart, log/network flush, configuration changes), tagged with the originating instance. Credential-bearing fields are redacted before delivery, and the SDK gates delivery by the client's configured log level.
+- **Prompt argument completions** — `completion/complete` is now supported; the `investigate_domain` prompt completes its `domain` argument from the configured allow/deny rules on the default instance.
+- **Structured output schemas** added to `pihole_info_system`, `pihole_stats_top_domains`, and `pihole_stats_top_clients` (structured content is emitted even when `format=csv`).
+- Development tooling for multi-instance work: a second Pi-hole behind the Compose `multi` profile, plus `just dev-up-multi` / `just dev-down-multi` and a multi-instance section in the E2E suite (gated on `PIHOLE_2_URL`).
+- A Docker-free, in-process Pi-hole emulator (`internal/pihole/piholefake`) that backs the unit tests for routing, aggregation, and sync, plus a `just sim` walkthrough that runs the full plan→apply→converge flow locally without containers. CI now starts a second Pi-hole and runs the multi-instance integration tests and E2E suite against both.
+
+### Fixed
+
+- E2E harness: a parameter-default expansion (`${2:-{}}`) appended a stray `}` to every supplied tool-argument payload, so multi-instance E2E calls sent malformed JSON. The harness now also retries transient transport failures (a dropped connection under rapid-fire load is not a tool failure) and isolates the single- and multi-instance environment forms, making the suite a reliable CI gate.
+
+### Changed
+
+- Server instructions now recommend `pihole_padd` as the entry point and document the Pi-hole FTL v6.6 / v6.5 configuration keys (`resolver.macNames`, `database.forceDisk`, `dns.cache.rrtype`) that are settable via `pihole_config_set`.
+- Tool count is now **77** (was 74): added `pihole_padd`, `pihole_instance_diff`, and `pihole_instance_sync` (the latter two appear only in multi-instance setups).
+- Behaviour annotations are now internally consistent: read-only tools are no longer also flagged destructive or open-world (mcp-go's `NewTool` defaults both to true), so MCP clients render accurate hints. A test locks this invariant in across every tool.
+
+### Dependencies
+
+- Bumped `github.com/mark3labs/mcp-go` v0.54.0 → v0.54.1.
+- Development and CI Pi-hole image pinned to `pihole/pihole:2026.05.0` (FTL v6.6.2 / Core v6.4.2 / Web v6.5).
+- CI golangci-lint pinned v2.11 → v2.12; release workflow Docker actions bumped to v4 (Node 24 runtime).
 
 ## [v0.4.0] - 2026-05-23
 
@@ -281,7 +315,8 @@ docker pull ghcr.io/hexamatic/pihole-mcp:0.1.0
 
 See the [README](https://github.com/hexamatic/pihole-mcp#readme) for client-specific setup guides (Claude Desktop, Cursor, Windsurf, VS Code, Cline).
 
-[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.5.0...HEAD
+[v0.5.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.4.0...v0.5.0
 [v0.4.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.3.0...v0.4.0
 [v0.3.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.2.0...v0.3.0
 [v0.2.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.1.0...v0.2.0

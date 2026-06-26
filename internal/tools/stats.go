@@ -14,57 +14,67 @@ import (
 )
 
 // RegisterStats registers statistics and metrics tools.
-func RegisterStats(s *server.MCPServer, c *pihole.Client) {
-	addTool(s, mcp.NewTool("pihole_stats_summary",
+func RegisterStats(s *server.MCPServer, r *pihole.Registry) {
+	addTool(s, r, mcp.NewTool("pihole_stats_summary",
+		mcp.WithTitleAnnotation("Statistics Summary"),
 		mcp.WithDescription("Overview of Pi-hole activity: queries, blocking rate, active clients, gravity size, and top query types. Start here for a health check."),
 		detailParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithOutputSchema[StatsSummaryOutput](),
-	), statsSummaryHandler(c))
+	), statsSummaryHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_stats_top_domains",
+	addTool(s, r, mcp.NewTool("pihole_stats_top_domains",
+		mcp.WithTitleAnnotation("Top Domains"),
 		mcp.WithDescription("Top queried or top blocked domains ranked by count. Returns 10 by default, max 50."),
 		mcp.WithBoolean("blocked", mcp.Description("True for top blocked, false/omit for top permitted.")),
 		mcp.WithNumber("count", mcp.Description("Number of results (default 10, max 50).")),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), statsTopDomainsHandler(c))
+		mcp.WithOutputSchema[TopListOutput](),
+	), statsTopDomainsHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_stats_top_clients",
+	addTool(s, r, mcp.NewTool("pihole_stats_top_clients",
+		mcp.WithTitleAnnotation("Top Clients"),
 		mcp.WithDescription("Most active network clients ranked by query count. Use blocked=true for clients with most blocked queries."),
 		mcp.WithBoolean("blocked", mcp.Description("True for most-blocked clients.")),
 		mcp.WithNumber("count", mcp.Description("Number of results (default 10, max 50).")),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), statsTopClientsHandler(c))
+		mcp.WithOutputSchema[TopListOutput](),
+	), statsTopClientsHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_stats_upstreams",
+	addTool(s, r, mcp.NewTool("pihole_stats_upstreams",
+		mcp.WithTitleAnnotation("Upstream Performance"),
 		mcp.WithDescription("Upstream DNS server performance: query counts, average response time, and standard deviation per server."),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), statsUpstreamsHandler(c))
+	), statsUpstreamsHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_stats_query_types",
+	addTool(s, r, mcp.NewTool("pihole_stats_query_types",
+		mcp.WithTitleAnnotation("Query Types"),
 		mcp.WithDescription("Distribution of DNS query types (A, AAAA, MX, PTR, HTTPS, etc.) with counts."),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), statsQueryTypesHandler(c))
+	), statsQueryTypesHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_stats_recent_blocked",
+	addTool(s, r, mcp.NewTool("pihole_stats_recent_blocked",
+		mcp.WithTitleAnnotation("Recently Blocked"),
 		mcp.WithDescription("Most recently blocked domains — useful for spotting new tracking domains or false positives in real-time."),
 		mcp.WithNumber("count", mcp.Description("Number of domains (default 10).")),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), statsRecentBlockedHandler(c))
+	), statsRecentBlockedHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_stats_database",
+	addTool(s, r, mcp.NewTool("pihole_stats_database",
+		mcp.WithTitleAnnotation("Long-Term Statistics"),
 		mcp.WithDescription("Long-term database statistics for a time range. Returns totals for queries, blocked, and clients."),
 		mcp.WithNumber("from", mcp.Description("Start Unix timestamp.")),
 		mcp.WithNumber("until", mcp.Description("End Unix timestamp.")),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), statsDatabaseHandler(c))
+	), statsDatabaseHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_stats_database_top_domains",
+	addTool(s, r, mcp.NewTool("pihole_stats_database_top_domains",
+		mcp.WithTitleAnnotation("Long-Term Top Domains"),
 		mcp.WithDescription("Top queried or blocked domains from the long-term database for a date range. Returns 10 by default, max 50."),
 		mcp.WithNumber("from", mcp.Description("Start Unix timestamp.")),
 		mcp.WithNumber("until", mcp.Description("End Unix timestamp.")),
@@ -72,9 +82,10 @@ func RegisterStats(s *server.MCPServer, c *pihole.Client) {
 		mcp.WithBoolean("blocked", mcp.Description("True for top blocked, false/omit for top permitted.")),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), statsDatabaseTopDomainsHandler(c))
+	), statsDatabaseTopDomainsHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_stats_database_top_clients",
+	addTool(s, r, mcp.NewTool("pihole_stats_database_top_clients",
+		mcp.WithTitleAnnotation("Long-Term Top Clients"),
 		mcp.WithDescription("Most active clients from the long-term database for a date range. Use blocked=true for clients with most blocked queries."),
 		mcp.WithNumber("from", mcp.Description("Start Unix timestamp.")),
 		mcp.WithNumber("until", mcp.Description("End Unix timestamp.")),
@@ -82,26 +93,32 @@ func RegisterStats(s *server.MCPServer, c *pihole.Client) {
 		mcp.WithBoolean("blocked", mcp.Description("True for most-blocked clients.")),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), statsDatabaseTopClientsHandler(c))
+	), statsDatabaseTopClientsHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_stats_database_upstreams",
+	addTool(s, r, mcp.NewTool("pihole_stats_database_upstreams",
+		mcp.WithTitleAnnotation("Long-Term Upstreams"),
 		mcp.WithDescription("Historical upstream DNS server performance for a date range: query counts and average response times."),
 		mcp.WithNumber("from", mcp.Description("Start Unix timestamp.")),
 		mcp.WithNumber("until", mcp.Description("End Unix timestamp.")),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), statsDatabaseUpstreamsHandler(c))
+	), statsDatabaseUpstreamsHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_stats_database_query_types",
+	addTool(s, r, mcp.NewTool("pihole_stats_database_query_types",
+		mcp.WithTitleAnnotation("Long-Term Query Types"),
 		mcp.WithDescription("Historical distribution of DNS query types (A, AAAA, MX, etc.) for a date range."),
 		mcp.WithNumber("from", mcp.Description("Start Unix timestamp.")),
 		mcp.WithNumber("until", mcp.Description("End Unix timestamp.")),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), statsDatabaseQueryTypesHandler(c))
+	), statsDatabaseQueryTypesHandler(r))
 }
 
-func statsSummaryHandler(c *pihole.Client) server.ToolHandlerFunc {
+func statsSummaryHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var stats pihole.StatsSummary
 		if err := c.Get(ctx, "/stats/summary", &stats); err != nil {
 			return toolError("get stats", err), nil
@@ -178,8 +195,12 @@ func statsSummaryHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func statsTopDomainsHandler(c *pihole.Client) server.ToolHandlerFunc {
+func statsTopDomainsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		count := getCountCapped(req, "count", 10, 50)
 		blocked := req.GetBool("blocked", false)
 
@@ -191,12 +212,15 @@ func statsTopDomainsHandler(c *pihole.Client) server.ToolHandlerFunc {
 
 		headers := []string{"Rank", "Domain", "Queries"}
 		rows := make([][]string, 0, len(result.Domains))
+		items := make([]TopItemOutput, 0, len(result.Domains))
 		for i, d := range result.Domains {
 			rows = append(rows, []string{fmt.Sprintf("%d", i+1), d.Domain, format.Number(d.Count)})
+			items = append(items, TopItemOutput{Name: d.Domain, Count: d.Count})
 		}
+		output := TopListOutput{Items: items, Count: len(items), Blocked: blocked}
 
 		if wantCSV(req) {
-			return mcp.NewToolResultText(format.CSV(headers, rows)), nil
+			return mcp.NewToolResultStructured(output, format.CSV(headers, rows)), nil
 		}
 
 		label := "permitted"
@@ -208,12 +232,16 @@ func statsTopDomainsHandler(c *pihole.Client) server.ToolHandlerFunc {
 		for i, d := range result.Domains {
 			fmt.Fprintf(&b, "%d. %s — %s\n", i+1, d.Domain, format.Number(d.Count))
 		}
-		return mcp.NewToolResultText(b.String()), nil
+		return mcp.NewToolResultStructured(output, b.String()), nil
 	}
 }
 
-func statsTopClientsHandler(c *pihole.Client) server.ToolHandlerFunc {
+func statsTopClientsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		count := getCountCapped(req, "count", 10, 50)
 		blocked := req.GetBool("blocked", false)
 
@@ -225,12 +253,19 @@ func statsTopClientsHandler(c *pihole.Client) server.ToolHandlerFunc {
 
 		headers := []string{"Rank", "IP", "Name", "Queries"}
 		rows := make([][]string, 0, len(result.Clients))
+		items := make([]TopItemOutput, 0, len(result.Clients))
 		for i, cl := range result.Clients {
 			rows = append(rows, []string{fmt.Sprintf("%d", i+1), cl.IP, cl.Name, format.Number(cl.Count)})
+			id := cl.Name
+			if id == "" {
+				id = cl.IP
+			}
+			items = append(items, TopItemOutput{Name: id, Count: cl.Count})
 		}
+		output := TopListOutput{Items: items, Count: len(items), Blocked: blocked}
 
 		if wantCSV(req) {
-			return mcp.NewToolResultText(format.CSV(headers, rows)), nil
+			return mcp.NewToolResultStructured(output, format.CSV(headers, rows)), nil
 		}
 
 		var b strings.Builder
@@ -244,12 +279,16 @@ func statsTopClientsHandler(c *pihole.Client) server.ToolHandlerFunc {
 			}
 			fmt.Fprintf(&b, "%d. %s — %s\n", i+1, name, format.Number(cl.Count))
 		}
-		return mcp.NewToolResultText(b.String()), nil
+		return mcp.NewToolResultStructured(output, b.String()), nil
 	}
 }
 
-func statsUpstreamsHandler(c *pihole.Client) server.ToolHandlerFunc {
+func statsUpstreamsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var result pihole.Upstreams
 		if err := c.Get(ctx, "/stats/upstreams", &result); err != nil {
 			return toolError("get upstreams", err), nil
@@ -282,8 +321,12 @@ func statsUpstreamsHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func statsQueryTypesHandler(c *pihole.Client) server.ToolHandlerFunc {
+func statsQueryTypesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var result pihole.QueryTypes
 		if err := c.Get(ctx, "/stats/query_types", &result); err != nil {
 			return toolError("get query types", err), nil
@@ -311,8 +354,12 @@ func statsQueryTypesHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func statsRecentBlockedHandler(c *pihole.Client) server.ToolHandlerFunc {
+func statsRecentBlockedHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		count := int(req.GetFloat("count", 10))
 		path := fmt.Sprintf("/stats/recent_blocked?count=%d", count)
 
@@ -343,8 +390,12 @@ func statsRecentBlockedHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func statsDatabaseHandler(c *pihole.Client) server.ToolHandlerFunc {
+func statsDatabaseHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		from, until := getTimeRange(req, 24*time.Hour)
 
 		params := map[string]string{
@@ -365,8 +416,12 @@ func statsDatabaseHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func statsDatabaseTopDomainsHandler(c *pihole.Client) server.ToolHandlerFunc {
+func statsDatabaseTopDomainsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		from, until := getTimeRange(req, 24*time.Hour)
 		count := getCountCapped(req, "count", 10, 50)
 		blocked := req.GetBool("blocked", false)
@@ -407,8 +462,12 @@ func statsDatabaseTopDomainsHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func statsDatabaseTopClientsHandler(c *pihole.Client) server.ToolHandlerFunc {
+func statsDatabaseTopClientsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		from, until := getTimeRange(req, 24*time.Hour)
 		count := getCountCapped(req, "count", 10, 50)
 		blocked := req.GetBool("blocked", false)
@@ -451,8 +510,12 @@ func statsDatabaseTopClientsHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func statsDatabaseUpstreamsHandler(c *pihole.Client) server.ToolHandlerFunc {
+func statsDatabaseUpstreamsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		from, until := getTimeRange(req, 24*time.Hour)
 
 		params := map[string]string{
@@ -493,8 +556,12 @@ func statsDatabaseUpstreamsHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func statsDatabaseQueryTypesHandler(c *pihole.Client) server.ToolHandlerFunc {
+func statsDatabaseQueryTypesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		from, until := getTimeRange(req, 24*time.Hour)
 
 		params := map[string]string{

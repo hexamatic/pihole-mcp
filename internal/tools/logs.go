@@ -11,27 +11,32 @@ import (
 )
 
 // RegisterLogs registers log retrieval tools.
-func RegisterLogs(s *server.MCPServer, c *pihole.Client) {
+func RegisterLogs(s *server.MCPServer, r *pihole.Registry) {
 	for _, l := range []struct {
-		name, endpoint, desc string
+		name, title, endpoint, desc string
 	}{
-		{"pihole_logs_dns", "/logs/dnsmasq",
+		{"pihole_logs_dns", "DNS Log", "/logs/dnsmasq",
 			"DNS resolver (dnsmasq) log. Use next_id for incremental polling to follow new entries."},
-		{"pihole_logs_ftl", "/logs/ftl",
+		{"pihole_logs_ftl", "FTL Log", "/logs/ftl",
 			"FTL engine log — internal Pi-hole diagnostics, database operations, and resolver events."},
-		{"pihole_logs_webserver", "/logs/webserver",
+		{"pihole_logs_webserver", "Web Server Log", "/logs/webserver",
 			"Web server access log — HTTP requests to the Pi-hole admin interface and API."},
 	} {
-		addTool(s, mcp.NewTool(l.name,
+		addTool(s, r, mcp.NewTool(l.name,
+			mcp.WithTitleAnnotation(l.title),
 			mcp.WithDescription(l.desc),
 			mcp.WithNumber("next_id", mcp.Description("Only return lines after this ID (incremental polling).")),
 			mcp.WithReadOnlyHintAnnotation(true),
-		), logHandler(c, l.endpoint))
+		), logHandler(r, l.endpoint))
 	}
 }
 
-func logHandler(c *pihole.Client, endpoint string) server.ToolHandlerFunc {
+func logHandler(r *pihole.Registry, endpoint string) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		path := endpoint
 		if nextID := req.GetFloat("next_id", 0); nextID > 0 {
 			path += fmt.Sprintf("?nextID=%.0f", nextID)

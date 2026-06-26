@@ -14,53 +14,66 @@ import (
 )
 
 // RegisterInfo registers system information tools.
-func RegisterInfo(s *server.MCPServer, c *pihole.Client) {
-	addTool(s, mcp.NewTool("pihole_info_system",
+func RegisterInfo(s *server.MCPServer, r *pihole.Registry) {
+	addTool(s, r, mcp.NewTool("pihole_info_system",
+		mcp.WithTitleAnnotation("System Health"),
 		mcp.WithDescription("System health: hostname, OS, CPU/memory/disk usage, load averages, temperature, and DNS service status."),
 		detailParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), infoSystemHandler(c))
+		mcp.WithOutputSchema[InfoSystemOutput](),
+	), infoSystemHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_info_version",
+	addTool(s, r, mcp.NewTool("pihole_info_version",
+		mcp.WithTitleAnnotation("Component Versions"),
 		mcp.WithDescription("Pi-hole component versions: core, FTL engine, web interface, and Docker tag if applicable."),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), infoVersionHandler(c))
+	), infoVersionHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_info_database",
+	addTool(s, r, mcp.NewTool("pihole_info_database",
+		mcp.WithTitleAnnotation("Database Info"),
 		mcp.WithDescription("Query database details: file size, total stored queries, and SQLite version."),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), infoDatabaseHandler(c))
+	), infoDatabaseHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_info_messages",
+	addTool(s, r, mcp.NewTool("pihole_info_messages",
+		mcp.WithTitleAnnotation("Diagnostic Messages"),
 		mcp.WithDescription("FTL diagnostic messages — warnings about DNS resolution failures, database issues, or configuration problems."),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), infoMessagesHandler(c))
+	), infoMessagesHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_info_client",
+	addTool(s, r, mcp.NewTool("pihole_info_client",
+		mcp.WithTitleAnnotation("Requesting Client Info"),
 		mcp.WithDescription("Information about the requesting client's IP address and connection. Does not require authentication."),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), infoClientHandler(c))
+	), infoClientHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_info_ftl",
+	addTool(s, r, mcp.NewTool("pihole_info_ftl",
+		mcp.WithTitleAnnotation("FTL Engine Info"),
 		mcp.WithDescription("FTL engine process info: PID, privacy level, client and domain counts, and database query total."),
 		detailParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), infoFTLHandler(c))
+	), infoFTLHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_info_metrics",
+	addTool(s, r, mcp.NewTool("pihole_info_metrics",
+		mcp.WithTitleAnnotation("Operational Metrics"),
 		mcp.WithDescription("Live DNS and DHCP operational metrics including cache contents, reply counts, and lease statistics."),
 		detailParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), infoMetricsHandler(c))
+	), infoMetricsHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_info_sensors",
+	addTool(s, r, mcp.NewTool("pihole_info_sensors",
+		mcp.WithTitleAnnotation("Hardware Sensors"),
 		mcp.WithDescription("Hardware temperature sensors with names, values, units, and paths."),
 		mcp.WithReadOnlyHintAnnotation(true),
-	), infoSensorsHandler(c))
+	), infoSensorsHandler(r))
 }
 
-func infoSystemHandler(c *pihole.Client) server.ToolHandlerFunc {
+func infoSystemHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var sysInfo pihole.SystemInfo
 		var hostInfo pihole.HostInfo
 		var sensors pihole.SensorsInfo
@@ -74,15 +87,30 @@ func infoSystemHandler(c *pihole.Client) server.ToolHandlerFunc {
 		sys := sysInfo.System
 		detail := getDetail(req)
 
+		output := InfoSystemOutput{
+			Hostname:    hostInfo.Host.Name,
+			Uptime:      sys.Uptime,
+			LoadAverage: sys.Load[0],
+			CPUCores:    sys.CPU.Nprocs,
+			CPUPercent:  sys.CPU.Perc,
+			MemoryUsed:  sys.Memory.RAM.Used,
+			MemoryTotal: sys.Memory.RAM.Total,
+			MemoryUnit:  sys.Memory.RAM.Unit,
+			MemoryPerc:  sys.Memory.RAM.Perc,
+			DiskPercent: sys.Disk.Perc,
+			DNSRunning:  sys.DNS.Running,
+		}
+
 		if detail == "minimal" {
 			mem := format.SizeWithUnit(sys.Memory.RAM.Used, sys.Memory.RAM.Unit)
 			dns := "up"
 			if !sys.DNS.Running {
 				dns = "down"
 			}
-			return mcp.NewToolResultText(fmt.Sprintf(
+			text := fmt.Sprintf(
 				"Load: %.2f | Memory: %s (%.0f%%) | DNS: %s | Uptime: %s",
-				sys.Load[0], mem, sys.Memory.RAM.Perc, dns, format.Duration(float64(sys.Uptime)))), nil
+				sys.Load[0], mem, sys.Memory.RAM.Perc, dns, format.Duration(float64(sys.Uptime)))
+			return mcp.NewToolResultStructured(output, text), nil
 		}
 
 		var b strings.Builder
@@ -116,12 +144,16 @@ func infoSystemHandler(c *pihole.Client) server.ToolHandlerFunc {
 			fmt.Fprintf(&b, "**Domain:** %s\n", format.ValueOr(hostInfo.Host.Domain, "N/A"))
 		}
 
-		return mcp.NewToolResultText(b.String()), nil
+		return mcp.NewToolResultStructured(output, b.String()), nil
 	}
 }
 
-func infoVersionHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func infoVersionHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var ver pihole.VersionInfo
 		if err := c.Get(ctx, "/info/version", &ver); err != nil {
 			return toolError("get version", err), nil
@@ -139,8 +171,12 @@ func infoVersionHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func infoDatabaseHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func infoDatabaseHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var db pihole.DatabaseInfo
 		if err := c.Get(ctx, "/info/database", &db); err != nil {
 			return toolError("get database info", err), nil
@@ -155,8 +191,12 @@ func infoDatabaseHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func infoMessagesHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func infoMessagesHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var msgs pihole.MessagesResponse
 		if err := c.Get(ctx, "/info/messages", &msgs); err != nil {
 			return toolError("get messages", err), nil
@@ -176,8 +216,12 @@ func infoMessagesHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func infoClientHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func infoClientHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var info pihole.ClientInfo
 		if err := c.Get(ctx, "/info/client", &info); err != nil {
 			return toolError("get client info", err), nil
@@ -189,8 +233,12 @@ func infoClientHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func infoFTLHandler(c *pihole.Client) server.ToolHandlerFunc {
+func infoFTLHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var ftl pihole.FTLInfo
 		if err := c.Get(ctx, "/info/ftl", &ftl); err != nil {
 			return toolError("get FTL info", err), nil
@@ -222,8 +270,12 @@ func infoFTLHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func infoMetricsHandler(c *pihole.Client) server.ToolHandlerFunc {
+func infoMetricsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var metrics pihole.MetricsInfo
 		if err := c.Get(ctx, "/info/metrics", &metrics); err != nil {
 			return toolError("get metrics", err), nil
@@ -269,8 +321,12 @@ func infoMetricsHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func infoSensorsHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func infoSensorsHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var sensors pihole.SensorsInfo
 		if err := c.Get(ctx, "/info/sensors", &sensors); err != nil {
 			return toolError("get sensors", err), nil

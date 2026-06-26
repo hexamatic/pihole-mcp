@@ -12,23 +12,29 @@ import (
 )
 
 // RegisterDHCP registers DHCP lease management tools.
-func RegisterDHCP(s *server.MCPServer, c *pihole.Client) {
-	addTool(s, mcp.NewTool("pihole_dhcp_leases",
+func RegisterDHCP(s *server.MCPServer, r *pihole.Registry) {
+	addTool(s, r, mcp.NewTool("pihole_dhcp_leases",
+		mcp.WithTitleAnnotation("List DHCP Leases"),
 		mcp.WithDescription("Active DHCP leases: IP, hostname, MAC address, and expiry. Empty if Pi-hole's DHCP server is disabled."),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), dhcpLeasesHandler(c))
+	), dhcpLeasesHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_dhcp_delete_lease",
+	addTool(s, r, mcp.NewTool("pihole_dhcp_delete_lease",
+		mcp.WithTitleAnnotation("Delete DHCP Lease"),
 		mcp.WithDescription("Remove an active DHCP lease by IP address. Only works when Pi-hole's DHCP server is enabled."),
 		mcp.WithString("ip", mcp.Required(), mcp.Description("IP address of the lease to remove.")),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
-	), dhcpDeleteLeaseHandler(c))
+	), dhcpDeleteLeaseHandler(r))
 }
 
-func dhcpLeasesHandler(c *pihole.Client) server.ToolHandlerFunc {
+func dhcpLeasesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var result pihole.DHCPLeasesResponse
 		if err := c.Get(ctx, "/dhcp/leases", &result); err != nil {
 			return toolError("get DHCP leases", err), nil
@@ -65,8 +71,12 @@ func dhcpLeasesHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func dhcpDeleteLeaseHandler(c *pihole.Client) server.ToolHandlerFunc {
+func dhcpDeleteLeaseHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		ip, err := req.RequireString("ip")
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'ip' is required"), nil

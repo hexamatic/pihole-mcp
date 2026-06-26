@@ -9,15 +9,36 @@ PASS=0
 FAIL=0
 ERRORS=()
 
+# is_transient reports whether a result is a transport-level failure (a dropped
+# connection, an unparseable response, or an empty result) rather than a genuine
+# tool outcome. Spawning one short-lived process per call hammers the local
+# Pi-hole's API socket, so the occasional connection reset is expected under
+# load and is retried rather than reported as a tool failure.
+is_transient() {
+    case "$1" in
+        ""|*"read tcp"*|*"connection refused"*|*"sending auth request"*|*"i/o timeout"*|*"connection reset"*|*"Parse error"*|*"EOF"*)
+            return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 call_tool() {
     local name="$1"
-    local args="${2:-{}}"
+    local args="${2:-}"
+    [ -z "$args" ] && args='{}'
     local label="${3:-$name}"
 
-    local result
-    result=$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"%s","arguments":%s}}\n' "$name" "$args" \
-        | PIHOLE_URL="${PIHOLE_URL}" PIHOLE_PASSWORD="${PIHOLE_PASSWORD}" timeout 30 "$BINARY" 2>/dev/null \
-        | tail -1)
+    local result attempt=0
+    while :; do
+        result=$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"%s","arguments":%s}}\n' "$name" "$args" \
+            | env -u PIHOLE_1_URL -u PIHOLE_1_PASSWORD -u PIHOLE_2_URL -u PIHOLE_2_PASSWORD \
+                PIHOLE_URL="${PIHOLE_URL}" PIHOLE_PASSWORD="${PIHOLE_PASSWORD}" timeout 30 "$BINARY" 2>/dev/null \
+            | tail -1)
+        if is_transient "$result" && [ "$attempt" -lt 3 ]; then
+            attempt=$((attempt+1)); sleep 0.3; continue
+        fi
+        break
+    done
 
     local is_error
     is_error=$(echo "$result" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print(d.get('result',{}).get('isError',False))" 2>/dev/null)
@@ -36,11 +57,58 @@ call_tool() {
     fi
 }
 
+# call_multi runs a tool against a multi-instance server (PIHOLE_1_*, PIHOLE_2_*).
+# A non-empty 4th argument inverts the result check (the call is expected to fail).
+call_multi() {
+    local name="$1"
+    local args="${2:-}"
+    [ -z "$args" ] && args='{}'
+    local label="${3:-$name}"
+    local expect_error="${4:-}"
+
+    local result attempt=0
+    while :; do
+        result=$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"%s","arguments":%s}}\n' "$name" "$args" \
+            | env -u PIHOLE_URL -u PIHOLE_PASSWORD \
+                PIHOLE_1_URL="${PIHOLE_1_URL}" PIHOLE_1_PASSWORD="${PIHOLE_1_PASSWORD}" PIHOLE_2_URL="${PIHOLE_2_URL}" PIHOLE_2_PASSWORD="${PIHOLE_2_PASSWORD}" timeout 30 "$BINARY" 2>/dev/null \
+            | tail -1)
+        if is_transient "$result" && [ "$attempt" -lt 3 ]; then
+            attempt=$((attempt+1)); sleep 0.3; continue
+        fi
+        break
+    done
+
+    local is_error
+    is_error=$(echo "$result" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print(d.get('result',{}).get('isError',False))" 2>/dev/null)
+
+    local ok="True"
+    if [ -n "$expect_error" ]; then
+        [ "$is_error" = "True" ] && ok="True" || ok="False"
+    else
+        [ "$is_error" = "True" ] && ok="False" || ok="True"
+    fi
+
+    if [ "$ok" = "True" ]; then
+        echo "  PASS: $label"
+        PASS=$((PASS+1))
+    else
+        echo "  FAIL: $label"
+        FAIL=$((FAIL+1))
+        ERRORS+=("$label")
+    fi
+}
+
 echo "=== pihole-mcp E2E Test Suite ==="
 echo "Binary: $BINARY"
 echo "Pi-hole: ${PIHOLE_URL}"
 echo ""
 
+echo "--- Dashboard ---"
+call_tool "pihole_padd"
+call_tool "pihole_padd" '{"detail":"minimal"}' "padd (minimal)"
+call_tool "pihole_padd" '{"detail":"full"}' "padd (full)"
+
+echo ""
 echo "--- DNS Control ---"
 call_tool "pihole_dns_get_blocking"
 call_tool "pihole_dns_set_blocking" '{"blocking":false,"timer":3}' "dns_set_blocking (disable 3s)"
@@ -166,6 +234,23 @@ call_tool "pihole_teleporter_export"
 echo ""
 echo "--- Actions ---"
 call_tool "pihole_action_restart_dns"
+
+# Multi-instance checks run only when a second instance is provided via
+# PIHOLE_2_URL (e.g. after `just dev-up-multi`). Instance 1's default name is
+# "instance-1" and instance 2's is "instance-2" unless PIHOLE_N_NAME is set.
+if [ -n "${PIHOLE_2_URL:-}" ]; then
+    echo ""
+    echo "--- Multi-instance ---"
+    call_multi "pihole_stats_summary" '{}' "stats_summary (default = instance 1)"
+    call_multi "pihole_stats_summary" '{"instance":"instance-2"}' "stats_summary (instance 2)"
+    call_multi "pihole_stats_summary" '{"instance":"all"}' "stats_summary (all, aggregated)"
+    call_multi "pihole_padd" '{"instance":"all"}' "padd (all, aggregated)"
+    call_multi "pihole_stats_summary" '{"instance":"ghost"}' "stats_summary (unknown instance, should fail)" expect_error
+    call_multi "pihole_dns_set_blocking" '{"blocking":false,"instance":"all"}' "set_blocking instance=all (should fail)" expect_error
+    call_multi "pihole_instance_diff" '{"source":"instance-1","target":"instance-2"}' "instance_diff (1 vs 2)"
+    call_multi "pihole_instance_sync" '{"source":"instance-1","target":"instance-2","mode":"plan","snapshot":false}' "instance_sync plan (1 -> 2)"
+    call_multi "pihole_instance_sync" '{"target":"instance-1"}' "instance_sync self-target (should fail)" expect_error
+fi
 
 echo ""
 echo "=============================="

@@ -19,6 +19,7 @@ import (
 // Client is an HTTP client for the Pi-hole v6 REST API.
 // It handles session-based authentication transparently.
 type Client struct {
+	name       string
 	baseURL    string
 	password   string
 	httpClient *http.Client
@@ -28,6 +29,20 @@ type Client struct {
 
 // Option configures the Pi-hole client.
 type Option func(*Client)
+
+// WithName sets a human-readable instance name used for log and error
+// attribution when multiple Pi-holes are configured.
+func WithName(name string) Option {
+	return func(c *Client) {
+		c.name = name
+	}
+}
+
+// Name returns the configured instance name (empty for single-instance setups
+// created without WithName).
+func (c *Client) Name() string {
+	return c.name
+}
 
 // WithTimeout sets the HTTP request timeout.
 func WithTimeout(d time.Duration) Option {

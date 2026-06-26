@@ -1,4 +1,4 @@
-// Pi-hole MCP Server — enables AI assistants to manage Pi-hole v6 instances.
+// Pi-hole MCP Server — MCP (Model Context Protocol) server for Pi-hole v6.
 package main
 
 import (
@@ -50,11 +50,14 @@ func run(transport, address string) error {
 		return fmt.Errorf("configuration error: %w", err)
 	}
 
-	client := pihole.New(cfg.URL, cfg.Password,
-		pihole.WithTimeout(cfg.RequestTimeout))
-	defer client.Close()
+	instances := make([]pihole.InstanceConfig, len(cfg.Instances))
+	for i, ic := range cfg.Instances {
+		instances[i] = pihole.InstanceConfig{Name: ic.Name, URL: ic.URL, Password: ic.Password}
+	}
+	registry := pihole.NewRegistry(instances, pihole.WithTimeout(cfg.RequestTimeout))
+	defer registry.Close()
 
-	srv := piholeserver.New(client)
+	srv := piholeserver.New(registry)
 
 	tp, err := telemetry.Init("pihole-mcp", piholeserver.Version)
 	if err != nil {

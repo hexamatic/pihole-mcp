@@ -10,18 +10,20 @@ import (
 )
 
 // RegisterDNS registers DNS blocking control tools.
-func RegisterDNS(s *server.MCPServer, c *pihole.Client) {
-	addTool(s,
+func RegisterDNS(s *server.MCPServer, r *pihole.Registry) {
+	addTool(s, r,
 		mcp.NewTool("pihole_dns_get_blocking",
+			mcp.WithTitleAnnotation("Get Blocking Status"),
 			mcp.WithDescription("Get the current DNS blocking status and any active timer for temporary blocking changes."),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithOutputSchema[BlockingStatusOutput](),
 		),
-		dnsGetBlockingHandler(c),
+		dnsGetBlockingHandler(r),
 	)
 
-	addTool(s,
+	addTool(s, r,
 		mcp.NewTool("pihole_dns_set_blocking",
+			mcp.WithTitleAnnotation("Set Blocking"),
 			mcp.WithDescription("Enable or disable DNS blocking. Set a timer (seconds) to automatically revert after a duration."),
 			mcp.WithBoolean("blocking",
 				mcp.Required(),
@@ -33,12 +35,16 @@ func RegisterDNS(s *server.MCPServer, c *pihole.Client) {
 			mcp.WithDestructiveHintAnnotation(true),
 			mcp.WithIdempotentHintAnnotation(true),
 		),
-		dnsSetBlockingHandler(c),
+		dnsSetBlockingHandler(r),
 	)
 }
 
-func dnsGetBlockingHandler(c *pihole.Client) server.ToolHandlerFunc {
-	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func dnsGetBlockingHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var status pihole.BlockingStatus
 		if err := c.Get(ctx, "/dns/blocking", &status); err != nil {
 			return toolError("get blocking status", err), nil
@@ -58,8 +64,12 @@ func dnsGetBlockingHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func dnsSetBlockingHandler(c *pihole.Client) server.ToolHandlerFunc {
+func dnsSetBlockingHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		blocking, err := req.RequireBool("blocking")
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'blocking' is required (true or false)"), nil

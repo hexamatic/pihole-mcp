@@ -1,5 +1,5 @@
 // Package format provides helpers for formatting Pi-hole API data
-// as text suitable for AI assistant consumption.
+// as compact Markdown and CSV for MCP tool responses.
 package format
 
 import (

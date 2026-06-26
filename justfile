@@ -85,10 +85,21 @@ dev-up:
     docker compose -f docker-compose.dev.yml up -d --wait
     @echo "\033[32m✓ Pi-hole running at http://localhost:8081/admin (password: test)\033[0m"
 
+# Start both Pi-hole instances (multi-instance dev: primary 8081 + secondary 8082)
+[group('dev')]
+dev-up-multi:
+    docker compose --profile multi -f docker-compose.dev.yml up -d --wait
+    @echo "\033[32m✓ Pi-hole primary at :8081, secondary at :8082 (password: test)\033[0m"
+
 # Stop local Pi-hole
 [group('dev')]
 dev-down:
     docker compose -f docker-compose.dev.yml down
+
+# Stop both Pi-hole instances (multi-instance dev)
+[group('dev')]
+dev-down-multi:
+    docker compose --profile multi -f docker-compose.dev.yml down
 
 # Reset Pi-hole (clean volumes)
 [group('dev')]
@@ -107,10 +118,22 @@ dev-logs:
 integration:
     PIHOLE_URL=http://localhost:8081 PIHOLE_PASSWORD=test go test -tags=integration -race -count=1 ./...
 
+# Run multi-instance integration tests against both local Pi-holes (8081 + 8082)
+[group('dev')]
+integration-multi:
+    PIHOLE_1_URL=http://localhost:8081 PIHOLE_1_PASSWORD=test \
+    PIHOLE_2_URL=http://localhost:8082 PIHOLE_2_PASSWORD=test \
+    go test -tags=integration -race -count=1 ./internal/pihole/
+
 # Run E2E test of all tools against local Pi-hole
 [group('dev')]
 e2e: build
     PIHOLE_URL=http://localhost:8081 PIHOLE_PASSWORD=test scripts/e2e-test.sh ./bin/pihole-mcp
+
+# Run the Docker-free multi-instance simulation (routing, aggregation, diff, sync)
+[group('dev')]
+sim:
+    go test -tags=sim -race -count=1 -v -run TestSimulation ./internal/tools/
 
 # Refresh testdata/fixtures/ from the live dev Pi-hole
 [group('dev')]

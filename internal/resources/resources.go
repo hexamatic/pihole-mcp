@@ -12,8 +12,12 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// RegisterAll registers all MCP resources and resource templates.
-func RegisterAll(s *server.MCPServer, c *pihole.Client) {
+// RegisterAll registers all MCP resources and resource templates. Resources
+// always read from the default (first-declared) instance; use the per-tool
+// "instance" argument to reach other instances.
+func RegisterAll(s *server.MCPServer, r *pihole.Registry) {
+	c := r.Default()
+
 	// Static resources.
 	s.AddResource(
 		mcp.NewResource("pihole://status", "Pi-hole Status",

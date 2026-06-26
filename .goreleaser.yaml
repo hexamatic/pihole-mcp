@@ -120,6 +120,68 @@ dockers_v2:
       DATE: "{{ .Date }}"
     dockerfile: Dockerfile.goreleaser
 
+# Homebrew tap — publishes a formula to hexamatic/homebrew-tap so macOS/Linux
+# users can `brew install hexamatic/tap/pihole-mcp`. Uses the default-flavour
+# archive only (the slim build is available via Docker / `go build -tags slim`).
+# The tap repository (hexamatic/homebrew-tap) must exist before a release runs;
+# `just release-dry` warns but does not fail if it is absent.
+#
+# NOTE: goreleaser marks `brews` (formulae) as deprecated in favour of
+# `homebrew_casks`. Formulae are kept deliberately — they install on both macOS
+# and Linux (Linuxbrew), whereas casks are macOS-only and need a quarantine
+# hook for unsigned binaries. Revisit once a v0.x binary-signing story exists.
+brews:
+  - name: pihole-mcp
+    ids:
+      - default
+    repository:
+      owner: hexamatic
+      name: homebrew-tap
+      branch: main
+    homepage: "https://github.com/hexamatic/pihole-mcp"
+    description: "Pi-hole v6 MCP server — DNS blocking, domain management, statistics and network administration"
+    license: "MIT"
+    install: |
+      bin.install "pihole-mcp"
+    test: |
+      assert_match "pihole-mcp", shell_output("#{bin}/pihole-mcp -version")
+
+# Scoop bucket — publishes a manifest to hexamatic/scoop-bucket so Windows
+# users can install via `scoop install pihole-mcp`. Uses the default-flavour
+# archive only; the slim build is available as a direct download from Releases.
+# The bucket repository (hexamatic/scoop-bucket) must exist before a release.
+scoops:
+  - name: pihole-mcp
+    ids:
+      - default
+    repository:
+      owner: hexamatic
+      name: scoop-bucket
+      branch: main
+    homepage: "https://github.com/hexamatic/pihole-mcp"
+    description: "Pi-hole v6 MCP server — DNS blocking, domain management, statistics and network administration"
+    license: MIT
+
+# Linux packages — attaches .deb and .rpm packages to the GitHub release for
+# users who prefer native package managers over tarballs. This is especially
+# relevant for Raspberry Pi OS (Debian-based), the most common Pi-hole host.
+# Uses the default build; no external repository hosting is required — users
+# download and install locally (`dpkg -i` / `rpm -i`).
+nfpms:
+  - id: pihole-mcp-packages
+    package_name: pihole-mcp
+    ids:
+      - pihole-mcp
+    vendor: Hexamatic
+    homepage: "https://github.com/hexamatic/pihole-mcp"
+    maintainer: "hexamatic <61142173+lloydmcl@users.noreply.github.com>"
+    description: "Pi-hole v6 MCP server — DNS blocking, domain management, statistics and network administration"
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/local/bin
+
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
   algorithm: sha256

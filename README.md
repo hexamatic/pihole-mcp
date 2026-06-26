@@ -6,7 +6,7 @@
 
 A production-grade [MCP](https://modelcontextprotocol.io/) server for [Pi-hole](https://pi-hole.net/) v6.
 
-**74 tools** | **9 prompts** | **5 resources** | Single Go binary | ~6MB compressed (slim: ~3.5MB)
+**77 tools** | **9 prompts** | **5 resources** | Multi-instance + sync | Single Go binary | ~6MB compressed (slim: ~3.5MB)
 
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/hexamatic/pihole-mcp)](https://goreportcard.com/report/github.com/hexamatic/pihole-mcp)
@@ -38,6 +38,19 @@ Then install the binary via one of the methods below.
 
 ## Installation
 
+### Homebrew
+
+```bash
+brew install hexamatic/tap/pihole-mcp
+```
+
+### Scoop (Windows)
+
+```powershell
+scoop bucket add hexamatic https://github.com/hexamatic/scoop-bucket
+scoop install pihole-mcp
+```
+
 ### Go Install
 
 ```bash
@@ -48,6 +61,18 @@ go install github.com/hexamatic/pihole-mcp/cmd/pihole-mcp@latest
 
 ```bash
 docker pull ghcr.io/hexamatic/pihole-mcp:latest
+```
+
+### Linux Packages
+
+`.deb` and `.rpm` packages for Debian-based (Ubuntu, Raspberry Pi OS) and RPM-based (Fedora, RHEL) distributions are available on the [Releases](https://github.com/hexamatic/pihole-mcp/releases) page.
+
+```bash
+# Debian / Ubuntu / Raspberry Pi OS
+sudo dpkg -i pihole-mcp_X.Y.Z_linux_amd64.deb
+
+# Fedora / RHEL / CentOS
+sudo rpm -i pihole-mcp_X.Y.Z_linux_amd64.rpm
 ```
 
 ### Binary Download
@@ -67,6 +92,57 @@ Pre-built binaries for Linux, macOS, and Windows (amd64 and arm64) are available
 Application passwords are recommended for automation — they bypass TOTP 2FA and can be revoked independently.
 
 `PIHOLE_RATE_LIMIT` and `PIHOLE_ALLOWED_ORIGINS` only apply to the `http` and `sse` transports; stdio is a single-process, single-user channel by definition and isn't gated.
+
+### Multiple instances
+
+To manage more than one Pi-hole, configure numbered instances instead of `PIHOLE_URL`/`PIHOLE_PASSWORD`:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PIHOLE_1_URL`, `PIHOLE_2_URL`, … | Yes | Base URL of each instance (contiguous from 1) |
+| `PIHOLE_1_PASSWORD`, `PIHOLE_2_PASSWORD`, … | Yes | Password for the matching instance |
+| `PIHOLE_1_NAME`, `PIHOLE_2_NAME`, … | No | Friendly name (default `instance-1`, `instance-2`, …) |
+
+```json
+{
+  "mcpServers": {
+    "pihole": {
+      "command": "pihole-mcp",
+      "env": {
+        "PIHOLE_1_URL": "http://192.168.1.2",
+        "PIHOLE_1_PASSWORD": "primary-password",
+        "PIHOLE_1_NAME": "downstairs",
+        "PIHOLE_2_URL": "http://192.168.1.3",
+        "PIHOLE_2_PASSWORD": "secondary-password",
+        "PIHOLE_2_NAME": "upstairs"
+      }
+    }
+  }
+}
+```
+
+Every tool then accepts an optional `instance` argument, and every result is labelled with the instance it came from. Omit the argument to target the first instance; pass a name to target a specific one; pass `instance=all` on a read-only tool (e.g. `pihole_padd`, `pihole_stats_summary`) to query every instance concurrently and get back a single structured aggregate (per-instance results plus a success/failure summary — one slow or unreachable instance no longer fails the whole call). State-changing tools require a single named instance. `PIHOLE_URL` and `PIHOLE_1_URL` are mutually exclusive.
+
+### Keeping instances in sync
+
+When you run more than one Pi-hole, two extra tools appear for keeping them aligned:
+
+- **`pihole_instance_diff`** — compare two instances and see exactly what differs across adlists/allowlists, allow/deny rules (exact and regex), groups, clients, local DNS A/AAAA records, and CNAME records. It is read-only and writes nothing.
+- **`pihole_instance_sync`** — push a source instance's configuration onto a target. It is deliberately cautious:
+  - **One direction only.** You name the `source` of truth and the `target`; only the target is ever written to.
+  - **Dry-run first.** It returns a plan and a `confirm_token` by default; nothing changes until you re-run with `mode=apply` and that token. If the configuration drifts between planning and applying, the token no longer matches and the apply is refused.
+  - **Add/update by default.** Entries on the target but not the source are left alone unless you pass `prune=true`.
+  - **Backed up.** A teleporter backup of the target is taken before any change (disable with `snapshot=false`).
+  - **Safe by omission.** Host-specific and identity settings — DHCP, interface bindings, passwords, TLS certificates, sessions, 2FA — are never synced. Group *membership* associations are not synced either, because Pi-hole group IDs are local to each instance.
+
+Example: preview what the `upstairs` Pi-hole is missing relative to `downstairs`, then apply it.
+
+```text
+pihole_instance_diff   { "source": "downstairs", "target": "upstairs" }
+pihole_instance_sync   { "source": "downstairs", "target": "upstairs" }            → returns a plan + confirm_token
+pihole_instance_sync   { "source": "downstairs", "target": "upstairs",
+                         "mode": "apply", "confirm_token": "<token from the plan>" }
+```
 
 ## Client Setup
 
@@ -233,6 +309,11 @@ Useful when you don't have Go installed or want to run the server on a remote ho
 
 ## Tools
 
+### Dashboard
+| Tool | Description |
+|------|-------------|
+| `pihole_padd` | One-call snapshot: queries, blocking, top domain/client, cache, versions, host health |
+
 ### DNS Control
 | Tool | Description |
 |------|-------------|
@@ -295,6 +376,12 @@ Useful when you don't have Go installed or want to run the server on a remote ho
 | `pihole_logs_dns/ftl/webserver` | Log retrieval |
 | `pihole_teleporter_export/import` | Configuration backup and restore |
 | `pihole_history_graph/clients` | Activity history |
+
+### Multi-instance (only with more than one Pi-hole configured)
+| Tool | Description |
+|------|-------------|
+| `pihole_instance_diff` | Compare configuration between two instances |
+| `pihole_instance_sync` | Reconcile a target instance towards a source (dry-run plan, then confirmed apply) |
 
 ### Response Options
 

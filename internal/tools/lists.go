@@ -12,50 +12,59 @@ import (
 )
 
 // RegisterLists registers blocklist/allowlist management tools.
-func RegisterLists(s *server.MCPServer, c *pihole.Client) {
-	addTool(s, mcp.NewTool("pihole_lists_list",
+func RegisterLists(s *server.MCPServer, r *pihole.Registry) {
+	addTool(s, r, mcp.NewTool("pihole_lists_list",
+		mcp.WithTitleAnnotation("List Blocklists"),
 		mcp.WithDescription("List configured blocklists and allowlists with domain counts and update status. Filter by type (allow/block)."),
 		mcp.WithString("type", mcp.Description("Filter: 'allow' or 'block'."), mcp.Enum("allow", "block")),
 		detailParam,
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
-	), listsListHandler(c))
+	), listsListHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_lists_add",
+	addTool(s, r, mcp.NewTool("pihole_lists_add",
+		mcp.WithTitleAnnotation("Add List"),
 		mcp.WithDescription("Subscribe to a new blocklist or allowlist URL. Run pihole_action_gravity_update afterwards to download it."),
 		mcp.WithString("address", mcp.Required(), mcp.Description("URL of the list.")),
 		mcp.WithString("type", mcp.Required(), mcp.Description("'allow' or 'block'."), mcp.Enum("allow", "block")),
 		mcp.WithString("comment", mcp.Description("Comment for the list.")),
 		mcp.WithBoolean("enabled", mcp.Description("Enabled state (default true).")),
 		mcp.WithOpenWorldHintAnnotation(true),
-	), listsAddHandler(c))
+	), listsAddHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_lists_update",
+	addTool(s, r, mcp.NewTool("pihole_lists_update",
+		mcp.WithTitleAnnotation("Update List"),
 		mcp.WithDescription("Update a blocklist or allowlist entry's comment, enabled status, or group assignments."),
 		mcp.WithString("address", mcp.Required(), mcp.Description("URL of the list.")),
 		mcp.WithString("type", mcp.Required(), mcp.Description("'allow' or 'block'."), mcp.Enum("allow", "block")),
 		mcp.WithString("comment", mcp.Description("Updated comment.")),
 		mcp.WithBoolean("enabled", mcp.Description("Updated enabled status.")),
 		mcp.WithIdempotentHintAnnotation(true),
-	), listsUpdateHandler(c))
+	), listsUpdateHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_lists_delete",
+	addTool(s, r, mcp.NewTool("pihole_lists_delete",
+		mcp.WithTitleAnnotation("Delete List"),
 		mcp.WithDescription("Unsubscribe from a blocklist or allowlist. Run pihole_action_gravity_update afterwards to apply changes."),
 		mcp.WithString("address", mcp.Required(), mcp.Description("URL to remove.")),
 		mcp.WithString("type", mcp.Required(), mcp.Description("'allow' or 'block'."), mcp.Enum("allow", "block")),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
-	), listsDeleteHandler(c))
+	), listsDeleteHandler(r))
 
-	addTool(s, mcp.NewTool("pihole_lists_batch_delete",
+	addTool(s, r, mcp.NewTool("pihole_lists_batch_delete",
+		mcp.WithTitleAnnotation("Batch Delete Lists"),
 		mcp.WithDescription("Unsubscribe from multiple lists at once. Each item needs URL and type (allow/block)."),
 		mcp.WithString("items", mcp.Required(), mcp.Description("JSON array: [{\"item\":\"url\",\"type\":\"block\"}]")),
 		mcp.WithDestructiveHintAnnotation(true),
-	), listsBatchDeleteHandler(c))
+	), listsBatchDeleteHandler(r))
 }
 
-func listsListHandler(c *pihole.Client) server.ToolHandlerFunc {
+func listsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		path := "/lists"
 		if t := req.GetString("type", ""); t != "" {
 			path += "?type=" + t
@@ -106,8 +115,12 @@ func listsListHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func listsAddHandler(c *pihole.Client) server.ToolHandlerFunc {
+func listsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		address, _ := req.RequireString("address")
 		t, _ := req.RequireString("type")
 
@@ -136,8 +149,12 @@ func listsAddHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func listsUpdateHandler(c *pihole.Client) server.ToolHandlerFunc {
+func listsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		address, _ := req.RequireString("address")
 		t, _ := req.RequireString("type")
 
@@ -167,8 +184,12 @@ func listsUpdateHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func listsDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
+func listsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		address, _ := req.RequireString("address")
 		t, _ := req.RequireString("type")
 
@@ -185,8 +206,12 @@ func listsDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
 	}
 }
 
-func listsBatchDeleteHandler(c *pihole.Client) server.ToolHandlerFunc {
+func listsBatchDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		items, err := req.RequireString("items")
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'items' is required (JSON array)"), nil
