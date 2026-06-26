@@ -12,7 +12,6 @@ services:
       FTLCONF_webserver_api_password: "test"
       FTLCONF_webserver_api_max_sessions: "64"
       FTLCONF_dns_listeningMode: "single"
-      FTLCONF_dns_upstreams: "8.8.8.8"
       SKIPGRAVITYONBOOT: "true"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsSL -o /dev/null http://localhost/admin/ || exit 1"]
@@ -31,7 +30,6 @@ services:
       FTLCONF_webserver_api_password: "test"
       FTLCONF_webserver_api_max_sessions: "64"
       FTLCONF_dns_listeningMode: "single"
-      FTLCONF_dns_upstreams: "8.8.8.8"
       SKIPGRAVITYONBOOT: "true"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsSL -o /dev/null http://localhost/admin/ || exit 1"]
