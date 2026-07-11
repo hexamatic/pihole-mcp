@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 The release body on GitHub for each tagged version is sourced from the matching section in this file. The `[Unreleased]` section accumulates user-visible changes between releases.
 
+## [Unreleased]
+
+### Changed
+
+- Integration tests now run against Pi-hole FTL v6.7 (docker `2026.07.2`).
+
+### Fixed
+
+- Dependency update pull requests no longer fail the Conventional Commits and CHANGELOG checks. Grouped Dependabot updates open their commit body with a single unwrappable line naming every bumped module, which exceeded commitlint's 100-character body limit, and the labels the changelog enforcer skips on were never created in the repository, so no dependency PR could ever satisfy either gate.
+- Widened the end-to-end suite's transient-failure retry budget to exponential backoff, and raised the API session cap on the CI Pi-hole containers. The suite spawns one process per tool call, each authenticating afresh, which exhausted FTL's session table and produced intermittent `sending auth request: EOF` failures.
+
+### Security
+
+- Added `govulncheck` to CI, running on every push and pull request plus a weekly schedule so that advisories disclosed against an unchanged tree are still caught.
+
 ## [v0.5.0] - 2026-06-26
 
 ### Highlights

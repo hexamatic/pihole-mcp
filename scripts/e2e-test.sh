@@ -22,6 +22,18 @@ is_transient() {
     esac
 }
 
+# The pressure this suite puts on FTL's session table does not clear in
+# milliseconds, so retry with exponential backoff rather than a flat 0.3s.
+# Six attempts spans 12.6s of sleep in the worst case, which is long enough for
+# FTL to reclaim a seat; the previous 3 x 0.3s budget was not, and produced
+# intermittent "sending auth request: EOF" failures in CI.
+MAX_ATTEMPTS=6
+
+backoff() {
+    # backoff <attempt> — 0.2s, 0.4s, 0.8s, 1.6s, 3.2s, 6.4s
+    sleep "$(awk "BEGIN{printf \"%.2f\", 0.2 * (2 ^ ($1 - 1))}")"
+}
+
 call_tool() {
     local name="$1"
     local args="${2:-}"
@@ -34,8 +46,8 @@ call_tool() {
             | env -u PIHOLE_1_URL -u PIHOLE_1_PASSWORD -u PIHOLE_2_URL -u PIHOLE_2_PASSWORD \
                 PIHOLE_URL="${PIHOLE_URL}" PIHOLE_PASSWORD="${PIHOLE_PASSWORD}" timeout 30 "$BINARY" 2>/dev/null \
             | tail -1)
-        if is_transient "$result" && [ "$attempt" -lt 3 ]; then
-            attempt=$((attempt+1)); sleep 0.3; continue
+        if is_transient "$result" && [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+            attempt=$((attempt+1)); backoff "$attempt"; continue
         fi
         break
     done
@@ -72,8 +84,8 @@ call_multi() {
             | env -u PIHOLE_URL -u PIHOLE_PASSWORD \
                 PIHOLE_1_URL="${PIHOLE_1_URL}" PIHOLE_1_PASSWORD="${PIHOLE_1_PASSWORD}" PIHOLE_2_URL="${PIHOLE_2_URL}" PIHOLE_2_PASSWORD="${PIHOLE_2_PASSWORD}" timeout 30 "$BINARY" 2>/dev/null \
             | tail -1)
-        if is_transient "$result" && [ "$attempt" -lt 3 ]; then
-            attempt=$((attempt+1)); sleep 0.3; continue
+        if is_transient "$result" && [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+            attempt=$((attempt+1)); backoff "$attempt"; continue
         fi
         break
     done

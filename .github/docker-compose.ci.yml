@@ -4,13 +4,13 @@
 
 services:
   pihole:
-    image: pihole/pihole:2026.05.0
+    image: pihole/pihole:2026.07.2
     ports:
       - "8081:80"
     environment:
       TZ: "UTC"
       FTLCONF_webserver_api_password: "test"
-      FTLCONF_webserver_api_max_sessions: "64"
+      FTLCONF_webserver_api_max_sessions: "256"
       FTLCONF_dns_listeningMode: "single"
       SKIPGRAVITYONBOOT: "true"
     healthcheck:
@@ -22,13 +22,13 @@ services:
 
   # Second instance for multi-instance routing, aggregation, and sync tests.
   pihole-secondary:
-    image: pihole/pihole:2026.05.0
+    image: pihole/pihole:2026.07.2
     ports:
       - "8082:80"
     environment:
       TZ: "UTC"
       FTLCONF_webserver_api_password: "test"
-      FTLCONF_webserver_api_max_sessions: "64"
+      FTLCONF_webserver_api_max_sessions: "256"
       FTLCONF_dns_listeningMode: "single"
       SKIPGRAVITYONBOOT: "true"
     healthcheck:
