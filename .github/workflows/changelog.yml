@@ -19,7 +19,10 @@ jobs:
       - uses: dangoslen/changelog-enforcer@v3.7.0
         with:
           changeLogPath: CHANGELOG.md
-          skipLabels: Skip-Changelog
+          # 'dependencies' is applied by Dependabot (see .github/dependabot.yml).
+          # Dependency bumps are rolled up into the release's Dependencies section
+          # at release-prep time rather than one changelog line per bot PR.
+          skipLabels: Skip-Changelog,dependencies
           missingUpdateErrorMessage: >-
             This PR does not update CHANGELOG.md. Add an entry under the
             [Unreleased] section describing the user-visible change, or apply

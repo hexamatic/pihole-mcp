@@ -1,0 +1,38 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # New advisories land against code that has not changed, so push/PR triggers
+  # alone leave a quiet repository silently vulnerable. The weekly run catches
+  # disclosures made against the existing tree.
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # govulncheck is the reachability layer: it fails only when an advisory is
+  # actually callable from our code, which keeps the signal high enough to gate
+  # merges on. Module-level advisories that we do not call are handled by
+  # Dependabot's security updates instead (see .github/dependabot.yml) — between
+  # the two, both "we can be exploited" and "we ship a vulnerable module" are
+  # covered without one drowning the other in noise.
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod
+          repo-checkout: false
