@@ -1,13 +1,14 @@
 {
   "ftl": {
-    "%cpu": 0.15833333134651184,
-    "%mem": 0.14220298826694489,
+    "%cpu": 0.19166666269302368,
+    "%mem": 0.13429704308509827,
     "allow_destructive": true,
     "clients": {
-      "active": 2,
-      "total": 2
+      "active": 1,
+      "total": 1
     },
     "database": {
+      "antigravity": 0,
       "clients": 0,
       "domains": {
         "allowed": {
@@ -19,9 +20,9 @@
           "total": 0
         }
       },
-      "gravity": 92277,
+      "gravity": 78451,
       "groups": 1,
-      "lists": 1,
+      "lists": 2,
       "regex": {
         "allowed": {
           "enabled": 0,
@@ -48,10 +49,10 @@
       "dhcp_release": 0,
       "dhcp_request": 0,
       "dns_auth_answered": 0,
-      "dns_cache_inserted": 31,
+      "dns_cache_inserted": 21,
       "dns_cache_live_freed": 0,
-      "dns_local_answered": 6,
-      "dns_queries_forwarded": 16,
+      "dns_local_answered": 17,
+      "dns_queries_forwarded": 10,
       "dns_stale_answered": 0,
       "dns_unanswered": 0,
       "dnssec_max_crypto_use": 0,
@@ -65,10 +66,10 @@
       "pxe": 0,
       "tcp_connections": 0
     },
-    "pid": 67,
+    "pid": 187,
     "privacy_level": 0,
-    "query_frequency": 0.73333333333333328,
-    "uptime": 499349.938828
+    "query_frequency": 0.9,
+    "uptime": 15263.399883
   },
-  "took": 0.00016045570373535156
+  "took": 0.00022482872009277344
 }

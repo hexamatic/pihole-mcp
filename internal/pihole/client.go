@@ -23,6 +23,7 @@ type Client struct {
 	baseURL    string
 	password   string
 	httpClient *http.Client
+	retry      RetryPolicy
 	mu         sync.RWMutex
 	sid        string
 }
@@ -66,6 +67,10 @@ func New(baseURL, password string, opts ...Option) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		retry: RetryPolicy{
+			MaxRetries: DefaultMaxRetries,
+			MaxDelay:   DefaultMaxRetryDelay,
+		},
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -74,30 +79,35 @@ func New(baseURL, password string, opts ...Option) *Client {
 }
 
 // Do executes an authenticated API request.
-// It automatically handles login and 401 retry.
+//
+// Transient failures are retried with backoff (see retry.go); a 401 refreshes
+// the session and replays the request once, regardless of method — a rejected
+// request was never processed, so replaying it is always safe.
 func (c *Client) Do(ctx context.Context, method, path string, body, result any) error {
-	sid, err := c.ensureAuth(ctx)
-	if err != nil {
-		return err
-	}
+	return c.withRetry(ctx, idempotentMethod(method), func() error {
+		sid, err := c.ensureAuth(ctx)
+		if err != nil {
+			return err
+		}
 
-	err = c.doRequest(ctx, method, path, sid, body, result)
-	if err == nil {
-		return nil
-	}
+		err = c.doRequest(ctx, method, path, sid, body, result)
+		if err == nil {
+			return nil
+		}
 
-	// On 401, re-authenticate and retry once.
-	var authErr *AuthError
-	if !isAuthError(err, &authErr) {
-		return err
-	}
+		// On 401, re-authenticate and retry once.
+		var authErr *AuthError
+		if !isAuthError(err, &authErr) {
+			return err
+		}
 
-	newSID, retryErr := c.handleAuthRetry(ctx, sid)
-	if retryErr != nil {
-		return retryErr
-	}
+		newSID, retryErr := c.handleAuthRetry(ctx, sid)
+		if retryErr != nil {
+			return retryErr
+		}
 
-	return c.doRequest(ctx, method, path, newSID, body, result)
+		return c.doRequest(ctx, method, path, newSID, body, result)
+	})
 }
 
 // Get performs an authenticated GET request.
@@ -123,75 +133,89 @@ func (c *Client) Delete(ctx context.Context, path string) error {
 
 // PostMultipart uploads a file via multipart form-data with optional JSON import options.
 // Used for teleporter import.
+//
+// The encoded body is built once and replayed from memory on retry. This is an
+// upload, so it is not treated as idempotent: only a rate-limited rejection —
+// which Pi-hole makes before reading the body — is ever re-sent.
 func (c *Client) PostMultipart(ctx context.Context, path, filePath string, importOptions map[string]any, result any) error {
-	sid, err := c.ensureAuth(ctx)
+	body, contentType, err := buildMultipartBody(filePath, importOptions)
 	if err != nil {
 		return err
 	}
 
+	return c.withRetry(ctx, false, func() error {
+		sid, err := c.ensureAuth(ctx)
+		if err != nil {
+			return err
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api"+path, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("creating multipart request: %w", err)
+		}
+		req.Header.Set("Content-Type", contentType)
+		req.Header.Set("X-FTL-SID", sid)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("sending multipart request: %w", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("reading response: %w", err)
+		}
+
+		if resp.StatusCode >= 400 {
+			return c.parseError(resp.StatusCode, resp.Header, path, respBody)
+		}
+
+		if result != nil && len(respBody) > 0 {
+			if err := json.Unmarshal(respBody, result); err != nil {
+				return fmt.Errorf("unmarshalling response: %w", err)
+			}
+		}
+
+		return nil
+	})
+}
+
+// buildMultipartBody encodes filePath (and any import options) as a multipart
+// form, returning the body and its Content-Type.
+func buildMultipartBody(filePath string, importOptions map[string]any) ([]byte, string, error) {
 	file, err := os.Open(filePath) //nolint:gosec // file path is user-provided via MCP tool parameter
 	if err != nil {
-		return fmt.Errorf("opening file %s: %w", filePath, err)
+		return nil, "", fmt.Errorf("opening file %s: %w", filePath, err)
 	}
+	defer func() { _ = file.Close() }()
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
 	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
 	if err != nil {
-		_ = file.Close()
-		return fmt.Errorf("creating form file: %w", err)
+		return nil, "", fmt.Errorf("creating form file: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("copying file data: %w", err)
+		return nil, "", fmt.Errorf("copying file data: %w", err)
 	}
-	_ = file.Close()
 
 	if importOptions != nil {
 		optJSON, err := json.Marshal(importOptions)
 		if err != nil {
-			return fmt.Errorf("marshalling import options: %w", err)
+			return nil, "", fmt.Errorf("marshalling import options: %w", err)
 		}
 		if err := writer.WriteField("import", string(optJSON)); err != nil {
-			return fmt.Errorf("writing import field: %w", err)
+			return nil, "", fmt.Errorf("writing import field: %w", err)
 		}
 	}
 
 	if err := writer.Close(); err != nil {
-		return fmt.Errorf("closing multipart writer: %w", err)
+		return nil, "", fmt.Errorf("closing multipart writer: %w", err)
 	}
 
-	url := c.baseURL + "/api" + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &body)
-	if err != nil {
-		return fmt.Errorf("creating multipart request: %w", err)
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("X-FTL-SID", sid)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("sending multipart request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("reading response: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		return c.parseError(resp.StatusCode, path, respBody)
-	}
-
-	if result != nil && len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, result); err != nil {
-			return fmt.Errorf("unmarshalling response: %w", err)
-		}
-	}
-
-	return nil
+	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
 // Close logs out the current session by sending DELETE /api/auth.
@@ -228,18 +252,32 @@ func (c *Client) Close() {
 // DoRaw executes an authenticated request and returns the raw HTTP response.
 // The caller is responsible for closing the response body.
 // Used for non-JSON endpoints (teleporter export, gravity stream).
+//
+// Only the transport failure is retried — once headers are in hand the response
+// is handed straight to the caller, who streams the body themselves.
 func (c *Client) DoRaw(ctx context.Context, method, path string, body any) (*http.Response, error) {
-	sid, err := c.ensureAuth(ctx)
+	var resp *http.Response
+	err := c.withRetry(ctx, idempotentMethod(method), func() error {
+		sid, err := c.ensureAuth(ctx)
+		if err != nil {
+			return err
+		}
+
+		req, err := c.buildRequest(ctx, method, path, sid, body)
+		if err != nil {
+			return err
+		}
+
+		resp, err = c.httpClient.Do(req) //nolint:bodyclose // the caller owns and closes the body
+		if err != nil {
+			return fmt.Errorf("pi-hole API request failed: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	req, err := c.buildRequest(ctx, method, path, sid, body)
-	if err != nil {
-		return nil, err
-	}
-
-	return c.httpClient.Do(req)
+	return resp, nil
 }
 
 // doRequest executes a single API request without auth retry logic.
@@ -267,7 +305,7 @@ func (c *Client) doRequest(ctx context.Context, method, path, sid string, body, 
 
 	// Error responses.
 	if resp.StatusCode >= 400 {
-		return c.parseError(resp.StatusCode, path, respBody)
+		return c.parseError(resp.StatusCode, resp.Header, path, respBody)
 	}
 
 	// Success — unmarshal if result is provided.
@@ -307,11 +345,12 @@ func (c *Client) buildRequest(ctx context.Context, method, path, sid string, bod
 	return req, nil
 }
 
-// parseError converts an error response body into a typed error.
-func (c *Client) parseError(statusCode int, path string, body []byte) error {
+// parseError converts an error response into a typed error.
+func (c *Client) parseError(statusCode int, header http.Header, path string, body []byte) error {
 	apiErr := &APIError{
 		StatusCode: statusCode,
 		Endpoint:   path,
+		RetryAfter: parseRetryAfter(header),
 	}
 
 	var errResp errorResponse

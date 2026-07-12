@@ -587,16 +587,17 @@ type MessagesResponse struct {
 }
 
 // FTLMessage is a single FTL diagnostic message.
+//
+// The text lives in "plain" — there is no "message" field, and the blob1..blob5
+// columns are an internal detail of FTL's message table that the API does not
+// expose. Reading the wrong key here is what left pihole_info_messages
+// rendering a type and a timestamp with no text at all.
 type FTLMessage struct {
 	ID        int    `json:"id"`
 	Timestamp int    `json:"timestamp"`
 	Type      string `json:"type"`
-	Message   string `json:"message"`
-	Blob1     string `json:"blob1"`
-	Blob2     string `json:"blob2"`
-	Blob3     string `json:"blob3"`
-	Blob4     string `json:"blob4"`
-	Blob5     string `json:"blob5"`
+	Plain     string `json:"plain"`
+	HTML      string `json:"html"`
 }
 
 // ClientInfo is the response from GET /api/info/client.

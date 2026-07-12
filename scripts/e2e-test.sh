@@ -34,11 +34,14 @@ backoff() {
     sleep "$(awk "BEGIN{printf \"%.2f\", 0.2 * (2 ^ ($1 - 1))}")"
 }
 
+# call_tool <name> [args] [label] [expect_error]
+# A non-empty 4th argument inverts the check: the call is expected to fail.
 call_tool() {
     local name="$1"
     local args="${2:-}"
     [ -z "$args" ] && args='{}'
     local label="${3:-$name}"
+    local expect_error="${4:-}"
 
     local result attempt=0
     while :; do
@@ -58,7 +61,13 @@ call_tool() {
     local content
     content=$(echo "$result" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());[print(c.get('text','')) for c in d.get('result',{}).get('content',[])]" 2>/dev/null)
 
-    if [ "$is_error" = "True" ]; then
+    local failed="$is_error"
+    if [ -n "$expect_error" ]; then
+        # Invert: the call was supposed to fail, so success is the failure.
+        [ "$is_error" = "True" ] && failed="False" || failed="True"
+    fi
+
+    if [ "$failed" = "True" ]; then
         echo "  FAIL: $label"
         echo "        $(echo "$content" | head -1 | cut -c1-120)"
         FAIL=$((FAIL+1))
@@ -152,6 +161,11 @@ call_tool "pihole_info_system" '{"detail":"minimal"}' "info_system (minimal)"
 call_tool "pihole_info_version"
 call_tool "pihole_info_database"
 call_tool "pihole_info_messages"
+# A healthy Pi-hole carries no diagnostic messages, so there is nothing to
+# dismiss for real here; dismissing an ID that cannot exist still exercises the
+# route, the auth path and the error surfacing, and must fail cleanly rather
+# than report success.
+call_tool "pihole_info_dismiss_message" '{"id":999999}' "info_dismiss_message (unknown id, should fail)" expect_error
 call_tool "pihole_info_client"
 call_tool "pihole_info_ftl"
 call_tool "pihole_info_metrics"

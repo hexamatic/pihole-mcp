@@ -6,7 +6,7 @@
 
 A production-grade [MCP](https://modelcontextprotocol.io/) server for [Pi-hole](https://pi-hole.net/) v6.
 
-**77 tools** | **9 prompts** | **5 resources** | Multi-instance + sync | Single Go binary | ~6MB compressed (slim: ~3.5MB)
+**78 tools** | **9 prompts** | **5 resources** | Multi-instance + sync | Single Go binary | 6.1 MB download (slim: 3.6 MB)
 
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/hexamatic/pihole-mcp)](https://goreportcard.com/report/github.com/hexamatic/pihole-mcp)
@@ -86,8 +86,11 @@ Pre-built binaries for Linux, macOS, and Windows (amd64 and arm64) are available
 | `PIHOLE_URL` | Yes | — | Pi-hole base URL (e.g. `http://192.168.1.2`) |
 | `PIHOLE_PASSWORD` | Yes | — | Admin password or [application password](https://docs.pi-hole.net/api/auth/) |
 | `PIHOLE_REQUEST_TIMEOUT` | No | `30s` | HTTP request timeout |
+| `PIHOLE_MAX_RETRIES` | No | `3` | Retries after a failed Pi-hole API call. `0` disables. |
+| `PIHOLE_RETRY_MAX_DELAY` | No | `8s` | Upper bound on a single backoff wait. |
 | `PIHOLE_RATE_LIMIT` | No | `120` | Per-session requests-per-minute cap on the HTTP/SSE transports. `0` disables. |
 | `PIHOLE_ALLOWED_ORIGINS` | No | `localhost,127.0.0.1,[::1]` | Comma-separated Origin/Host allowlist for HTTP/SSE transports. The literal `*` disables enforcement (unsafe). |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OpenTelemetry collector endpoint. Setting it enables tracing; ignored in slim builds. |
 
 Application passwords are recommended for automation — they bypass TOTP 2FA and can be revoked independently.
 
@@ -309,6 +312,8 @@ Useful when you don't have Go installed or want to run the server on a remote ho
 
 ## Tools
 
+A single Pi-hole exposes 76 tools. Configuring more than one adds `pihole_instance_diff` and `pihole_instance_sync`, for 78 — they are registered only when there is a second instance to compare against, so a single-Pi-hole setup isn't shown tools it cannot use.
+
 ### Dashboard
 | Tool | Description |
 |------|-------------|
@@ -360,6 +365,7 @@ Useful when you don't have Go installed or want to run the server on a remote ho
 | `pihole_info_version` | Pi-hole component versions |
 | `pihole_info_database` | Database size and query count |
 | `pihole_info_messages` | FTL diagnostic messages |
+| `pihole_info_dismiss_message` | Dismiss a diagnostic message by ID |
 | `pihole_search_domains` | Cross-list domain search |
 | `pihole_config_get/set` | Read/modify Pi-hole configuration |
 | `pihole_config_get_value/add_value/remove_value` | Granular dotted-path config access |
@@ -402,6 +408,23 @@ Pre-built multi-step workflows for common tasks:
 | `audit_network` | Discover unknown devices and unconfigured clients |
 | `optimise_blocklists` | Suggest list consolidation and cleanup |
 | `daily_report` | Comprehensive daily Pi-hole health summary |
+| `security_audit` | Review active sessions and auth config for unauthorised access |
+| `weekly_trends` | Compare DNS statistics week over week |
+| `upstream_health` | Deep performance analysis of upstream resolvers |
+
+## Resources
+
+Read-only context an MCP client can pull in without calling a tool:
+
+| URI | Description |
+|-----|-------------|
+| `pihole://status` | Blocking status, version, health |
+| `pihole://summary` | Query statistics |
+| `pihole://clients/{client}` | Configuration and groups for one client |
+| `pihole://domains/{type}/{kind}` | Domains on a list, e.g. `deny/exact` |
+| `pihole://lists/{address}` | Details of one blocklist or allowlist |
+
+With more than one Pi-hole configured, each instance is also addressable directly — `pihole://instances` lists them, and `pihole://<instance>/status` and `pihole://<instance>/summary` read a named one. The unprefixed URIs above always read the first-declared instance.
 
 ## Advanced Configuration
 
@@ -416,9 +439,11 @@ pihole-mcp
 # HTTP transport (for web-based MCP clients)
 pihole-mcp -transport http -address localhost:8080
 
-# SSE transport
+# SSE transport (deprecated — see below)
 pihole-mcp -transport sse -address localhost:8080
 ```
+
+> **SSE is deprecated.** The MCP specification superseded the HTTP+SSE transport with Streamable HTTP in the 2025-03-26 revision. `-transport sse` is kept for older clients and still receives security fixes, but new deployments should use `-transport http`. It will be removed once the clients that need it have moved on.
 
 ### Security (HTTP and SSE transports)
 
@@ -453,15 +478,52 @@ pihole-mcp
 
 All tool calls are automatically traced with tool name, duration, and error status.
 
-If you don't need tracing, you can build a slim binary that strips the OpenTelemetry SDK, gRPC, protobuf, and grpc-gateway dependencies entirely (~45% smaller — from 17 MB to 9 MB stripped, 6 MB to 3.5 MB compressed):
+If you don't need tracing, the slim build strips the OpenTelemetry SDK, gRPC, protobuf and grpc-gateway dependencies entirely — a little over 40% smaller:
+
+| linux/amd64, v0.6.0 | Binary | Download (`.tar.gz`) | Docker image |
+|---|---|---|---|
+| Default | 16.4 MB | 6.1 MB | 18.2 MB |
+| Slim | 9.2 MB | 3.6 MB | 11.8 MB |
 
 ```bash
 just build-slim
 # or
 go build -tags slim -o bin/pihole-mcp-slim ./cmd/pihole-mcp
+
+# Docker
+docker pull ghcr.io/hexamatic/pihole-mcp:latest-slim
 ```
 
 The slim binary is functionally identical apart from `OTEL_EXPORTER_OTLP_ENDPOINT` being ignored.
+
+## Troubleshooting
+
+### "Pi-hole rejected the login: its API session pool is full"
+
+Pi-hole allows a limited number of concurrent API sessions — `webserver.api.max_sessions`, **16 by default** — and every client that logs in takes a seat: the web interface, PADD, Home Assistant, any other integration, and pihole-mcp. When they are all taken, Pi-hole answers `429` and refuses further logins, including from its own web interface.
+
+pihole-mcp releases its seat on shutdown, but a session left behind by a process that was killed rather than stopped will hold one until it expires. Three ways out, in order of preference:
+
+1. **Free a seat.** Ask for the session list (`pihole_auth_sessions`) and revoke one that is idle (`pihole_auth_revoke_session`).
+2. **Raise the cap.** On a machine with a handful of integrations, 16 is low:
+   ```bash
+   pihole-FTL --config webserver.api.max_sessions 32
+   ```
+3. **Wait.** Seats release themselves after `webserver.session.timeout` — 30 minutes by default.
+
+Retrying will not help, so pihole-mcp does not: it reports the problem instead of silently stalling.
+
+### Authentication fails with a correct password
+
+Pi-hole rate-limits repeated failed logins, and the limiter does not distinguish between "wrong password" and "the password you just fixed". Wait a few seconds and try again. If it persists, confirm you are using the admin password or an [application password](https://docs.pi-hole.net/api/auth/) — not the web interface's TOTP code.
+
+### Docker: "connection refused" reaching Pi-hole
+
+`localhost` inside a container is the container, not the host. Point `PIHOLE_URL` at the host's LAN address (`http://192.168.1.2`), at `host.docker.internal` on Docker Desktop, or put both containers on the same Docker network and use the Pi-hole container's name.
+
+### Occasional dropped connections
+
+Pi-hole's embedded web server closes connections under load. pihole-mcp retries these automatically with backoff; if you see failures anyway, raise `PIHOLE_MAX_RETRIES` (default `3`).
 
 ## Development
 

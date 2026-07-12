@@ -41,6 +41,14 @@ func RegisterInfo(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithReadOnlyHintAnnotation(true),
 	), infoMessagesHandler(r))
 
+	addTool(s, r, mcp.NewTool("pihole_info_dismiss_message",
+		mcp.WithTitleAnnotation("Dismiss Diagnostic Message"),
+		mcp.WithDescription("Dismiss an FTL diagnostic message by ID, clearing it from Pi-hole. Get IDs from pihole_info_messages."),
+		mcp.WithNumber("id", mcp.Required(), mcp.Description("Message ID, as reported by pihole_info_messages.")),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithIdempotentHintAnnotation(true),
+	), infoDismissMessageHandler(r))
+
 	addTool(s, r, mcp.NewTool("pihole_info_client",
 		mcp.WithTitleAnnotation("Requesting Client Info"),
 		mcp.WithDescription("Information about the requesting client's IP address and connection. Does not require authentication."),
@@ -207,12 +215,38 @@ func infoMessagesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 
 		var b strings.Builder
-		fmt.Fprintf(&b, "**%d messages:**\n", len(msgs.Messages))
+		fmt.Fprintf(&b, "**%d diagnostic message(s):**\n", len(msgs.Messages))
 		for _, m := range msgs.Messages {
-			fmt.Fprintf(&b, "- [%s] %s (%s)\n", m.Type, m.Message, format.Timestamp(float64(m.Timestamp)))
+			// The ID is what pihole_info_dismiss_message needs, so surface it.
+			fmt.Fprintf(&b, "- `id=%d` [%s] %s (%s)\n",
+				m.ID, m.Type, m.Plain, format.Timestamp(float64(m.Timestamp)))
 		}
+		b.WriteString("\nDismiss one with pihole_info_dismiss_message once you have dealt with it.")
 
 		return mcp.NewToolResultText(b.String()), nil
+	}
+}
+
+func infoDismissMessageHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		c, err := getInstance(req, r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		id, err := req.RequireInt("id")
+		if err != nil {
+			return mcp.NewToolResultError("id is required — call pihole_info_messages to list the message IDs"), nil
+		}
+		if id < 0 {
+			return mcp.NewToolResultError(fmt.Sprintf("id must not be negative (got %d)", id)), nil
+		}
+
+		if err := c.Delete(ctx, fmt.Sprintf("/info/messages/%d", id)); err != nil {
+			return toolError("dismiss message", err), nil
+		}
+
+		return mcp.NewToolResultText(fmt.Sprintf("Dismissed diagnostic message %d.", id)), nil
 	}
 }
 

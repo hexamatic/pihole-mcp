@@ -13,6 +13,8 @@ import (
 const (
 	defaultRequestTimeout = 30 * time.Second
 	defaultRateLimit      = 120
+	defaultMaxRetries     = 3
+	defaultRetryMaxDelay  = 8 * time.Second
 )
 
 // defaultAllowedOrigins is the loopback-only allowlist. Matches the
@@ -48,6 +50,13 @@ type Config struct {
 	// AllowedOrigins is the Origin/Host allowlist for the HTTP/SSE transports.
 	// Defaults to loopback. The special value "*" disables enforcement.
 	AllowedOrigins []string
+
+	// MaxRetries is how many times a failed Pi-hole API call is re-attempted
+	// after the first try. 0 disables retrying.
+	MaxRetries int
+
+	// RetryMaxDelay caps how long a single backoff wait may last.
+	RetryMaxDelay time.Duration
 }
 
 // Load reads configuration from environment variables and validates it.
@@ -64,6 +73,8 @@ func Load() (*Config, error) {
 		RequestTimeout: defaultRequestTimeout,
 		RateLimit:      defaultRateLimit,
 		AllowedOrigins: append([]string(nil), defaultAllowedOrigins...),
+		MaxRetries:     defaultMaxRetries,
+		RetryMaxDelay:  defaultRetryMaxDelay,
 	}
 
 	instances, err := loadInstances()
@@ -96,6 +107,28 @@ func Load() (*Config, error) {
 		if len(cfg.AllowedOrigins) == 0 {
 			return nil, fmt.Errorf("PIHOLE_ALLOWED_ORIGINS must contain at least one entry (or '*' to disable enforcement)")
 		}
+	}
+
+	if v := os.Getenv("PIHOLE_MAX_RETRIES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("PIHOLE_MAX_RETRIES is not a valid integer: %w", err)
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("PIHOLE_MAX_RETRIES must be >= 0 (got %d)", n)
+		}
+		cfg.MaxRetries = n
+	}
+
+	if v := os.Getenv("PIHOLE_RETRY_MAX_DELAY"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return nil, fmt.Errorf("PIHOLE_RETRY_MAX_DELAY is not a valid duration: %w", err)
+		}
+		if d <= 0 {
+			return nil, fmt.Errorf("PIHOLE_RETRY_MAX_DELAY must be positive (got %s)", d)
+		}
+		cfg.RetryMaxDelay = d
 	}
 
 	return cfg, nil

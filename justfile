@@ -101,6 +101,11 @@ dev-down:
 dev-down-multi:
     docker compose --profile multi -f docker-compose.dev.yml down
 
+# Drive DNS queries through the dev Pi-hole so stats endpoints have data
+[group('dev')]
+seed:
+    sh scripts/seed-dev.sh
+
 # Reset Pi-hole (clean volumes)
 [group('dev')]
 dev-reset:
@@ -135,9 +140,11 @@ e2e: build
 sim:
     go test -tags=sim -race -count=1 -v -run TestSimulation ./internal/tools/
 
-# Refresh testdata/fixtures/ from the live dev Pi-hole
+# Refresh testdata/fixtures/ from the live dev Pi-hole.
+# Seeds first: a Pi-hole with no query history answers the stats endpoints with
+# empty results, and fixtures captured from it would assert nothing.
 [group('dev')]
-refresh-fixtures:
+refresh-fixtures: seed
     PIHOLE_URL=http://localhost:8081 PIHOLE_PASSWORD=test scripts/refresh-fixtures.sh
 
 # ─── CI ──────────────────────────────────────────────────────────────────────

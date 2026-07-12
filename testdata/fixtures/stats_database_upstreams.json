@@ -1,6 +1,6 @@
 {
   "forwarded_queries": 0,
-  "took": 0.00026202201843261719,
+  "took": 0.00027585029602050781,
   "total_queries": 0,
   "upstreams": [
     {
@@ -17,7 +17,11 @@
       "count": 0,
       "ip": "blocklist",
       "name": "blocklist",
-      "port": -1
+      "port": -1,
+      "statistics": {
+        "response": 0,
+        "variance": 0
+      }
     }
   ]
 }

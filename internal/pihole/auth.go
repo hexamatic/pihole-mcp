@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,36 +25,27 @@ func (c *Client) login(ctx context.Context) error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("sending auth request: %w", err)
+		return &loginError{fmt.Errorf("sending auth request: %w", err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("reading auth response: %w", err)
-	}
-
-	if resp.StatusCode == http.StatusTooManyRequests {
-		var errResp errorResponse
-		_ = json.Unmarshal(respBody, &errResp)
-		return &RateLimitError{&APIError{
-			StatusCode: resp.StatusCode,
-			Key:        errResp.Error.Key,
-			Message:    errResp.Error.Message,
-			Hint:       errResp.Error.Hint,
-			Endpoint:   "/api/auth",
-		}}
+		return &loginError{fmt.Errorf("reading auth response: %w", err)}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		var errResp errorResponse
-		_ = json.Unmarshal(respBody, &errResp)
-		return &AuthError{&APIError{
-			StatusCode: resp.StatusCode,
-			Key:        errResp.Error.Key,
-			Message:    "authentication failed: " + errResp.Error.Message,
-			Endpoint:   "/api/auth",
-		}}
+		apiErr := c.parseError(resp.StatusCode, resp.Header, "/api/auth", respBody)
+
+		// A 401 is a genuinely bad password. Anything else — a full session pool,
+		// the failed-login limiter, a wedged server — is Pi-hole declining to
+		// answer, not a credentials problem, and must not be reported as one.
+		var authErr *AuthError
+		if !errors.As(apiErr, &authErr) {
+			return &loginError{apiErr}
+		}
+		authErr.Message = "authentication failed: " + authErr.Message
+		return authErr
 	}
 
 	var authResp authResponse

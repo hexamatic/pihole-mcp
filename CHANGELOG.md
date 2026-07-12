@@ -8,18 +8,57 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ## [Unreleased]
 
+## [v0.6.0] - 2026-07-12
+
+### Highlights
+
+This release is about the things that go wrong. Pi-hole's embedded web server drops connections under load, and until now pihole-mcp passed that straight through — a dropped connection became a failed tool call. **Requests are now retried with exponential backoff**, but deliberately not uniformly: measured against FTL v6.7, the 429 you are actually most likely to meet is `api_seats_exceeded`, and it is not a rate limit at all. Pi-hole allows only **16 concurrent API sessions by default**, every client that logs in takes one, and a seat is freed only when a session times out half an hour later. Retrying it is futile, so pihole-mcp doesn't — it tells you how to fix it, pointing you at the tools that list and revoke sessions. This is the most frequently reported Pi-hole v6 API problem and it used to surface as an opaque error.
+
+Two bugs surfaced from running the server against a real Pi-hole rather than a mock. **`pihole_info_messages` had never shown the text of a diagnostic message** — FTL returns it under `plain`, we read a key that does not exist, and every warning rendered as a type and a timestamp with nothing between them. It hid for five releases because a healthy Pi-hole reports no messages at all, so no test ever covered a populated response. And **configuring a second Pi-hole silently stripped the output schema from every tool that had one** — the flagship multi-instance feature quietly degrading the structured-output support it should have showcased.
+
+On security: `golang.org/x/net` was carrying **seven advisories**, and the Go toolchain a reachable one in `crypto/tls`. All are fixed here. None of it was visible, because there was no vulnerability scanning in CI and every automated dependency update had been failing its checks since the day those checks were added. Both problems are now fixed, and `govulncheck` runs on every push, every pull request, and weekly — because advisories get disclosed against code that hasn't changed.
+
+Verified end to end against **Pi-hole FTL v6.7**.
+
+### Added
+
+- **`pihole_info_dismiss_message`** — dismiss an FTL diagnostic message once you have dealt with it. Previously you could see Pi-hole's warnings but not clear them, so the `daily_report` and `security_audit` prompts had to send you to the web interface. `pihole_info_messages` now prints each message's ID to pass to it.
+- **Automatic retry with exponential backoff and jitter** for transient Pi-hole failures. `PIHOLE_MAX_RETRIES` (default `3`, `0` disables) and `PIHOLE_RETRY_MAX_DELAY` (default `8s`).
+- **A distinct, actionable error when Pi-hole's API session pool is full**, explaining that the limit is `webserver.api.max_sessions` (default 16), that every client takes a seat, and that you can free one with `pihole_auth_sessions` and `pihole_auth_revoke_session`.
+- **Per-instance resources.** With more than one Pi-hole configured, each is addressable at `pihole://<instance>/status` and `pihole://<instance>/summary`, with a `pihole://instances` index. The unprefixed URIs still read the first-declared instance.
+- README sections for **Troubleshooting** (session exhaustion, auth failures, Docker networking, dropped connections) and **Resources**, which had never been documented despite being advertised.
+
 ### Changed
 
-- Integration tests now run against Pi-hole FTL v6.7 (docker `2026.07.2`).
+- Verified against **Pi-hole FTL v6.7**; the development and CI containers now run `2026.07.2`.
+- The SSE transport is **documented as deprecated**, in line with the MCP specification superseding HTTP+SSE with Streamable HTTP. It still works and still receives fixes; new deployments should use `-transport http`.
+- Retries are **method-aware**. A rate-limited request is safe to replay for any method, because Pi-hole rejected it before processing it. A connection that failed without a reply is only replayed for reads — when we cannot know whether Pi-hole applied a delete, a duplicated delete is worse than the error it would have papered over.
+- `just refresh-fixtures` now **seeds the development Pi-hole first**. A newly created Pi-hole has no query history, so every statistics endpoint answers empty and fixtures captured from it assert nothing.
+- Documented artefact sizes are now **measured rather than remembered**. The long-repeated "9 MB Docker image" was wrong — that was roughly the binary size. Default: 16.4 MB binary, 6.1 MB download, 18.2 MB image. Slim: 9.2 MB, 3.6 MB, 11.8 MB.
 
 ### Fixed
 
-- Dependency update pull requests no longer fail the Conventional Commits and CHANGELOG checks. Grouped Dependabot updates open their commit body with a single unwrappable line naming every bumped module, which exceeded commitlint's 100-character body limit, and the labels the changelog enforcer skips on were never created in the repository, so no dependency PR could ever satisfy either gate.
-- Widened the end-to-end suite's transient-failure retry budget to exponential backoff, and raised the API session cap on the CI Pi-hole containers. The suite spawns one process per tool call, each authenticating afresh, which exhausted FTL's session table and produced intermittent `sending auth request: EOF` failures.
+- **`pihole_info_messages` displayed no message text.** FTL returns the body under `plain`; the client decoded a `message` key the API does not send, so every diagnostic warning rendered as a bare type and timestamp. Present since the tool was introduced.
+- **Configuring a second Pi-hole stripped structured output from every tool.** A multi-instance tool can return either a single-instance result or an `instance=all` aggregate, and rather than describe both, the output schema was discarded entirely — so nine tools advertised a schema on one Pi-hole and none did on two. Both shapes are now declared as a `oneOf`.
+- **A 5xx during login reported itself as "authentication failed".** A server that cannot answer is not a bad password.
+- `DoRaw` and `PostMultipart` bypassed the 401 re-authentication path that every other request had.
+- **Automated dependency updates had been failing CI since the checks were introduced.** The changelog enforcer skipped on labels that did not exist in the repository, so no bot pull request ever carried one; and commitlint's 100-character body limit tripped on the single unwrappable line Dependabot writes to name every module in a grouped update. Ungrouped updates passed, which made the failure look intermittent rather than systematic.
+- Intermittent `sending auth request: EOF` failures in CI. The end-to-end suite starts a process per tool call, each authenticating afresh, which exhausts FTL's session table faster than a flat 0.3-second retry could outlast.
+- `README` claimed nine prompts while listing six. `security_audit`, `weekly_trends` and `upstream_health` shipped in v0.2.0 and had been invisible to users ever since.
 
 ### Security
 
-- Added `govulncheck` to CI, running on every push and pull request plus a weekly schedule so that advisories disclosed against an unchanged tree are still caught.
+- **`golang.org/x/net` 0.52.0 → 0.55.0**, fixing GO-2026-4918, GO-2026-5025, GO-2026-5026, GO-2026-5027, GO-2026-5028, GO-2026-5029 and GO-2026-5030. **`golang.org/x/sys`** likewise fixes GO-2026-5024.
+- **Go toolchain pinned to 1.26.5**, fixing GO-2026-5856 — an Encrypted Client Hello privacy leak in `crypto/tls` that `govulncheck` reports as reachable from the HTTP transport and the Pi-hole client's TLS paths.
+- **`govulncheck` added to CI**, on every push and pull request plus a weekly schedule. The schedule is the point: advisories are disclosed against code that has not changed, so scanning only on push leaves a quiet repository silently vulnerable.
+
+### Dependencies
+
+- `github.com/mark3labs/mcp-go` 0.54.1 → 0.56.0
+- `go.opentelemetry.io/otel` and friends 1.43.0 → 1.44.0
+- `github.com/grpc-ecosystem/grpc-gateway/v2` 2.28.0 → 2.29.0
+- `actions/checkout` 6 → 7
+- Go toolchain 1.26.4 → 1.26.5
 
 ## [v0.5.0] - 2026-06-26
 
@@ -330,7 +369,8 @@ docker pull ghcr.io/hexamatic/pihole-mcp:0.1.0
 
 See the [README](https://github.com/hexamatic/pihole-mcp#readme) for client-specific setup guides (Claude Desktop, Cursor, Windsurf, VS Code, Cline).
 
-[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.6.0...HEAD
+[v0.6.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.5.0...v0.6.0
 [v0.5.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.4.0...v0.5.0
 [v0.4.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.3.0...v0.4.0
 [v0.3.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.2.0...v0.3.0

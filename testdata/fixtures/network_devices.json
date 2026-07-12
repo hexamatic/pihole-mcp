@@ -1,4 +1,22 @@
 {
-  "devices": [],
-  "took": 0.00028300285339355469
+  "devices": [
+    {
+      "firstSeen": 1783820089,
+      "hwaddr": "ip-127.0.0.1",
+      "id": 1,
+      "interface": "lo",
+      "ips": [
+        {
+          "ip": "127.0.0.1",
+          "lastSeen": 1783820100,
+          "name": "localhost",
+          "nameUpdated": 1783820100
+        }
+      ],
+      "lastQuery": 1783820092,
+      "macVendor": "",
+      "numQueries": 27
+    }
+  ],
+  "took": 0.000276803970336914
 }

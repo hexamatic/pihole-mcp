@@ -1,0 +1,12 @@
+{
+  "messages": [
+    {
+      "html": "<a href=\"groups/lists?listid=2\">List with ID <strong>2</strong> (<code>http://127.0.0.1:1/nonexistent-blocklist.txt</code>)</a> was inaccessible during last gravity run",
+      "id": 1,
+      "plain": "List with ID 2 (http://127.0.0.1:1/nonexistent-blocklist.txt) was inaccessible during last gravity run",
+      "timestamp": 1783820099,
+      "type": "LIST"
+    }
+  ],
+  "took": 0.000391244888305664
+}

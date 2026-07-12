@@ -1,17 +1,12 @@
 {
-  "blocked_queries": 4,
+  "blocked_queries": 8,
   "clients": [
     {
-      "count": 18,
-      "ip": "192.168.65.1",
-      "name": ""
-    },
-    {
-      "count": 4,
+      "count": 27,
       "ip": "127.0.0.1",
       "name": "localhost"
     }
   ],
   "took": 0.00002765655517578125,
-  "total_queries": 22
+  "total_queries": 27
 }
