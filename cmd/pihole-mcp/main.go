@@ -54,7 +54,10 @@ func run(transport, address string) error {
 	for i, ic := range cfg.Instances {
 		instances[i] = pihole.InstanceConfig{Name: ic.Name, URL: ic.URL, Password: ic.Password}
 	}
-	registry := pihole.NewRegistry(instances, pihole.WithTimeout(cfg.RequestTimeout))
+	registry := pihole.NewRegistry(instances,
+		pihole.WithTimeout(cfg.RequestTimeout),
+		pihole.WithRetry(cfg.MaxRetries, cfg.RetryMaxDelay),
+	)
 	defer registry.Close()
 
 	srv := piholeserver.New(registry)
