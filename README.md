@@ -482,7 +482,7 @@ If you don't need tracing, the slim build strips the OpenTelemetry SDK, gRPC, pr
 
 | linux/amd64, v0.6.0 | Binary | Download (`.tar.gz`) | Docker image |
 |---|---|---|---|
-| Default | 16.2 MB | 6.1 MB | 18.1 MB |
+| Default | 16.4 MB | 6.1 MB | 18.2 MB |
 | Slim | 9.2 MB | 3.6 MB | 11.8 MB |
 
 ```bash

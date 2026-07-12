@@ -34,7 +34,7 @@ Verified end to end against **Pi-hole FTL v6.7**.
 - The SSE transport is **documented as deprecated**, in line with the MCP specification superseding HTTP+SSE with Streamable HTTP. It still works and still receives fixes; new deployments should use `-transport http`.
 - Retries are **method-aware**. A rate-limited request is safe to replay for any method, because Pi-hole rejected it before processing it. A connection that failed without a reply is only replayed for reads — when we cannot know whether Pi-hole applied a delete, a duplicated delete is worse than the error it would have papered over.
 - `just refresh-fixtures` now **seeds the development Pi-hole first**. A newly created Pi-hole has no query history, so every statistics endpoint answers empty and fixtures captured from it assert nothing.
-- Documented artefact sizes are now **measured rather than remembered**. The long-repeated "9 MB Docker image" was wrong — that was roughly the binary size. Default: 16.2 MB binary, 6.1 MB download, 18.1 MB image. Slim: 9.2 MB, 3.6 MB, 11.8 MB.
+- Documented artefact sizes are now **measured rather than remembered**. The long-repeated "9 MB Docker image" was wrong — that was roughly the binary size. Default: 16.4 MB binary, 6.1 MB download, 18.2 MB image. Slim: 9.2 MB, 3.6 MB, 11.8 MB.
 
 ### Fixed
 
