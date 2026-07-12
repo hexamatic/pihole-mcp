@@ -27,6 +27,10 @@
     },
     {
       "count": 1,
+      "domain": "4.4.8.8.in-addr.arpa"
+    },
+    {
+      "count": 1,
       "domain": "debian.org"
     },
     {
@@ -38,6 +42,6 @@
       "domain": "this-domain-does-not-exist.invalid"
     }
   ],
-  "took": 0.000060558319091796875,
-  "total_queries": 26
+  "took": 0.000035524368286132812,
+  "total_queries": 27
 }

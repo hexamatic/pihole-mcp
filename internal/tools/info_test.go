@@ -278,6 +278,59 @@ func TestInfoSensors_Empty(t *testing.T) {
 // /api/info/database response is FLAT (queries, size, sqlite_version at the
 // top level), not nested under a `database` key as the original hand-written
 // mock assumed.
+func TestInfoMessages_RealFixture(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/info/messages": loadFixture(t, "info_messages"),
+	}))
+
+	text := callTool(t, infoMessagesHandler, c, nil)
+
+	// The text of a diagnostic message lives in "plain". Decoding the wrong key
+	// left this tool printing a type and a timestamp and nothing else, which is
+	// what this fixture exists to prevent recurring.
+	if !strings.Contains(text, "was inaccessible during last gravity run") {
+		t.Errorf("message text is missing from the output, got: %s", text)
+	}
+	if !strings.Contains(text, "[LIST]") {
+		t.Errorf("expected the message type, got: %s", text)
+	}
+	// Without the ID there is no way to call pihole_info_dismiss_message.
+	if !strings.Contains(text, "id=1") {
+		t.Errorf("expected the message ID so it can be dismissed, got: %s", text)
+	}
+}
+
+func TestInfoMessages_Empty(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/info/messages": map[string]any{"messages": []any{}},
+	}))
+
+	text := callTool(t, infoMessagesHandler, c, nil)
+	if !strings.Contains(text, "No diagnostic messages") {
+		t.Errorf("expected the empty-state message, got: %s", text)
+	}
+}
+
+func TestInfoDismissMessage_Success(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/info/messages/1": map[string]any{},
+	}))
+
+	text := callTool(t, infoDismissMessageHandler, c, map[string]any{"id": float64(1)})
+	if !strings.Contains(text, "Dismissed diagnostic message 1") {
+		t.Errorf("expected a confirmation, got: %s", text)
+	}
+}
+
+func TestInfoDismissMessage_RequiresID(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{}))
+
+	text := callToolExpectError(t, infoDismissMessageHandler, c, nil)
+	if !strings.Contains(text, "pihole_info_messages") {
+		t.Errorf("the missing-id error should point at pihole_info_messages, got: %s", text)
+	}
+}
+
 func TestInfoDatabase_RealFixture(t *testing.T) {
 	c := newTestClient(t, piholeHandler(map[string]any{
 		"/info/database": loadFixture(t, "info_database"),

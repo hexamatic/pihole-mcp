@@ -66,6 +66,7 @@ capture "info_sensors"  "/api/info/sensors"
 capture "info_system"   "/api/info/system"
 capture "info_database" "/api/info/database"
 capture "info_version"  "/api/info/version"
+capture "info_messages" "/api/info/messages"
 
 # Stats family — covers the read paths exercised by stats_test.go fixtures.
 capture "stats_summary"        "/api/stats/summary"

@@ -1,7 +1,7 @@
 {
   "ftl": {
-    "%cpu": 0.0416666679084301,
-    "%mem": 0.14242266118526459,
+    "%cpu": 0.19166666269302368,
+    "%mem": 0.13429704308509827,
     "allow_destructive": true,
     "clients": {
       "active": 1,
@@ -22,7 +22,7 @@
       },
       "gravity": 78451,
       "groups": 1,
-      "lists": 1,
+      "lists": 2,
       "regex": {
         "allowed": {
           "enabled": 0,
@@ -49,10 +49,10 @@
       "dhcp_release": 0,
       "dhcp_request": 0,
       "dns_auth_answered": 0,
-      "dns_cache_inserted": 20,
+      "dns_cache_inserted": 21,
       "dns_cache_live_freed": 0,
       "dns_local_answered": 17,
-      "dns_queries_forwarded": 9,
+      "dns_queries_forwarded": 10,
       "dns_stale_answered": 0,
       "dns_unanswered": 0,
       "dnssec_max_crypto_use": 0,
@@ -68,8 +68,8 @@
     },
     "pid": 187,
     "privacy_level": 0,
-    "query_frequency": 0.8666666666666667,
-    "uptime": 432810.414283
+    "query_frequency": 0.9,
+    "uptime": 15263.399883
   },
-  "took": 0.00013279914855957031
+  "took": 0.00022482872009277344
 }

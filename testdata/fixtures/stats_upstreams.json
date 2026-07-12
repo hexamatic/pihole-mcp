@@ -1,7 +1,7 @@
 {
-  "forwarded_queries": 9,
-  "took": 0.0000362396240234375,
-  "total_queries": 26,
+  "forwarded_queries": 10,
+  "took": 0.000028133392333984375,
+  "total_queries": 27,
   "upstreams": [
     {
       "count": 8,
@@ -25,12 +25,22 @@
     },
     {
       "count": 9,
+      "ip": "8.8.4.4",
+      "name": "dns.google",
+      "port": 53,
+      "statistics": {
+        "response": 0.181557297706604,
+        "variance": 0.0773301379256399
+      }
+    },
+    {
+      "count": 1,
       "ip": "8.8.8.8",
       "name": "dns.google",
       "port": 53,
       "statistics": {
-        "response": 0.090394467115402222,
-        "variance": 0.043743840413714083
+        "response": 0,
+        "variance": 0
       }
     }
   ]

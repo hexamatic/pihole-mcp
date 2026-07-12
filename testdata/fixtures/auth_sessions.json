@@ -5,8 +5,8 @@
       "cli": false,
       "current_session": false,
       "id": 0,
-      "last_active": 1783819232,
-      "login_at": 1783819231,
+      "last_active": 1783820094,
+      "login_at": 1783820094,
       "remote_addr": "192.168.65.1",
       "tls": {
         "login": false,
@@ -14,7 +14,7 @@
       },
       "user_agent": "curl/8.7.1",
       "valid": true,
-      "valid_until": 1783821032,
+      "valid_until": 1783821894,
       "x_forwarded_for": null
     },
     {
@@ -22,8 +22,8 @@
       "cli": false,
       "current_session": true,
       "id": 1,
-      "last_active": 1783819661,
-      "login_at": 1783819661,
+      "last_active": 1783820101,
+      "login_at": 1783820100,
       "remote_addr": "192.168.65.1",
       "tls": {
         "login": false,
@@ -31,9 +31,9 @@
       },
       "user_agent": "curl/8.7.1",
       "valid": true,
-      "valid_until": 1783821461,
+      "valid_until": 1783821901,
       "x_forwarded_for": null
     }
   ],
-  "took": 0.000043392181396484375
+  "took": 0.00003814697265625
 }

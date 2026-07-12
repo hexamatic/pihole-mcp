@@ -11,6 +11,11 @@
 set -eu
 
 CONTAINER="${1:-pihole-dev}"
+PIHOLE_URL="${PIHOLE_URL:-http://localhost:8081}"
+PIHOLE_PASSWORD="${PIHOLE_PASSWORD:-test}"
+
+# Port 1 on the loopback interface: nothing listens there, on any platform.
+UNREACHABLE_LIST="http://127.0.0.1:1/nonexistent-blocklist.txt"
 
 if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
     echo "error: container '$CONTAINER' is not running — start it with 'just dev-up'" >&2
@@ -60,3 +65,33 @@ count=$((count + 3))
 sleep 2
 
 printf 'Seeded %d queries.\n' "$count"
+
+# A Pi-hole in good health reports no diagnostic messages, so /info/messages
+# comes back empty and neither pihole_info_messages nor
+# pihole_info_dismiss_message gets any real coverage. (An empty response is
+# exactly why the messages payload shape went unnoticed for five releases.)
+# Registering an unreachable blocklist and rebuilding gravity produces a genuine
+# LIST warning — the same one a user gets when a blocklist goes offline.
+#
+# Set SEED_SKIP_MESSAGES=1 to skip; the gravity rebuild takes about a minute.
+if [ "${SEED_SKIP_MESSAGES:-0}" != "1" ]; then
+    printf 'Generating an FTL diagnostic message (gravity rebuild, ~1 min)...\n'
+
+    SID=$(curl -fsS -X POST "$PIHOLE_URL/api/auth" \
+        -H 'Content-Type: application/json' \
+        -d "{\"password\":\"$PIHOLE_PASSWORD\"}" | sed -n 's/.*"sid":"\([^"]*\)".*/\1/p')
+
+    if [ -z "$SID" ]; then
+        echo "warning: could not authenticate to $PIHOLE_URL — skipping message seeding" >&2
+    else
+        # 409 on a repeat run just means it is already registered.
+        curl -fsS -o /dev/null -X POST "$PIHOLE_URL/api/lists?type=block" \
+            -H "X-FTL-SID: $SID" -H 'Content-Type: application/json' \
+            -d "{\"address\":\"$UNREACHABLE_LIST\",\"comment\":\"unreachable by design — seeds an FTL diagnostic message\"}" \
+            2>/dev/null || true
+
+        docker exec "$CONTAINER" pihole -g >/dev/null 2>&1 || true
+        sleep 2
+        printf 'Diagnostic message seeded.\n'
+    fi
+fi
