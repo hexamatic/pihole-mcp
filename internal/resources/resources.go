@@ -12,9 +12,18 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// RegisterAll registers all MCP resources and resource templates. Resources
-// always read from the default (first-declared) instance; use the per-tool
-// "instance" argument to reach other instances.
+// RegisterAll registers all MCP resources and resource templates.
+//
+// The unprefixed URIs (pihole://status and friends) read from the default —
+// first-declared — instance. With more than one Pi-hole configured that alone
+// would be quietly misleading: a two-Pi-hole user reading pihole://status would
+// get one of them with nothing to say so. Each instance therefore also gets its
+// own addressable copy at pihole://<instance>/status, alongside a
+// pihole://instances index naming them. The unprefixed URIs stay put so
+// existing clients keep working.
+//
+// The templated resources (clients, domains, lists) remain default-instance
+// only; reach the others through the per-tool "instance" argument.
 func RegisterAll(s *server.MCPServer, r *pihole.Registry) {
 	c := r.Default()
 
@@ -59,6 +68,73 @@ func RegisterAll(s *server.MCPServer, r *pihole.Registry) {
 		),
 		listDetailResourceHandler(c),
 	)
+
+	if r.Len() > 1 {
+		registerPerInstance(s, r)
+	}
+}
+
+// registerPerInstance gives every configured Pi-hole its own addressable status
+// and summary resource, plus an index listing them.
+func registerPerInstance(s *server.MCPServer, r *pihole.Registry) {
+	s.AddResource(
+		mcp.NewResource("pihole://instances", "Configured Instances",
+			mcp.WithResourceDescription("The configured Pi-hole instances and the resource URIs that address each one."),
+			mcp.WithMIMEType("text/markdown"),
+		),
+		instancesResourceHandler(r),
+	)
+
+	for _, name := range r.Names() {
+		client, err := r.Get(name)
+		if err != nil {
+			continue // Names() and Get() come from the same map; unreachable.
+		}
+
+		s.AddResource(
+			mcp.NewResource(fmt.Sprintf("pihole://%s/status", name),
+				fmt.Sprintf("Pi-hole Status (%s)", name),
+				mcp.WithResourceDescription(fmt.Sprintf("Blocking status, version and health for the %q instance.", name)),
+				mcp.WithMIMEType("text/markdown"),
+			),
+			statusResourceHandler(client),
+		)
+
+		s.AddResource(
+			mcp.NewResource(fmt.Sprintf("pihole://%s/summary", name),
+				fmt.Sprintf("Query Summary (%s)", name),
+				mcp.WithResourceDescription(fmt.Sprintf("Query statistics for the %q instance.", name)),
+				mcp.WithMIMEType("text/markdown"),
+			),
+			summaryResourceHandler(client),
+		)
+	}
+}
+
+func instancesResourceHandler(r *pihole.Registry) server.ResourceHandlerFunc {
+	return func(_ context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		names := r.Names()
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "**%d Pi-hole instances configured:**\n\n", len(names))
+		for i, name := range names {
+			b.WriteString("- **" + name + "**")
+			if i == 0 {
+				b.WriteString(" (default)")
+			}
+			fmt.Fprintf(&b, " — `pihole://%s/status`, `pihole://%s/summary`\n", name, name)
+		}
+		b.WriteString("\nPass `instance` to any tool to target one, or `instance=all` " +
+			"on a read-only tool to query them all at once.")
+
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{
+				URI:      req.Params.URI,
+				MIMEType: "text/markdown",
+				Text:     b.String(),
+			},
+		}, nil
+	}
 }
 
 func statusResourceHandler(c *pihole.Client) server.ResourceHandlerFunc {
