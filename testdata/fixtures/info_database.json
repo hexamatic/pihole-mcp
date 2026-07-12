@@ -1,10 +1,10 @@
 {
-  "atime": 1779505445,
-  "ctime": 1779505445,
-  "earliest_timestamp": 1779419400,
+  "atime": 1783819228,
+  "ctime": 1783819228,
+  "earliest_timestamp": 1783732828.5747244,
   "earliest_timestamp_disk": 0,
   "mode": "rw-r-----",
-  "mtime": 1779505445,
+  "mtime": 1783819228,
   "owner": {
     "group": {
       "gid": 1000,
@@ -16,10 +16,10 @@
       "uid": 1000
     }
   },
-  "queries": 22,
+  "queries": 26,
   "queries_disk": 0,
   "size": 90112,
-  "sqlite_version": "3.51.3",
-  "took": 0.00011801719665527344,
+  "sqlite_version": "3.53.1",
+  "took": 0.00010395050048828125,
   "type": "Regular file"
 }

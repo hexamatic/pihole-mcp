@@ -4,7 +4,7 @@
       "dst": "default",
       "family": "inet",
       "flags": [],
-      "gateway": "172.18.0.1",
+      "gateway": "172.19.0.1",
       "oif": "eth0",
       "protocol": "boot",
       "scope": "universe",
@@ -12,11 +12,11 @@
       "type": "unicast"
     },
     {
-      "dst": "172.18.0.0",
+      "dst": "172.19.0.0",
       "family": "inet",
       "flags": [],
       "oif": "eth0",
-      "prefsrc": "172.18.0.2",
+      "prefsrc": "172.19.0.2",
       "protocol": "kernel",
       "scope": "link",
       "table": 254,
@@ -56,22 +56,22 @@
       "type": "broadcast"
     },
     {
-      "dst": "172.18.0.2",
+      "dst": "172.19.0.2",
       "family": "inet",
       "flags": [],
       "oif": "eth0",
-      "prefsrc": "172.18.0.2",
+      "prefsrc": "172.19.0.2",
       "protocol": "kernel",
       "scope": "host",
       "table": 255,
       "type": "local"
     },
     {
-      "dst": "172.18.255.255",
+      "dst": "172.19.255.255",
       "family": "inet",
       "flags": [],
       "oif": "eth0",
-      "prefsrc": "172.18.0.2",
+      "prefsrc": "172.19.0.2",
       "protocol": "kernel",
       "scope": "link",
       "table": 255,
@@ -90,5 +90,5 @@
       "type": "local"
     }
   ],
-  "took": 0.00022578239440917969
+  "took": 0.00019955635070800781
 }

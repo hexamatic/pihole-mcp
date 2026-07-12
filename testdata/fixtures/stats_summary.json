@@ -1,24 +1,24 @@
 {
   "clients": {
-    "active": 2,
-    "total": 2
+    "active": 1,
+    "total": 1
   },
   "gravity": {
-    "domains_being_blocked": 92277,
-    "last_update": 1775369198
+    "domains_being_blocked": 78451,
+    "last_update": 1783819228
   },
   "queries": {
-    "blocked": 4,
-    "cached": 2,
-    "forwarded": 16,
-    "frequency": 0.73333333333333328,
-    "percent_blocked": 18.181818008422852,
+    "blocked": 8,
+    "cached": 9,
+    "forwarded": 9,
+    "frequency": 0.8666666666666667,
+    "percent_blocked": 30.769229888916016,
     "replies": {
       "BLOB": 0,
       "CNAME": 0,
       "DNSSEC": 0,
-      "DOMAIN": 3,
-      "IP": 17,
+      "DOMAIN": 2,
+      "IP": 22,
       "NODATA": 1,
       "NONE": 0,
       "NOTIMP": 0,
@@ -30,7 +30,7 @@
       "UNKNOWN": 0
     },
     "status": {
-      "CACHE": 2,
+      "CACHE": 9,
       "CACHE_STALE": 0,
       "DBBUSY": 0,
       "DENYLIST": 0,
@@ -39,8 +39,8 @@
       "EXTERNAL_BLOCKED_IP": 0,
       "EXTERNAL_BLOCKED_NULL": 0,
       "EXTERNAL_BLOCKED_NXRA": 0,
-      "FORWARDED": 16,
-      "GRAVITY": 4,
+      "FORWARDED": 9,
+      "GRAVITY": 8,
       "GRAVITY_CNAME": 0,
       "IN_PROGRESS": 0,
       "REGEX": 0,
@@ -50,10 +50,10 @@
       "SPECIAL_DOMAIN": 0,
       "UNKNOWN": 0
     },
-    "total": 22,
+    "total": 26,
     "types": {
-      "A": 18,
-      "AAAA": 0,
+      "A": 22,
+      "AAAA": 2,
       "ANY": 0,
       "DNSKEY": 0,
       "DS": 0,
@@ -62,14 +62,14 @@
       "NAPTR": 0,
       "NS": 0,
       "OTHER": 0,
-      "PTR": 4,
+      "PTR": 2,
       "RRSIG": 0,
       "SOA": 0,
       "SRV": 0,
       "SVCB": 0,
       "TXT": 0
     },
-    "unique_domains": 22
+    "unique_domains": 14
   },
-  "took": 0.000025510787963867188
+  "took": 0.000038385391235351562
 }

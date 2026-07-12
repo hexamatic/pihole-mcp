@@ -7,7 +7,7 @@
 
 services:
   pihole:
-    image: pihole/pihole:2026.05.0
+    image: pihole/pihole:2026.07.2
     container_name: pihole-dev
     ports:
       - "8081:80"       # Web UI + API
@@ -33,7 +33,7 @@ services:
   # "multi" Compose profile so the default `just dev-up` flow is unchanged.
   # Start both with `just dev-up-multi`.
   pihole-secondary:
-    image: pihole/pihole:2026.05.0
+    image: pihole/pihole:2026.07.2
     container_name: pihole-dev-secondary
     profiles: ["multi"]
     ports:

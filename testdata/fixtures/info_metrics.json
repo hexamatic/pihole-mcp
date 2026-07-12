@@ -33,7 +33,7 @@
           {
             "count": {
               "stale": 0,
-              "valid": 33
+              "valid": 19
             },
             "name": "A",
             "type": 1
@@ -41,7 +41,7 @@
           {
             "count": {
               "stale": 0,
-              "valid": 8
+              "valid": 11
             },
             "name": "AAAA",
             "type": 28
@@ -58,18 +58,18 @@
         "evicted": 0,
         "expired": 0,
         "immortal": 14,
-        "inserted": 31,
+        "inserted": 20,
         "size": 10000
       },
       "replies": {
         "auth": 0,
-        "forwarded": 16,
-        "local": 6,
+        "forwarded": 9,
+        "local": 17,
         "optimized": 0,
-        "sum": 22,
+        "sum": 26,
         "unanswered": 0
       }
     }
   },
-  "took": 0.000044584274291992188
+  "took": 0.0000476837158203125
 }

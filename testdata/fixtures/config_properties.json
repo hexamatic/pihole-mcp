@@ -2,21 +2,26 @@
   "config": {
     "read_only": [
       {
+        "description": "Set via environment variable",
+        "key": "dns.listeningMode",
+        "reason": "env_var"
+      },
+      {
+        "description": "Set via environment variable",
+        "key": "webserver.api.max_sessions",
+        "reason": "env_var"
+      },
+      {
+        "description": "Set via environment variable",
+        "key": "webserver.api.password",
+        "reason": "env_var"
+      },
+      {
+        "description": "Variable can only be set in pihole.toml, not via API",
         "key": "misc.readOnly",
-        "reason": "read_only",
-        "description": "Variable can only be set in pihole.toml, not via API"
-      },
-      {
-        "key": "files.pid",
-        "reason": "read_only",
-        "description": "The location of FTL's PID file"
-      },
-      {
-        "key": "files.database",
-        "reason": "env_var",
-        "description": "The location of FTL's long-term query database (overridden by FTLCONF_files_database)"
+        "reason": "read_only"
       }
     ]
   },
-  "took": 0.000123
+  "took": 0.000044107437133789062
 }

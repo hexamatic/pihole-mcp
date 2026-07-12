@@ -1,9 +1,13 @@
 {
   "blocked": [
     "adservice.google.com",
+    "ads.yahoo.com",
+    "googleadservices.com",
     "google-analytics.com",
-    "googleads.g.doubleclick.net",
+    "google-analytics.com",
+    "doubleclick.net",
+    "doubleclick.net",
     "doubleclick.net"
   ],
-  "took": 0.000029325485229492188
+  "took": 0.0000476837158203125
 }

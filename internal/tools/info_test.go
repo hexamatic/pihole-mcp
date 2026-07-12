@@ -290,10 +290,20 @@ func TestInfoDatabase_RealFixture(t *testing.T) {
 	if !strings.Contains(text, "SQLite:") {
 		t.Errorf("expected 'SQLite:' label, got: %s", text)
 	}
-	// The captured fixture has sqlite_version="3.51.3" and size=90112.
-	// If our type decoded the flat structure correctly, both should render.
-	if !strings.Contains(text, "3.51.3") {
-		t.Errorf("expected sqlite version '3.51.3' from real fixture, got: %s", text)
+	// Assert against whatever the fixture actually holds rather than a literal:
+	// SQLite ships inside FTL, so pinning the version here means every Pi-hole
+	// bump breaks this test for no good reason. What we care about is that the
+	// flat structure decoded and the value reached the output.
+	fx, ok := loadFixture(t, "info_database").(map[string]any)
+	if !ok {
+		t.Fatal("info_database fixture is not a JSON object")
+	}
+	wantSQLite, ok := fx["sqlite_version"].(string)
+	if !ok || wantSQLite == "" {
+		t.Fatal("info_database fixture has no sqlite_version")
+	}
+	if !strings.Contains(text, wantSQLite) {
+		t.Errorf("expected sqlite version %q from the fixture, got: %s", wantSQLite, text)
 	}
 	if strings.Contains(text, "Size: 0  | Queries: 0 | SQLite: N/A") {
 		t.Errorf("flat-structure decode failed — handler still expects nested database key, got: %s", text)

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -169,13 +170,27 @@ func TestConfigRemoveValue_Success(t *testing.T) {
 }
 
 func TestConfigProperties_Fixture(t *testing.T) {
+	fixture := loadFixture(t, "config_properties")
+
 	c := newTestClient(t, piholeHandler(map[string]any{
-		"/config/_properties": loadFixture(t, "config_properties"),
+		"/config/_properties": fixture,
 	}))
 
+	// The number of read-only keys depends on how many settings the dev Pi-hole
+	// pins through FTLCONF_* environment variables, so derive it from the
+	// fixture rather than freezing a number that a compose change would break.
+	cfg, ok := fixture.(map[string]any)["config"].(map[string]any)
+	if !ok {
+		t.Fatal("config_properties fixture has no config object")
+	}
+	readOnly, ok := cfg["read_only"].([]any)
+	if !ok || len(readOnly) == 0 {
+		t.Fatal("config_properties fixture has no read_only entries — re-run `just refresh-fixtures`")
+	}
+
 	text := callTool(t, configPropertiesHandler, c, nil)
-	if !strings.Contains(text, "3 read-only") {
-		t.Errorf("expected count header in output, got: %s", text)
+	if want := fmt.Sprintf("%d read-only", len(readOnly)); !strings.Contains(text, want) {
+		t.Errorf("expected %q in output, got: %s", want, text)
 	}
 	if !strings.Contains(text, "misc.readOnly") {
 		t.Errorf("expected misc.readOnly key in output, got: %s", text)

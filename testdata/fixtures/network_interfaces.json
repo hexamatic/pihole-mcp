@@ -6,7 +6,7 @@
         {
           "address": "127.0.0.1",
           "address_type": "loopback",
-          "cstamp": 1779504995.5,
+          "cstamp": 1783819226.79,
           "family": "inet",
           "flags": [
             "permanent"
@@ -17,13 +17,13 @@
           "prefered": 4294967295,
           "prefixlen": 8,
           "scope": "host",
-          "tstamp": 1779504995.5,
+          "tstamp": 1783819226.79,
           "valid": 4294967295
         },
         {
           "address": "::1",
           "address_type": "loopback",
-          "cstamp": 1779504995.5,
+          "cstamp": 1783819226.79,
           "family": "inet6",
           "flags": [
             "permanent"
@@ -31,7 +31,7 @@
           "prefered": 4294967295,
           "prefixlen": 128,
           "scope": "host",
-          "tstamp": 1779504995.5,
+          "tstamp": 1783819226.79,
           "valid": 4294967295
         }
       ],
@@ -50,12 +50,12 @@
       "stats": {
         "bits": 64,
         "rx_bytes": {
-          "unit": "M",
-          "value": 1.3225126266479492
+          "unit": "k",
+          "value": 648.0244140625
         },
         "tx_bytes": {
-          "unit": "M",
-          "value": 1.3225126266479492
+          "unit": "k",
+          "value": 648.0244140625
         }
       },
       "type": "loopback"
@@ -190,7 +190,7 @@
         "noarp"
       ],
       "name": "ip6_vti0",
-      "perm_address": "9a:c9:6d:e9:c8:f4",
+      "perm_address": "ca:03:3f:21:14:71",
       "proto_down": false,
       "speed": null,
       "state": "down",
@@ -239,7 +239,7 @@
         "noarp"
       ],
       "name": "ip6tnl0",
-      "perm_address": "ae:bb:c6:3e:03:a6",
+      "perm_address": "7e:06:58:96:00:41",
       "proto_down": false,
       "speed": null,
       "state": "down",
@@ -264,7 +264,7 @@
         "noarp"
       ],
       "name": "ip6gre0",
-      "perm_address": "0e:eb:47:d4:29:4b",
+      "perm_address": "d2:be:f6:11:e4:cf",
       "proto_down": false,
       "speed": null,
       "state": "down",
@@ -282,25 +282,25 @@
       "type": "ip6gre"
     },
     {
-      "address": "6e:8f:9f:7e:b8:5b",
+      "address": "5a:92:d0:dc:e5:73",
       "addresses": [
         {
-          "address": "172.18.0.2",
+          "address": "172.19.0.2",
           "address_type": "private",
-          "broadcast": "172.18.255.255",
+          "broadcast": "172.19.255.255",
           "broadcast_type": "private",
-          "cstamp": 1779504995.53,
+          "cstamp": 1783819226.87,
           "family": "inet",
           "flags": [
             "permanent"
           ],
           "label": "eth0",
-          "local": "172.18.0.2",
+          "local": "172.19.0.2",
           "local_type": "private",
           "prefered": 4294967295,
           "prefixlen": 16,
           "scope": "universe",
-          "tstamp": 1779504995.53,
+          "tstamp": 1783819226.87,
           "valid": 4294967295
         }
       ],
@@ -320,16 +320,16 @@
       "stats": {
         "bits": 64,
         "rx_bytes": {
-          "unit": "k",
-          "value": 741.26171875
+          "unit": "M",
+          "value": 1.2567682266235352
         },
         "tx_bytes": {
           "unit": "k",
-          "value": 295.96875
+          "value": 69.4697265625
         }
       },
       "type": "ether"
     }
   ],
-  "took": 0.0017726421356201172
+  "took": 0.00053286552429199219
 }
