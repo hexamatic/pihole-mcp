@@ -2,8 +2,10 @@ module github.com/hexamatic/pihole-mcp
 
 go 1.26
 
+toolchain go1.26.5
+
 require (
-	github.com/mark3labs/mcp-go v0.54.1
+	github.com/mark3labs/mcp-go v0.56.0
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.44.0
 	go.opentelemetry.io/otel/sdk v1.44.0
