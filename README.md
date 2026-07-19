@@ -6,7 +6,7 @@
 
 A production-grade [MCP](https://modelcontextprotocol.io/) server for [Pi-hole](https://pi-hole.net/) v6.
 
-**76+ tools** | **9 prompts** | **5 resources** | Multi-instance + sync | Single Go binary | 6.1 MB download (slim: 3.6 MB)
+**76+ tools** | **9 prompts** | **5 resources** | Multi-instance + sync | Single Go binary | 6.4 MB download (slim: 3.8 MB)
 
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/hexamatic/pihole-mcp)](https://goreportcard.com/report/github.com/hexamatic/pihole-mcp)
