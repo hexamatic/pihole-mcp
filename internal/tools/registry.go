@@ -45,6 +45,7 @@ func addTool(s *server.MCPServer, r *pihole.Registry, tool mcp.Tool, handler ser
 		addInstanceParam(&tool, r)
 		widenOutputSchema(&tool)
 	}
+	recordTool(tool)
 	s.AddTool(tool, withTracing(tool.Name, instanceAware(r, tool, handler)))
 }
 
