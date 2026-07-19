@@ -188,6 +188,36 @@ checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
   algorithm: sha256
 
+# SPDX SBOMs (via syft) for every archive, published as release assets.
+sboms:
+  - id: archives
+    artifacts: archive
+
+# Keyless cosign signature over the checksum file — one signature covers
+# every archive, verified against the GitHub Actions OIDC identity. See
+# SECURITY.md for the verification commands.
+signs:
+  - cmd: cosign
+    certificate: "${artifact}.pem"
+    artifacts: checksum
+    output: true
+    args:
+      - "sign-blob"
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+
+# Keyless cosign signatures for the GHCR images (default artifacts value
+# targets the images built by dockers_v2).
+docker_signs:
+  - cmd: cosign
+    output: true
+    args:
+      - "sign"
+      - "${artifact}@${digest}"
+      - "--yes"
+
 changelog:
   sort: asc
   groups:
