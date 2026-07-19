@@ -1,0 +1,20 @@
+# gitleaks configuration — extends the default ruleset with allowlists for
+# the repository's known dummy credentials. Anything not listed here that
+# looks like a secret should fail the scan.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known non-secret values used by dev/CI tooling and tests"
+paths = [
+  # Captured Pi-hole API responses; session IDs in fixtures are from
+  # throwaway local containers.
+  '''testdata/fixtures/.*\.json''',
+]
+regexes = [
+  # The dev/CI Pi-hole containers use the literal password "test"
+  # (docker-compose.dev.yml, .github/docker-compose.ci.yml, README examples).
+  '''PIHOLE(_[0-9]+)?_PASSWORD[=:]\s*"?test"?''',
+  '''FTLCONF_webserver_api_password[=:]\s*"?test"?''',
+]

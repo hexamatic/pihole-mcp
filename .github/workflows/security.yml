@@ -36,3 +36,36 @@ jobs:
         with:
           go-version-file: go.mod
           repo-checkout: false
+
+  # Full-history secret scan. Runs the gitleaks CLI directly rather than
+  # gitleaks-action, which requires a paid licence key for organisation
+  # repositories. Allowlisted dev/test values live in .gitleaks.toml.
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Scan history for secrets
+        run: |
+          curl -fsSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            | tar -xz gitleaks
+          ./gitleaks git --redact --no-banner
+
+  # A short fuzz smoke over the tool-parameter validators. 60 seconds is not
+  # exhaustive fuzzing — it exists to catch regressions in the validator's
+  # invariants cheaply on every run; deeper runs happen locally via `just fuzz`.
+  fuzz:
+    name: fuzz validators
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: "go.mod"
+
+      - name: Fuzz smoke (60s)
+        run: go test -run=^$ -fuzz=FuzzValidateDomainName -fuzztime=60s ./internal/tools/
