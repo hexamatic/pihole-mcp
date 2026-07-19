@@ -81,6 +81,8 @@ sudo rpm -i pihole-mcp_X.Y.Z_linux_amd64.rpm
 
 Pre-built binaries for Linux, macOS, and Windows (amd64 and arm64) are available on the [Releases](https://github.com/hexamatic/pihole-mcp/releases) page.
 
+Releases are checksummed, signed with keyless cosign, and ship SPDX SBOMs and SLSA build provenance — see [SECURITY.md](SECURITY.md#verifying-release-artefacts) for the verification commands.
+
 ## Configuration
 
 | Variable | Required | Default | Description |

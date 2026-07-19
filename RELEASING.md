@@ -62,7 +62,7 @@ Before tagging, verify the release pipeline parses cleanly:
 ```sh
 just release-dry
 ```
-This produces a snapshot under `dist/` without uploading anything. Inspect the manifest if anything has changed in `.goreleaser.yaml`.
+This produces a snapshot under `dist/` without uploading anything. Inspect the manifest if anything has changed in `.goreleaser.yaml`. The dry run skips signing and SBOM generation (`--skip=sign,sbom`): keyless cosign needs the CI OIDC identity and would open a browser locally. Those steps only run — and can only be verified — in the tag-triggered workflow; after the release publishes, run the verification commands in [SECURITY.md](SECURITY.md#verifying-release-artefacts) against the live artefacts.
 
 ## Homebrew tap (when configured)
 

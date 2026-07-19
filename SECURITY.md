@@ -29,6 +29,44 @@ This MCP server handles Pi-hole API credentials. Users should:
 - **Restrict network access** to the Pi-hole instance using firewall rules
 - **Keep dependencies updated** — enable Dependabot or run `go get -u` regularly
 
+## Verifying Release Artefacts
+
+Every release from v0.8.0 onwards ships with checksums, keyless [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) signatures, SPDX SBOMs, and SLSA build provenance. To verify a download:
+
+**Checksums**
+
+```bash
+sha256sum -c pihole-mcp_X.Y.Z_SHA256SUMS --ignore-missing
+```
+
+**Checksum-file signature** (proves the checksums were produced by this repository's release workflow):
+
+```bash
+cosign verify-blob \
+  --certificate pihole-mcp_X.Y.Z_SHA256SUMS.pem \
+  --signature   pihole-mcp_X.Y.Z_SHA256SUMS.sig \
+  --certificate-identity-regexp='^https://github\.com/hexamatic/pihole-mcp' \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  pihole-mcp_X.Y.Z_SHA256SUMS
+```
+
+**Docker images**
+
+```bash
+cosign verify \
+  --certificate-identity-regexp='^https://github\.com/hexamatic/pihole-mcp' \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  ghcr.io/hexamatic/pihole-mcp:X.Y.Z
+```
+
+**Build provenance** (requires the [GitHub CLI](https://cli.github.com/)):
+
+```bash
+gh attestation verify pihole-mcp_X.Y.Z_linux_amd64.tar.gz --repo hexamatic/pihole-mcp
+```
+
+**SBOMs** — each archive has a matching `.sbom.json` (SPDX) release asset listing the exact dependency versions compiled into that binary.
+
 ## Scope
 
 The following are in scope for security reports:

@@ -10,6 +10,7 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ### Added
 
+- **Signed, attested releases.** Release artefacts are now signed with keyless [cosign](https://docs.sigstore.dev/) (checksum file and Docker images), ship SPDX SBOMs for every archive, and carry SLSA build provenance verifiable with `gh attestation verify`. [SECURITY.md](SECURITY.md#verifying-release-artefacts) documents every verification command.
 - **OpenSSF Scorecard** — a weekly supply-chain security analysis now runs against the repository, publishes its score to [scorecard.dev](https://scorecard.dev/viewer/?uri=github.com/hexamatic/pihole-mcp), and feeds the new README badge. All GitHub Actions across every workflow are now pinned by commit SHA (maintained automatically by Dependabot).
 
 ### Changed
