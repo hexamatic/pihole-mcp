@@ -28,6 +28,11 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
+      - name: Check docs/TOOLS.md is current
+        run: |
+          go run ./cmd/toolsdoc
+          git diff --exit-code docs/TOOLS.md
+
       - name: Vet
         run: go vet ./...
 
@@ -37,7 +42,14 @@ jobs:
           version: "v2.12"
 
       - name: Test
-        run: go test -race -count=1 ./...
+        run: go test -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.out
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
       - name: Build
         run: go build -o /dev/null ./cmd/pihole-mcp

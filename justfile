@@ -73,6 +73,16 @@ fmt-check:
     fi
     echo "Formatting OK"
 
+# Fuzz the tool-parameter validators (30s; raise -fuzztime for deeper runs)
+[group('quality')]
+fuzz:
+    go test -run=^$ -fuzz=FuzzValidateDomainName -fuzztime=30s ./internal/tools/
+
+# Regenerate docs/TOOLS.md from the registered tool definitions
+[group('quality')]
+docs-gen:
+    go run ./cmd/toolsdoc
+
 # Run all quality checks (format + lint + test)
 [group('quality')]
 check: fmt lint test

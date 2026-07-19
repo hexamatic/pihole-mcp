@@ -9,6 +9,12 @@ pre-commit:
       glob: "*.go"
       run: goimports -w {staged_files}
       stage_fixed: true
+    # Scan staged changes for credentials before they can enter history.
+    # Allowlisted dev/test values live in .gitleaks.toml. Invoked via mise
+    # (which manages the pinned version — see .mise.toml) because git hooks
+    # run without the interactive shell's PATH.
+    gitleaks:
+      run: mise exec -- gitleaks git --pre-commit --staged --redact --no-banner
 
 # Reject commit messages that do not follow Conventional Commits. CI re-runs
 # the same check via wagoid/commitlint-github-action on every PR (see

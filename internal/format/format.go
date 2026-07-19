@@ -5,6 +5,7 @@ package format
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -49,13 +50,34 @@ func Duration(secs float64) string {
 	return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
 }
 
-// Timestamp formats a Unix timestamp as a human-readable date.
+// location is the display timezone for Timestamp. nil means time.Local.
+// Stored atomically so concurrent reads stay race-free.
+var location atomic.Pointer[time.Location]
+
+// SetLocation sets the timezone used by Timestamp. Call once at startup,
+// before serving. A nil loc resets to time.Local.
+func SetLocation(loc *time.Location) {
+	location.Store(loc)
+}
+
+// Timestamp formats a Unix timestamp as a human-readable date in the
+// timezone configured via SetLocation (system local time by default).
 func Timestamp(unix float64) string {
+	loc := location.Load()
+	if loc == nil {
+		loc = time.Local
+	}
+	return TimestampIn(unix, loc)
+}
+
+// TimestampIn formats a Unix timestamp as a human-readable date in an
+// explicit timezone. The zone marker is always included so output is
+// unambiguous regardless of where the server runs.
+func TimestampIn(unix float64, loc *time.Location) string {
 	if unix <= 0 {
 		return "never"
 	}
-	t := time.Unix(int64(unix), 0)
-	return t.Format("2 Jan 2006, 3:04 PM")
+	return time.Unix(int64(unix), 0).In(loc).Format("2 Jan 2006, 3:04 PM MST")
 }
 
 // Table renders a Markdown table from headers and rows.

@@ -3,6 +3,7 @@ package pihole
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,6 +50,22 @@ func (c *Client) Name() string {
 func WithTimeout(d time.Duration) Option {
 	return func(c *Client) {
 		c.httpClient.Timeout = d
+	}
+}
+
+// WithTLSSkipVerify disables TLS certificate verification. An explicit
+// opt-in for Pi-hole instances serving self-signed certificates; it has
+// no effect on plain-HTTP instances.
+func WithTLSSkipVerify(skip bool) Option {
+	return func(c *Client) {
+		if !skip {
+			return
+		}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true, //nolint:gosec // explicit user opt-in for self-signed certificates
+		}
+		c.httpClient.Transport = transport
 	}
 }
 

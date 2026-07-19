@@ -209,3 +209,41 @@ func TestLoad_AllowedOriginsEmptyRejected(t *testing.T) {
 		t.Fatal("expected error for empty allowed-origins list")
 	}
 }
+
+func TestLoad_TLSSkipVerify(t *testing.T) {
+	t.Setenv("PIHOLE_URL", "http://localhost:8081")
+	t.Setenv("PIHOLE_PASSWORD", "test")
+	t.Setenv("PIHOLE_TLS_SKIP_VERIFY", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.TLSSkipVerify {
+		t.Error("TLSSkipVerify = false, want true")
+	}
+}
+
+func TestLoad_TLSSkipVerifyDefault(t *testing.T) {
+	t.Setenv("PIHOLE_URL", "http://localhost:8081")
+	t.Setenv("PIHOLE_PASSWORD", "test")
+	t.Setenv("PIHOLE_TLS_SKIP_VERIFY", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.TLSSkipVerify {
+		t.Error("TLSSkipVerify = true, want false by default")
+	}
+}
+
+func TestLoad_TLSSkipVerifyInvalid(t *testing.T) {
+	t.Setenv("PIHOLE_URL", "http://localhost:8081")
+	t.Setenv("PIHOLE_PASSWORD", "test")
+	t.Setenv("PIHOLE_TLS_SKIP_VERIFY", "maybe")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for invalid PIHOLE_TLS_SKIP_VERIFY")
+	}
+}

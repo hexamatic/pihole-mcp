@@ -6,11 +6,12 @@
 
 A production-grade [MCP](https://modelcontextprotocol.io/) server for [Pi-hole](https://pi-hole.net/) v6.
 
-**78 tools** | **9 prompts** | **5 resources** | Multi-instance + sync | Single Go binary | 6.1 MB download (slim: 3.6 MB)
+**76+ tools** | **9 prompts** | **5 resources** | Multi-instance + sync | Single Go binary | 6.1 MB download (slim: 3.6 MB)
 
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/hexamatic/pihole-mcp)](https://goreportcard.com/report/github.com/hexamatic/pihole-mcp)
 [![CI](https://github.com/hexamatic/pihole-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/hexamatic/pihole-mcp/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/hexamatic/pihole-mcp/graph/badge.svg)](https://codecov.io/gh/hexamatic/pihole-mcp)
 
 </div>
 
@@ -90,6 +91,8 @@ Pre-built binaries for Linux, macOS, and Windows (amd64 and arm64) are available
 | `PIHOLE_RETRY_MAX_DELAY` | No | `8s` | Upper bound on a single backoff wait. |
 | `PIHOLE_RATE_LIMIT` | No | `120` | Per-session requests-per-minute cap on the HTTP/SSE transports. `0` disables. |
 | `PIHOLE_ALLOWED_ORIGINS` | No | `localhost,127.0.0.1,[::1]` | Comma-separated Origin/Host allowlist for HTTP/SSE transports. The literal `*` disables enforcement (unsafe). |
+| `PIHOLE_TLS_SKIP_VERIFY` | No | `false` | Disable TLS certificate verification for Pi-hole connections. Only for instances serving self-signed certificates — prefer a trusted certificate where possible. |
+| `TZ` | No | System timezone (UTC in Docker) | IANA timezone for rendered timestamps (e.g. `Australia/Adelaide`). Timezone data is embedded in the binary, so this works in the Docker image out of the box. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OpenTelemetry collector endpoint. Setting it enables tracing; ignored in slim builds. |
 
 Application passwords are recommended for automation — they bypass TOTP 2FA and can be revoked independently.
@@ -300,6 +303,7 @@ For clients that support Docker-based MCP servers:
       "args": ["run", "-i", "--rm",
         "-e", "PIHOLE_URL=http://192.168.1.2",
         "-e", "PIHOLE_PASSWORD=your-password",
+        "-e", "TZ=Australia/Adelaide",
         "ghcr.io/hexamatic/pihole-mcp:latest"]
     }
   }
@@ -313,6 +317,8 @@ Useful when you don't have Go installed or want to run the server on a remote ho
 ## Tools
 
 A single Pi-hole exposes 76 tools. Configuring more than one adds `pihole_instance_diff` and `pihole_instance_sync`, for 78 — they are registered only when there is a second instance to compare against, so a single-Pi-hole setup isn't shown tools it cannot use.
+
+The tables below are a summary; the full generated reference with every parameter is in [docs/TOOLS.md](docs/TOOLS.md).
 
 ### Dashboard
 | Tool | Description |
@@ -520,6 +526,21 @@ Pi-hole rate-limits repeated failed logins, and the limiter does not distinguish
 ### Docker: "connection refused" reaching Pi-hole
 
 `localhost` inside a container is the container, not the host. Point `PIHOLE_URL` at the host's LAN address (`http://192.168.1.2`), at `host.docker.internal` on Docker Desktop, or put both containers on the same Docker network and use the Pi-hole container's name.
+
+### Timestamps are shown in UTC
+
+Every timestamp in tool output carries an explicit zone marker (e.g. `19 Jul 2026, 9:41 AM UTC`), so responses are unambiguous whatever the zone. Which zone is used depends on where the server runs: native binaries use the system timezone, while the Docker image defaults to UTC. To get local times from the container, set `TZ` on the *pihole-mcp* container (not just the Pi-hole one) — timezone data is embedded in the binary, so no extra packages or volume mounts are needed:
+
+```yaml
+environment:
+  - TZ=Australia/Adelaide
+```
+
+An unrecognised `TZ` value logs a warning at startup and falls back to UTC rather than refusing to start.
+
+### "x509: certificate signed by unknown authority"
+
+Your Pi-hole is serving HTTPS with a self-signed certificate, which fails standard TLS verification. The right fix is a trusted certificate on the Pi-hole (for example via its built-in domain settings or a reverse proxy with Let's Encrypt). If that isn't practical, set `PIHOLE_TLS_SKIP_VERIFY=true` to disable verification — connections are still encrypted, but the server's identity is no longer checked, so only use this on a network you control.
 
 ### Occasional dropped connections
 

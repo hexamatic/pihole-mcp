@@ -8,6 +8,27 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ## [Unreleased]
 
+## [v0.7.0] - 2026-07-19
+
+### Highlights
+
+This release makes every timestamp unambiguous. Tool output used to render times with no timezone marker, in whatever zone the server happened to be running in — which, in the published Docker image, silently meant UTC: the distroless base ships no timezone database, so even setting `TZ` on the container did nothing ([#23](https://github.com/hexamatic/pihole-mcp/discussions/23)). **Every timestamp now carries an explicit zone marker, and the IANA timezone database is embedded in the binary itself**, so `TZ=Australia/Adelaide` on the container — or on any of the native binaries, Windows included — renders query logs in your local time out of the box. Left unset, output is UTC and says so.
+
+Alongside that: an explicit opt-in for Pi-holes serving self-signed HTTPS certificates (`PIHOLE_TLS_SKIP_VERIFY`), and a round of hardening that has been on the list since v0.4.0 — coverage reporting, fuzz testing of the input validators, full-history secret scanning with gitleaks, and a [generated tool reference](https://github.com/hexamatic/pihole-mcp/blob/main/docs/TOOLS.md) that CI keeps honest so the docs can never again drift from the code.
+
+### Added
+
+- **`TZ` timezone support for rendered timestamps** ([#23](https://github.com/hexamatic/pihole-mcp/discussions/23)). Set `TZ` to an IANA zone (e.g. `Australia/Adelaide`) and every timestamp in tool output renders in that zone. The IANA timezone database is embedded in the binary, so this works in the Docker image — and on Windows — with no extra packages or volume mounts. An unrecognised `TZ` logs a startup warning and falls back rather than refusing to start.
+- **`PIHOLE_TLS_SKIP_VERIFY`** (default `false`) — opt-in for Pi-hole instances serving self-signed HTTPS certificates. Verification stays on by default; the README documents why a trusted certificate is the better fix.
+- **Full generated tool reference** at [docs/TOOLS.md](https://github.com/hexamatic/pihole-mcp/blob/main/docs/TOOLS.md) — every tool with its parameters, produced from the registered tool definitions by `cmd/toolsdoc` and checked for drift in CI, so it cannot go stale.
+- **Coverage reporting** via Codecov on every push and pull request.
+- **Secret scanning** with gitleaks, both as a pre-commit hook and as a full-history CI scan.
+- **Fuzz testing** for the tool-parameter validators, run continuously in CI alongside the existing table-driven tests.
+
+### Changed
+
+- **Every timestamp now carries an explicit zone marker** (e.g. `19 Jul 2026, 9:41 AM UTC` rather than `19 Jul 2026, 9:41 AM`). Previously the Docker image silently rendered timestamps in unlabelled UTC — ambiguous for both people and AI agents trying to convert times ([#23](https://github.com/hexamatic/pihole-mcp/discussions/23)).
+
 ## [v0.6.0] - 2026-07-12
 
 ### Highlights
@@ -369,7 +390,8 @@ docker pull ghcr.io/hexamatic/pihole-mcp:0.1.0
 
 See the [README](https://github.com/hexamatic/pihole-mcp#readme) for client-specific setup guides (Claude Desktop, Cursor, Windsurf, VS Code, Cline).
 
-[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.7.0...HEAD
+[v0.7.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.6.0...v0.7.0
 [v0.6.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.5.0...v0.6.0
 [v0.5.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.4.0...v0.5.0
 [v0.4.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.3.0...v0.4.0
