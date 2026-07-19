@@ -50,6 +50,7 @@ jobs:
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
         with:
           files: coverage.out
+          flags: unit
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
@@ -101,10 +102,20 @@ jobs:
           PIHOLE_1_PASSWORD: test
           PIHOLE_2_URL: http://localhost:8082
           PIHOLE_2_PASSWORD: test
-        run: go test -tags=integration -race -count=1 ./internal/pihole/
+        run: go test -tags=integration -race -count=1 -covermode=atomic -coverprofile=integration.out -coverpkg=./... ./internal/pihole/
 
-      - name: Build binary
-        run: go build -o ./bin/pihole-mcp ./cmd/pihole-mcp
+      - name: Upload integration coverage
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        with:
+          files: integration.out
+          flags: integration
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      # -cover instruments the binary; every E2E process appends its counters
+      # to GOCOVERDIR, and covdata merges the pile into one profile.
+      - name: Build binary (coverage-instrumented)
+        run: go build -cover -covermode=atomic -coverpkg=./... -o ./bin/pihole-mcp ./cmd/pihole-mcp
 
       - name: Multi-instance E2E
         env:
@@ -114,7 +125,21 @@ jobs:
           PIHOLE_1_PASSWORD: test
           PIHOLE_2_URL: http://localhost:8082
           PIHOLE_2_PASSWORD: test
-        run: ./scripts/e2e-test.sh ./bin/pihole-mcp
+          GOCOVERDIR: ${{ runner.temp }}/e2ecov
+        run: |
+          mkdir -p "$GOCOVERDIR"
+          ./scripts/e2e-test.sh ./bin/pihole-mcp
+
+      - name: Convert e2e coverage
+        run: go tool covdata textfmt -i="${RUNNER_TEMP}/e2ecov" -o e2e.out
+
+      - name: Upload e2e coverage
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        with:
+          files: e2e.out
+          flags: e2e
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
       - name: Pi-hole logs
         if: failure()
