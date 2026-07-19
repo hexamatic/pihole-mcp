@@ -8,6 +8,14 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ## [Unreleased]
 
+### Added
+
+- **OpenSSF Scorecard** — a weekly supply-chain security analysis now runs against the repository, publishes its score to [scorecard.dev](https://scorecard.dev/viewer/?uri=github.com/hexamatic/pihole-mcp), and feeds the new README badge. All GitHub Actions across every workflow are now pinned by commit SHA (maintained automatically by Dependabot).
+
+### Changed
+
+- **README badge lineup refreshed.** The Go Report Card badge has been removed — the service was sunset on 1 July 2026 — and replaced with OpenSSF Scorecard and Go Reference (pkg.go.dev) badges. Its lint-quality role has long been covered by golangci-lint in CI.
+
 ## [v0.7.0] - 2026-07-19
 
 ### Highlights
