@@ -8,10 +8,11 @@ A production-grade [MCP](https://modelcontextprotocol.io/) server for [Pi-hole](
 
 **76+ tools** | **9 prompts** | **5 resources** | Multi-instance + sync | Single Go binary | 6.4 MB download (slim: 3.8 MB)
 
-[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hexamatic/pihole-mcp)](https://goreportcard.com/report/github.com/hexamatic/pihole-mcp)
 [![CI](https://github.com/hexamatic/pihole-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/hexamatic/pihole-mcp/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/hexamatic/pihole-mcp/graph/badge.svg)](https://codecov.io/gh/hexamatic/pihole-mcp)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/hexamatic/pihole-mcp/badge)](https://scorecard.dev/viewer/?uri=github.com/hexamatic/pihole-mcp)
+[![Go Reference](https://pkg.go.dev/badge/github.com/hexamatic/pihole-mcp.svg)](https://pkg.go.dev/github.com/hexamatic/pihole-mcp)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 
 </div>
 
