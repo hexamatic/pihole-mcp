@@ -167,10 +167,12 @@ ci: fmt-check lint test
 
 # ─── Release ─────────────────────────────────────────────────────────────────
 
-# Dry-run release build (local snapshot)
+# Dry-run release build (local snapshot). Signing and SBOMs are skipped:
+# keyless cosign needs the CI OIDC identity (locally it would open a
+# browser) and syft may not be installed.
 [group('release')]
 release-dry:
-    goreleaser release --snapshot --clean
+    goreleaser release --snapshot --clean --skip=sign,sbom
 
 # Preview the release body that will be published for VERSION
 [group('release')]
