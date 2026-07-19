@@ -3,6 +3,11 @@ package format
 import (
 	"strings"
 	"testing"
+	"time"
+
+	// Embed the IANA timezone database so exact-output timestamp tests
+	// pass on runners without system zoneinfo.
+	_ "time/tzdata"
 )
 
 func TestNumber(t *testing.T) {
@@ -52,6 +57,53 @@ func TestTimestamp(t *testing.T) {
 	}
 	if got := Timestamp(1580000000); !strings.Contains(got, "2020") {
 		t.Errorf("Timestamp(1580000000) = %q, expected year 2020", got)
+	}
+}
+
+func TestTimestampIn(t *testing.T) {
+	adelaide, err := time.LoadLocation("Australia/Adelaide")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+	tests := []struct {
+		name string
+		unix float64
+		loc  *time.Location
+		want string
+	}{
+		{"summer DST", 1580000000, adelaide, "26 Jan 2020, 11:23 AM ACDT"},
+		{"winter standard", 1591000000, adelaide, "1 Jun 2020, 5:56 PM ACST"},
+		{"utc", 1580000000, time.UTC, "26 Jan 2020, 12:53 AM UTC"},
+		{"zero", 0, time.UTC, "never"},
+		{"negative", -5, time.UTC, "never"},
+	}
+	for _, tt := range tests {
+		if got := TimestampIn(tt.unix, tt.loc); got != tt.want {
+			t.Errorf("%s: TimestampIn(%v) = %q, want %q", tt.name, tt.unix, got, tt.want)
+		}
+	}
+}
+
+func TestTimestampIn_FixedZoneOffsetFallback(t *testing.T) {
+	got := TimestampIn(1580000000, time.FixedZone("", 34200))
+	if got != "26 Jan 2020, 10:23 AM +0930" {
+		t.Errorf("TimestampIn(fixed zone) = %q, want %q", got, "26 Jan 2020, 10:23 AM +0930")
+	}
+}
+
+func TestTimestamp_UsesSetLocation(t *testing.T) {
+	adelaide, err := time.LoadLocation("Australia/Adelaide")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+	SetLocation(adelaide)
+	t.Cleanup(func() { SetLocation(nil) })
+
+	if got, want := Timestamp(1580000000), "26 Jan 2020, 11:23 AM ACDT"; got != want {
+		t.Errorf("Timestamp(1580000000) = %q, want %q", got, want)
+	}
+	if got := Timestamp(0); got != "never" {
+		t.Errorf("Timestamp(0) = %q, want %q", got, "never")
 	}
 }
 

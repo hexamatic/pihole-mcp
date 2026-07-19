@@ -57,6 +57,11 @@ type Config struct {
 
 	// RetryMaxDelay caps how long a single backoff wait may last.
 	RetryMaxDelay time.Duration
+
+	// TLSSkipVerify disables TLS certificate verification for Pi-hole API
+	// connections. Off by default; intended only for instances serving
+	// self-signed certificates.
+	TLSSkipVerify bool
 }
 
 // Load reads configuration from environment variables and validates it.
@@ -120,6 +125,14 @@ func Load() (*Config, error) {
 		cfg.MaxRetries = n
 	}
 
+	if v := os.Getenv("PIHOLE_TLS_SKIP_VERIFY"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("PIHOLE_TLS_SKIP_VERIFY is not a valid boolean (use true or false): %w", err)
+		}
+		cfg.TLSSkipVerify = b
+	}
+
 	if v := os.Getenv("PIHOLE_RETRY_MAX_DELAY"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil {
@@ -132,6 +145,27 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// TimeLocation resolves the display timezone from the TZ environment
+// variable (IANA name, e.g. "Australia/Adelaide"). A leading ":" is
+// trimmed per POSIX convention. Unset or empty TZ yields time.Local.
+//
+// Unlike other configuration errors, an unloadable TZ is returned as a
+// warning alongside a usable fallback (time.Local) rather than failing
+// startup: TZ is an ambient variable often inherited from the host rather
+// than set for this server, and Go cannot parse POSIX rule strings (e.g.
+// "AEST-10AEDT,M10.1.0,M4.1.0") that are legitimate for other software.
+func TimeLocation() (*time.Location, error) {
+	tz, ok := os.LookupEnv("TZ")
+	if !ok || tz == "" {
+		return time.Local, nil
+	}
+	loc, err := time.LoadLocation(strings.TrimPrefix(tz, ":"))
+	if err != nil {
+		return time.Local, fmt.Errorf("TZ %q is not a recognised IANA timezone (e.g. \"Australia/Adelaide\"): %w", tz, err)
+	}
+	return loc, nil
 }
 
 // loadInstances resolves the single- or multi-instance environment form.

@@ -13,7 +13,12 @@ import (
 	"syscall"
 	"time"
 
+	// Embed the IANA timezone database so TZ resolves even where the OS
+	// provides no zoneinfo (distroless/scratch containers, Windows).
+	_ "time/tzdata"
+
 	"github.com/hexamatic/pihole-mcp/internal/config"
+	"github.com/hexamatic/pihole-mcp/internal/format"
 	"github.com/hexamatic/pihole-mcp/internal/middleware"
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	piholeserver "github.com/hexamatic/pihole-mcp/internal/server"
@@ -50,6 +55,12 @@ func run(transport, address string) error {
 		return fmt.Errorf("configuration error: %w", err)
 	}
 
+	loc, tzErr := config.TimeLocation()
+	if tzErr != nil {
+		log.Printf("warning: %v — timestamps will use %s", tzErr, loc)
+	}
+	format.SetLocation(loc)
+
 	instances := make([]pihole.InstanceConfig, len(cfg.Instances))
 	for i, ic := range cfg.Instances {
 		instances[i] = pihole.InstanceConfig{Name: ic.Name, URL: ic.URL, Password: ic.Password}
@@ -57,6 +68,7 @@ func run(transport, address string) error {
 	registry := pihole.NewRegistry(instances,
 		pihole.WithTimeout(cfg.RequestTimeout),
 		pihole.WithRetry(cfg.MaxRetries, cfg.RetryMaxDelay),
+		pihole.WithTLSSkipVerify(cfg.TLSSkipVerify),
 	)
 	defer registry.Close()
 

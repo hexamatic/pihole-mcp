@@ -61,7 +61,7 @@ func teleporterExportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		return mcp.NewToolResultText(fmt.Sprintf(
 			"**Backup saved.** File: %s (%s bytes, %s)",
 			tmpFile.Name(), format.Number(int(n)),
-			time.Now().Format("2 Jan 2006 15:04"))), nil
+			format.Timestamp(float64(time.Now().Unix())))), nil
 	}
 }
 
