@@ -1,0 +1,39 @@
+# Codecov configuration.
+#
+# Three flags mirror the three CI coverage sources:
+#   unit        — `go test ./...` in the validate job
+#   integration — `go test -tags=integration` against live Pi-hole containers
+#   e2e         — the coverage-instrumented binary driven by scripts/e2e-test.sh
+# carryforward keeps the integration/e2e numbers when a run doesn't produce
+# them (e.g. docs-only changes), instead of showing a coverage cliff.
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1% # absorb flake-level movement without blocking merges
+    patch:
+      default:
+        target: 80%
+        # Advisory while the project total climbs; flip to blocking once the
+        # project sits comfortably above 75% (tracked in TODO.md).
+        informational: true
+
+flags:
+  unit:
+    carryforward: true
+  integration:
+    carryforward: true
+  e2e:
+    carryforward: true
+
+ignore:
+  # Test scaffolding: exists only to exercise other code.
+  - "internal/pihole/piholefake"
+  - "testdata"
+
+comment:
+  layout: "condensed_header, diff, flags"
+  require_changes: true
+  behavior: default
