@@ -8,10 +8,20 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ## [Unreleased]
 
+## [v0.8.0] - 2026-07-25
+
+### Highlights
+
+This release is about being findable and being verifiable. pihole-mcp is now listed in the **official [MCP Registry](https://registry.modelcontextprotocol.io/)** as `io.github.hexamatic/pihole-mcp` — the index MCP clients and directory aggregators read — so it can be installed by name, with every configuration variable described and the required ones flagged, rather than found by chance on GitHub. Ownership of the listing is proved cryptographically against the published container image on each release.
+
+It is also the first release whose artefacts you can actually check. Keyless [cosign](https://docs.sigstore.dev/) signatures, SPDX SBOMs and SLSA build provenance have been wired up since v0.7.0 but never yet exercised by a tag; from v0.8.0 every checksum file, archive and container image ships with them, and [SECURITY.md](https://github.com/hexamatic/pihole-mcp/blob/main/SECURITY.md#verifying-release-artefacts) gives you the one-line command to verify each. Behind that, CodeQL now scans both the Go source and the CI workflows, container base images are pinned by digest so a rebuild cannot drift, and patch coverage has become a merge gate rather than a suggestion.
+
+Homebrew users should notice nothing except a smoother first run: the tap now ships a cask instead of a deprecated formula, installs on macOS and Linux exactly as before, and clears the macOS quarantine attribute so the binary no longer trips Gatekeeper.
+
 ### Added
 
 - **Listed in the official [MCP Registry](https://registry.modelcontextprotocol.io/) as `io.github.hexamatic/pihole-mcp`.** Clients that support registry install can add pihole-mcp by name and will prompt for `PIHOLE_URL` and `PIHOLE_PASSWORD`, with the optional settings (`TZ`, `PIHOLE_TLS_SKIP_VERIFY`, timeouts and retries) described alongside their defaults. The listing is published automatically on each tag and points at the `ghcr.io` image.
-- **Signed, attested releases.** Release artefacts are now signed with keyless [cosign](https://docs.sigstore.dev/) (checksum file and Docker images), ship SPDX SBOMs for every archive, and carry SLSA build provenance verifiable with `gh attestation verify`. [SECURITY.md](SECURITY.md#verifying-release-artefacts) documents every verification command.
+- **Signed, attested releases.** Release artefacts are now signed with keyless [cosign](https://docs.sigstore.dev/) (checksum file and Docker images), ship SPDX SBOMs for every archive, and carry SLSA build provenance verifiable with `gh attestation verify`. [SECURITY.md](https://github.com/hexamatic/pihole-mcp/blob/main/SECURITY.md#verifying-release-artefacts) documents every verification command.
 - **OpenSSF Scorecard** — a weekly supply-chain security analysis now runs against the repository, publishes its score to [scorecard.dev](https://scorecard.dev/viewer/?uri=github.com/hexamatic/pihole-mcp), and feeds the new README badge. All GitHub Actions across every workflow are now pinned by commit SHA (maintained automatically by Dependabot).
 
 ### Changed
@@ -25,6 +35,49 @@ The release body on GitHub for each tagged version is sourced from the matching 
 - **CodeQL static analysis** now runs on every push, every pull request, and weekly, over both the Go source and the GitHub Actions workflows. golangci-lint covers style and a good deal of correctness but is not a taint-tracking engine; CodeQL finds the dataflow issues a linter structurally cannot.
 - **Container base images are pinned by digest** as well as by tag, so a rebuild cannot silently pick up a different `golang:1.26-alpine` or `distroless/static-debian13`. Dependabot maintains the digests.
 - **Patch coverage is now an enforced gate** rather than advisory, and `govulncheck`, `gitleaks`, the fuzz smoke and the changelog check are required to pass before merge.
+
+### Dependencies
+
+- `golang.org/x/text` 0.37.0 → 0.39.0, `golang.org/x/net` 0.55.0 → 0.56.0, `golang.org/x/sys` 0.45.0 → 0.46.0 (see Security above)
+- `google.golang.org/grpc` 1.81.1 → 1.82.1
+- GitHub Actions: `actions/setup-go` v6 → v7, `codecov/codecov-action` v5 → v7, `actions/attest-build-provenance` v3 → v4
+
+### Installation
+
+**MCP Registry** — add by name in any client that supports registry install:
+```
+io.github.hexamatic/pihole-mcp
+```
+
+**Homebrew (macOS and Linux):**
+```
+brew install hexamatic/tap/pihole-mcp
+```
+
+**Go install:**
+```
+go install github.com/hexamatic/pihole-mcp/cmd/pihole-mcp@v0.8.0
+```
+
+**Docker (multi-arch):**
+```
+docker pull ghcr.io/hexamatic/pihole-mcp:0.8.0
+```
+
+**Binary download:** grab the archive for your platform from the release assets. Every archive is checksummed, cosign-signed, and ships an SPDX SBOM and SLSA provenance — see [SECURITY.md](https://github.com/hexamatic/pihole-mcp/blob/main/SECURITY.md#verifying-release-artefacts) to verify before you run it.
+
+| Variant | Binary | Download | Docker image |
+| ------- | ------ | -------- | ------------ |
+| Default | 16.8 MB | 6.4 MB | 18.7 MB |
+| Slim (no OpenTelemetry) | 9.6 MB | 3.8 MB | 11.5 MB |
+
+### Requirements
+
+- Pi-hole v6.6+ with the REST API enabled (verified against FTL v6.7)
+- An admin password or [application password](https://docs.pi-hole.net/api/auth/)
+- Docker, if installing via the MCP Registry listing — it points at the container image
+
+No configuration changes in this release. See the [README](https://github.com/hexamatic/pihole-mcp#readme) for the full variable reference and client-specific setup guides.
 
 ## [v0.7.0] - 2026-07-19
 
@@ -408,7 +461,8 @@ docker pull ghcr.io/hexamatic/pihole-mcp:0.1.0
 
 See the [README](https://github.com/hexamatic/pihole-mcp#readme) for client-specific setup guides (Claude Desktop, Cursor, Windsurf, VS Code, Cline).
 
-[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.8.0...HEAD
+[v0.8.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.7.0...v0.8.0
 [v0.7.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.6.0...v0.7.0
 [v0.6.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.5.0...v0.6.0
 [v0.5.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.4.0...v0.5.0
