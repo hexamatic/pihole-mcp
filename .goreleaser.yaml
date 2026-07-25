@@ -228,10 +228,17 @@ sboms:
 #
 # goreleaser has no dedicated `bundle:` field, so the bundle path is declared
 # via `signature:`; that is what makes goreleaser upload it as a release asset.
+#
+# The `.sigstore.json` extension is deliberate, not cosmetic. It is Sigstore's
+# own convention for the new bundle format, and it is one of the six extensions
+# OpenSSF Scorecard's Signed-Releases check recognises (.asc, .minisig, .sig,
+# .sign, .sigstore, .sigstore.json). v0.8.0 first shipped this as `.bundle` and
+# Scorecard scored Signed-Releases 0/10 despite the release being properly
+# signed — a correct signature under a name nothing downstream recognises.
 signs:
   - cmd: cosign
     artifacts: checksum
-    signature: "${artifact}.bundle"
+    signature: "${artifact}.sigstore.json"
     output: true
     args:
       - "sign-blob"
