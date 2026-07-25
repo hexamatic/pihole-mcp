@@ -39,16 +39,17 @@ Every release from v0.8.0 onwards ships with checksums, keyless [cosign](https:/
 sha256sum -c pihole-mcp_X.Y.Z_SHA256SUMS --ignore-missing
 ```
 
-**Checksum-file signature** (proves the checksums were produced by this repository's release workflow):
+**Checksum-file signature** (proves the checksums were produced by this repository's release workflow). The signature, certificate and inclusion proof all travel in a single Sigstore bundle, `pihole-mcp_X.Y.Z_SHA256SUMS.bundle`:
 
 ```bash
 cosign verify-blob \
-  --certificate pihole-mcp_X.Y.Z_SHA256SUMS.pem \
-  --signature   pihole-mcp_X.Y.Z_SHA256SUMS.sig \
+  --bundle pihole-mcp_X.Y.Z_SHA256SUMS.bundle \
   --certificate-identity-regexp='^https://github\.com/hexamatic/pihole-mcp' \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
   pihole-mcp_X.Y.Z_SHA256SUMS
 ```
+
+Requires cosign v3 or newer. On cosign v2, pass `--new-bundle-format` as well.
 
 **Docker images**
 
