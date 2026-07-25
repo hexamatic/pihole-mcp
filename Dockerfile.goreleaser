@@ -1,4 +1,6 @@
-FROM gcr.io/distroless/static-debian13
+# Digest-pinned alongside the tag — see the note in Dockerfile. Keep this
+# digest in step with the runtime stage there.
+FROM gcr.io/distroless/static-debian13@sha256:9197324ba51d9cd071af8505989365c006adf9d6d2067eada25aef00abbb5278
 
 ARG TARGETPLATFORM
 ARG VERSION=dev
@@ -12,6 +14,13 @@ LABEL org.opencontainers.image.licenses="MIT"
 LABEL org.opencontainers.image.version="${VERSION}"
 LABEL org.opencontainers.image.created="${DATE}"
 LABEL org.opencontainers.image.revision="${COMMIT}"
+
+# Load-bearing, not decorative: the MCP Registry proves we own the
+# io.github.hexamatic/* namespace by reading this annotation off the published
+# image and matching it against `name` in server.json. Remove or misspell it and
+# `mcp-publisher publish` fails ownership verification. A test in
+# internal/config keeps the two in step.
+LABEL io.modelcontextprotocol.server.name="io.github.hexamatic/pihole-mcp"
 
 COPY ${TARGETPLATFORM}/pihole-mcp /pihole-mcp
 

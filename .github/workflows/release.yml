@@ -58,3 +58,55 @@ jobs:
             dist/*.zip
             dist/*.deb
             dist/*.rpm
+
+  # Publishing the MCP Registry listing is a separate job rather than more steps
+  # on `release`, for two reasons. The registry is still in preview, and a
+  # rejection there must not turn an otherwise successful — signed, attested,
+  # fully published — release red. And because it depends only on the GHCR image
+  # being pushed, it can be re-run on its own with `gh run rerun --job` once
+  # whatever went wrong is fixed, without re-releasing anything.
+  publish-mcp:
+    name: Publish to MCP Registry
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC proves we own the io.github.hexamatic/* namespace
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      # Version-pinned rather than `latest/download`, matching the gitleaks
+      # step in security.yml — an unpinned release download is an unreviewed
+      # binary in a workflow that holds an OIDC token.
+      - name: Install mcp-publisher
+        env:
+          MCP_PUBLISHER_VERSION: "1.8.0"
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" \
+            | tar -xz mcp-publisher
+          ./mcp-publisher --version
+
+      # The committed server.json carries the previous release's version so the
+      # drift test in internal/config can assert all three version fields agree.
+      # Rewrite all three from the tag here.
+      - name: Set release version in server.json
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          jq --arg v "$VERSION" '
+            .version = $v
+            | .packages[0].version = $v
+            | .packages[0].identifier = "ghcr.io/hexamatic/pihole-mcp:" + $v
+          ' server.json > server.tmp.json
+          mv server.tmp.json server.json
+          cat server.json
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      # Verifies ownership by reading the io.modelcontextprotocol.server.name
+      # label off ghcr.io/hexamatic/pihole-mcp:${VERSION}, so the image must
+      # already be pushed and publicly readable — hence `needs: release`.
+      - name: Publish server listing
+        run: ./mcp-publisher publish

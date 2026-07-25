@@ -10,12 +10,20 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ### Added
 
+- **Listed in the official [MCP Registry](https://registry.modelcontextprotocol.io/) as `io.github.hexamatic/pihole-mcp`.** Clients that support registry install can add pihole-mcp by name and will prompt for `PIHOLE_URL` and `PIHOLE_PASSWORD`, with the optional settings (`TZ`, `PIHOLE_TLS_SKIP_VERIFY`, timeouts and retries) described alongside their defaults. The listing is published automatically on each tag and points at the `ghcr.io` image.
 - **Signed, attested releases.** Release artefacts are now signed with keyless [cosign](https://docs.sigstore.dev/) (checksum file and Docker images), ship SPDX SBOMs for every archive, and carry SLSA build provenance verifiable with `gh attestation verify`. [SECURITY.md](SECURITY.md#verifying-release-artefacts) documents every verification command.
 - **OpenSSF Scorecard** — a weekly supply-chain security analysis now runs against the repository, publishes its score to [scorecard.dev](https://scorecard.dev/viewer/?uri=github.com/hexamatic/pihole-mcp), and feeds the new README badge. All GitHub Actions across every workflow are now pinned by commit SHA (maintained automatically by Dependabot).
 
 ### Changed
 
+- **Homebrew now installs a cask rather than a formula.** `brew install hexamatic/tap/pihole-mcp` is unchanged and still works on both macOS and Linux; existing installations migrate automatically on `brew upgrade`. On macOS the cask now clears the quarantine attribute during install, so the binary no longer trips Gatekeeper on first run. GoReleaser deprecated binary formulae in v2.10 — the cask is the supported form and covers both platforms.
 - **README badge lineup refreshed.** The Go Report Card badge has been removed — the service was sunset on 1 July 2026 — and replaced with OpenSSF Scorecard and Go Reference (pkg.go.dev) badges. Its lint-quality role has long been covered by golangci-lint in CI.
+
+### Security
+
+- **CodeQL static analysis** now runs on every push, every pull request, and weekly, over both the Go source and the GitHub Actions workflows. golangci-lint covers style and a good deal of correctness but is not a taint-tracking engine; CodeQL finds the dataflow issues a linter structurally cannot.
+- **Container base images are pinned by digest** as well as by tag, so a rebuild cannot silently pick up a different `golang:1.26-alpine` or `distroless/static-debian13`. Dependabot maintains the digests.
+- **Patch coverage is now an enforced gate** rather than advisory, and `govulncheck`, `gitleaks`, the fuzz smoke and the changelog check are required to pass before merge.
 
 ## [v0.7.0] - 2026-07-19
 

@@ -1,0 +1,80 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.hexamatic/pihole-mcp",
+  "title": "Pi-hole MCP Server",
+  "description": "Pi-hole v6 server with ~95% REST API coverage — DNS blocking, domain and client management, query analysis, DHCP, and multi-instance sync.",
+  "websiteUrl": "https://github.com/hexamatic/pihole-mcp",
+  "repository": {
+    "url": "https://github.com/hexamatic/pihole-mcp",
+    "source": "github",
+    "id": "1202418772"
+  },
+  "version": "0.7.0",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/hexamatic/pihole-mcp/main/assets/logo.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": ["any"]
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/hexamatic/pihole-mcp:0.7.0",
+      "version": "0.7.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "PIHOLE_URL",
+          "description": "Base URL of your Pi-hole web interface. For multiple Pi-holes use PIHOLE_1_URL, PIHOLE_2_URL, ... instead.",
+          "isRequired": true,
+          "format": "string",
+          "placeholder": "http://192.168.1.2"
+        },
+        {
+          "name": "PIHOLE_PASSWORD",
+          "description": "Pi-hole admin password, or an application password (recommended — bypasses TOTP 2FA)",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "TZ",
+          "description": "IANA timezone for rendered timestamps, e.g. Australia/Adelaide. Defaults to UTC in the container.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "PIHOLE_TLS_SKIP_VERIFY",
+          "description": "Set to true only for a Pi-hole serving a self-signed HTTPS certificate. A trusted certificate is the better fix.",
+          "isRequired": false,
+          "default": "false",
+          "format": "boolean"
+        },
+        {
+          "name": "PIHOLE_REQUEST_TIMEOUT",
+          "description": "HTTP request timeout as a Go duration, e.g. 30s or 1m",
+          "isRequired": false,
+          "default": "30s",
+          "format": "string"
+        },
+        {
+          "name": "PIHOLE_MAX_RETRIES",
+          "description": "Retries after a transient Pi-hole API failure; 0 disables retrying",
+          "isRequired": false,
+          "default": "3",
+          "format": "number"
+        },
+        {
+          "name": "PIHOLE_RETRY_MAX_DELAY",
+          "description": "Upper bound on a single exponential-backoff wait, as a Go duration",
+          "isRequired": false,
+          "default": "8s",
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
