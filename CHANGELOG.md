@@ -21,6 +21,7 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ### Security
 
+- **Two dependency advisories resolved** — `golang.org/x/text` to v0.39.0 ([CVE-2026-56852](https://pkg.go.dev/vuln/GO-2026-5970), infinite loop on invalid input) and `golang.org/x/net` to v0.56.0 ([CVE-2026-46600](https://pkg.go.dev/vuln/GO-2026-5942), panic parsing a malformed SVCB or HTTPS DNS record). Neither was reachable from pihole-mcp's own code paths, so no released version was exploitable through this server; both are fixed regardless.
 - **CodeQL static analysis** now runs on every push, every pull request, and weekly, over both the Go source and the GitHub Actions workflows. golangci-lint covers style and a good deal of correctness but is not a taint-tracking engine; CodeQL finds the dataflow issues a linter structurally cannot.
 - **Container base images are pinned by digest** as well as by tag, so a rebuild cannot silently pick up a different `golang:1.26-alpine` or `distroless/static-debian13`. Dependabot maintains the digests.
 - **Patch coverage is now an enforced gate** rather than advisory, and `govulncheck`, `gitleaks`, the fuzz smoke and the changelog check are required to pass before merge.
