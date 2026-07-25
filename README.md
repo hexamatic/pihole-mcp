@@ -40,11 +40,26 @@ Then install the binary via one of the methods below.
 
 ## Installation
 
+### MCP Registry
+
+pihole-mcp is listed in the [official MCP Registry](https://registry.modelcontextprotocol.io/) as:
+
+```
+io.github.hexamatic/pihole-mcp
+```
+
+Clients that support registry install can add it by that name and will prompt for
+`PIHOLE_URL` and `PIHOLE_PASSWORD`. The listing points at the `ghcr.io` image, so the
+client needs a working Docker.
+
 ### Homebrew
 
 ```bash
 brew install hexamatic/tap/pihole-mcp
 ```
+
+Installs on both macOS and Linux (Homebrew on Linux). On macOS the cask clears the
+quarantine attribute during install, so the binary runs without a Gatekeeper prompt.
 
 ### Scoop (Windows)
 

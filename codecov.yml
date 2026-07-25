@@ -13,12 +13,28 @@ coverage:
       default:
         target: auto
         threshold: 1% # absorb flake-level movement without blocking merges
+        # Both statuses are required checks on the `Protect main` ruleset, so
+        # "Codecov had nothing to compare" must not mean "blocked forever".
+        # A dependency bump that touches no coverable line produces no report
+        # for the head commit and posted no status at all before this — see
+        # PR #35, which would have hung. if_not_found treats absence as a pass;
+        # if_ci_failed keeps a genuinely broken test run failing rather than
+        # letting a missing upload look like success.
+        if_not_found: success
+        if_ci_failed: error
     patch:
       default:
         target: 80%
-        # Advisory while the project total climbs; flip to blocking once the
-        # project sits comfortably above 75% (tracked in TODO.md).
-        informational: true
+        # Blocking as of v0.8.0 (25 July 2026): the project total measured 81.41%
+        # across the three flags, comfortably past the 75% bar this was waiting
+        # on. New code is now held to the standard the existing code already
+        # meets. The threshold absorbs the odd genuinely untestable line — a
+        # signal-handler branch, an io.Writer error path — without forcing a
+        # contrived test or an admin override.
+        threshold: 2%
+        informational: false
+        if_not_found: success
+        if_ci_failed: error
 
 flags:
   unit:

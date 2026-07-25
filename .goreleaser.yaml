@@ -120,20 +120,25 @@ dockers_v2:
       DATE: "{{ .Date }}"
     dockerfile: Dockerfile.goreleaser
 
-# Homebrew tap — publishes a formula to hexamatic/homebrew-tap so macOS/Linux
+# Homebrew tap — publishes a cask to hexamatic/homebrew-tap so macOS/Linux
 # users can `brew install hexamatic/tap/pihole-mcp`. Uses the default-flavour
 # archive only (the slim build is available via Docker / `go build -tags slim`).
 # The tap repository (hexamatic/homebrew-tap) must exist before a release runs;
 # `just release-dry` warns but does not fail if it is absent.
 #
-# NOTE: goreleaser marks `brews` (formulae) as deprecated in favour of
-# `homebrew_casks`. Formulae are kept deliberately — they install on both macOS
-# and Linux (Linuxbrew), whereas casks are macOS-only and need a quarantine
-# hook for unsigned binaries. Revisit once a v0.x binary-signing story exists.
-brews:
+# This was a `brews:` (formula) block until v0.8.0. goreleaser deprecated
+# formulae in v2.10 because it had to generate hackish ones to install
+# pre-compiled binaries — the only way to reach Linuxbrew at the time, which is
+# no longer true. A cask whose only artefact is a portable `binary` stanza
+# installs on both macOS and Linux, so nothing is lost by migrating and the
+# `goreleaser check` deprecation warning goes away.
+# https://goreleaser.com/deprecations/#brews
+homebrew_casks:
   - name: pihole-mcp
     ids:
       - default
+    binaries:
+      - pihole-mcp
     repository:
       owner: hexamatic
       name: homebrew-tap
@@ -142,10 +147,25 @@ brews:
     homepage: "https://github.com/hexamatic/pihole-mcp"
     description: "Pi-hole v6 MCP server — DNS blocking, domain management, statistics and network administration"
     license: "MIT"
-    install: |
-      bin.install "pihole-mcp"
-    test: |
-      assert_match "pihole-mcp", shell_output("#{bin}/pihole-mcp -version")
+    url:
+      # The download host (github.com releases) differs from the homepage host,
+      # which `brew audit --cask` flags unless the domain is declared verified.
+      verified: "github.com/hexamatic/pihole-mcp"
+    # No `conflicts: [{formula: pihole-mcp}]` here, despite the migration note on
+    # goreleaser's deprecations page suggesting it: cask-conflicts-with-formula
+    # was always a no-op and Homebrew has since removed it (goreleaser
+    # deprecated the field in v2.12). The upgrade path from the old formula is
+    # `tap_migrations.json` in hexamatic/homebrew-tap instead.
+    hooks:
+      post:
+        # Release binaries are cosign-signed but not Apple-notarised, so macOS
+        # quarantines them on first run and Gatekeeper refuses to execute.
+        # Guarded on OS.mac? so the cask stays installable under Linuxbrew,
+        # where the attribute does not exist and `xattr` is absent.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/pihole-mcp"]
+          end
 
 # Scoop bucket — publishes a manifest to hexamatic/scoop-bucket so Windows
 # users can install via `scoop install pihole-mcp`. Uses the default-flavour

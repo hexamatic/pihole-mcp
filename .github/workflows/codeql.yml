@@ -1,0 +1,83 @@
+name: CodeQL
+
+# Static analysis. golangci-lint already covers style and a good deal of
+# correctness, but it is not a taint-tracking engine and OpenSSF Scorecard's
+# SAST check does not count it — CodeQL is what earns that point, and what
+# finds the dataflow bugs a linter structurally cannot see.
+#
+# Two languages are analysed:
+#   go      — the server itself.
+#   actions — the workflow YAML. Most of this repository's supply-chain
+#             surface is CI configuration, so it deserves the same scrutiny
+#             as the Go code.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # New queries ship against unchanged code, exactly as new advisories do.
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  analyse:
+    name: Analyse ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Publish results to the code-scanning dashboard.
+      security-events: write
+      # CodeQL reads workflow run metadata when analysing the `actions` language.
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # security-extended adds the lower-precision security queries on top
+          # of the default suite. Deliberately not security-and-quality: its
+          # maintainability rules overlap golangci-lint's 13 linters and would
+          # bury real findings under style noise.
+          - language: go
+            queries: security-extended
+          # The actions pack is small and security-only already; leaving the
+          # suite at the default avoids depending on a suite name that may not
+          # exist for this comparatively new language.
+          - language: actions
+            queries: ""
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      # Pin Go from go.mod so CodeQL's autobuild compiles against the same
+      # toolchain as CI rather than whatever the runner image ships.
+      - if: matrix.language == 'go'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: "go.mod"
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          languages: ${{ matrix.language }}
+          queries: ${{ matrix.queries }}
+
+      # No codegen, no cgo, plain `go build` — autobuild is sufficient and
+      # keeps this in step with the real build automatically. `actions` needs
+      # no build step at all.
+      - name: Autobuild
+        if: matrix.language == 'go'
+        uses: github/codeql-action/autobuild@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+
+      - name: Analyse
+        uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          category: "/language:${{ matrix.language }}"
