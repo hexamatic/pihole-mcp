@@ -216,15 +216,26 @@ sboms:
 # Keyless cosign signature over the checksum file — one signature covers
 # every archive, verified against the GitHub Actions OIDC identity. See
 # SECURITY.md for the verification commands.
+#
+# Emits a single Sigstore *bundle* rather than the separate .sig/.pem pair.
+# cosign v3 deprecated `--output-signature` and `--output-certificate` and
+# defaults to the new bundle format, which errors with "must specify --bundle
+# with --new-bundle-format" if no bundle path is given. The v0.8.0 tag failed
+# on exactly that: cosign-installer was unpinned, so it fetched v3 against a
+# config written for v2 that no tag had ever exercised (`just release-dry`
+# skips signing, so local runs could not catch it). The installer is now
+# pinned to a cosign version in release.yml — see the note there.
+#
+# goreleaser has no dedicated `bundle:` field, so the bundle path is declared
+# via `signature:`; that is what makes goreleaser upload it as a release asset.
 signs:
   - cmd: cosign
-    certificate: "${artifact}.pem"
     artifacts: checksum
+    signature: "${artifact}.bundle"
     output: true
     args:
       - "sign-blob"
-      - "--output-certificate=${certificate}"
-      - "--output-signature=${signature}"
+      - "--bundle=${signature}"
       - "${artifact}"
       - "--yes"
 
