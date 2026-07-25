@@ -134,8 +134,14 @@ func TestServerJSONVersionsAgree(t *testing.T) {
 	if pkg.RegistryType != "oci" {
 		t.Errorf("registryType = %q, want %q", pkg.RegistryType, "oci")
 	}
-	if pkg.Version != m.Version {
-		t.Errorf("packages[0].version = %q, server version = %q", pkg.Version, m.Version)
+
+	// An OCI package must carry no `version`; the tag inside `identifier` is the
+	// version. The registry rejects it with "OCI packages must not have 'version'
+	// field" — a rule the published JSON Schema does not encode, since it permits
+	// `version` on Package for the npm and pypi cases. Cost the v0.8.0 listing a
+	// second publish attempt.
+	if pkg.Version != "" {
+		t.Errorf("packages[0].version = %q, want it absent — the registry rejects a version on an OCI package (put it in the identifier tag)", pkg.Version)
 	}
 
 	wantIdentifier := fmt.Sprintf("ghcr.io/hexamatic/pihole-mcp:%s", m.Version)

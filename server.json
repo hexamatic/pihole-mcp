@@ -21,7 +21,6 @@
     {
       "registryType": "oci",
       "identifier": "ghcr.io/hexamatic/pihole-mcp:0.7.0",
-      "version": "0.7.0",
       "transport": {
         "type": "stdio"
       },
