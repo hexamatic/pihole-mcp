@@ -1,0 +1,105 @@
+name: Publish MCP Registry
+
+# Publishes server.json to the official MCP Registry.
+#
+# This is a workflow of its own rather than a job inside release.yml, for two
+# reasons that the v0.8.0 release demonstrated in practice:
+#
+#  1. A registry rejection must not fail an otherwise complete release. The
+#     registry is in preview, and the artefacts are already signed and attested
+#     by the time this runs.
+#  2. It must be re-runnable *after* correcting the manifest. A job inside
+#     release.yml checks out the tag, so a metadata mistake — v0.8.0's was a
+#     138-character description against a documented 100-character cap — could
+#     only be fixed by moving the tag. That is not acceptable: the release's
+#     cosign signatures and SLSA attestations reference the exact commit that
+#     was built, so moving the tag would break the provenance chain the release
+#     exists to provide.
+#
+# So this runs from the default branch and takes the version as data. Correcting
+# listing metadata is then a normal PR plus a workflow_dispatch, and never a
+# re-tag.
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, without the leading v (e.g. 0.8.0)"
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish to MCP Registry
+    # On the automatic path, only publish for a successful, tag-triggered release.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC proves we own the io.github.hexamatic/* namespace
+    steps:
+      # Deliberately checks out the default branch, not the tag: the manifest we
+      # want is the corrected one on main. Only the version fields come from the
+      # release being published.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Resolve version
+        id: v
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+          RELEASE_REF: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          if [ -n "${DISPATCH_VERSION:-}" ]; then
+            version="${DISPATCH_VERSION#v}"
+          else
+            version="${RELEASE_REF#v}"
+          fi
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::refusing to publish unrecognised version '$version'"; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Publishing listing for $version"
+
+      # Version-pinned rather than latest/download — an unreviewed binary in a
+      # workflow holding an OIDC token is exactly what pinning is for. This is
+      # the same pattern as the gitleaks download in security.yml.
+      - name: Install mcp-publisher
+        env:
+          MCP_PUBLISHER_VERSION: "1.8.0"
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" \
+            | tar -xz mcp-publisher
+          ./mcp-publisher --version
+
+      # server.json is committed carrying the previous release's version so the
+      # drift tests in internal/config can assert all three version fields agree.
+      - name: Set version in server.json
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          jq --arg v "$VERSION" '
+            .version = $v
+            | .packages[0].version = $v
+            | .packages[0].identifier = "ghcr.io/hexamatic/pihole-mcp:" + $v
+          ' server.json > server.tmp.json
+          mv server.tmp.json server.json
+          cat server.json
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      # Ownership is verified by reading the io.modelcontextprotocol.server.name
+      # label off ghcr.io/hexamatic/pihole-mcp:$VERSION, so that image must
+      # already be pushed and publicly readable.
+      - name: Publish server listing
+        run: ./mcp-publisher publish

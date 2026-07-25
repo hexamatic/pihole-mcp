@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.hexamatic/pihole-mcp",
   "title": "Pi-hole MCP Server",
-  "description": "Pi-hole v6 server with ~95% REST API coverage — DNS blocking, domain and client management, query analysis, DHCP, and multi-instance sync.",
+  "description": "Manage Pi-hole v6: DNS blocking, domains, clients, query analysis, DHCP, and multi-instance sync.",
   "websiteUrl": "https://github.com/hexamatic/pihole-mcp",
   "repository": {
     "url": "https://github.com/hexamatic/pihole-mcp",

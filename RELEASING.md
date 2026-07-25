@@ -62,32 +62,39 @@ After the workflow completes:
 
 ## MCP Registry publishing
 
-The `publish-mcp` job in `.github/workflows/release.yml` publishes `server.json` to the
-[official MCP Registry](https://registry.modelcontextprotocol.io/) after the `release` job
-finishes. It runs as a separate job deliberately — the registry is in preview, and a rejection
-there must not mark an otherwise good release as failed.
+`.github/workflows/publish-mcp.yml` publishes `server.json` to the
+[official MCP Registry](https://registry.modelcontextprotocol.io/). It triggers automatically on a
+successful tag-driven `Release` run, and can also be dispatched by hand.
 
 How it works:
 
 - `server.json` is committed carrying the **previous** release's version, so the drift tests in
   `internal/config/serverjson_test.go` can assert `.version`, `.packages[0].version` and the tag
-  in `.packages[0].identifier` all agree. The job rewrites all three from the git tag with `jq`;
-  there is nothing to bump by hand before tagging.
+  in `.packages[0].identifier` all agree. The workflow rewrites all three with `jq`; there is
+  nothing to bump by hand before tagging.
 - Ownership is proved by the `io.modelcontextprotocol.server.name` label on the published GHCR
   image, which the registry reads and matches against `name` in `server.json`. Both live in
   `Dockerfile.goreleaser`, and the drift test fails the build if they diverge.
 - Authentication is GitHub Actions OIDC (`mcp-publisher login github-oidc`), which grants the
   `io.github.hexamatic/*` namespace. No token or secret is required.
+- The image must be public for the registry to inspect it anonymously — verify with
+  `gh api orgs/hexamatic/packages/container/pihole-mcp --jq .visibility`.
 
-If the job fails, the release itself is already complete and signed. Fix the cause and re-run
-just that job:
+**It checks out the default branch, not the tag, and takes the version as an input.** That is
+deliberate. v0.8.0's first publish attempt was rejected with a 422 for a 138-character
+`description` against a documented 100-character cap. Had the publish lived inside `release.yml`,
+correcting it would have meant moving the tag — which is not acceptable, because the release's
+cosign signatures and SLSA attestations reference the exact commit that was built, so moving the
+tag breaks the provenance chain the release exists to provide.
+
+So fixing listing metadata is a normal pull request followed by:
 
 ```sh
-gh run rerun <run-id> --job <job-id>
+gh workflow run publish-mcp.yml -f version=X.Y.Z
 ```
 
-The image must be public for the registry to inspect it anonymously — verify with
-`gh api orgs/hexamatic/packages/container/pihole-mcp --jq .visibility`.
+Publishing the same version again is an update, not an error. A failed publish never affects the
+release, which is already complete, signed and attested by the time this runs.
 
 ## Local dry-run
 
