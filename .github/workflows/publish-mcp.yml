@@ -82,18 +82,34 @@ jobs:
           ./mcp-publisher --version
 
       # server.json is committed carrying the previous release's version so the
-      # drift tests in internal/config can assert all three version fields agree.
+      # drift tests in internal/config can assert the version fields agree.
+      #
+      # Only two fields move: the top-level version and the tag inside the OCI
+      # identifier. An OCI package must NOT carry a `version` — the registry
+      # rejects it with "OCI packages must not have 'version' field - include
+      # version in 'identifier' instead", even though the published JSON Schema
+      # permits the field on Package generally. `del` keeps that true even if one
+      # creeps back into the committed manifest.
       - name: Set version in server.json
         env:
           VERSION: ${{ steps.v.outputs.version }}
         run: |
           jq --arg v "$VERSION" '
             .version = $v
-            | .packages[0].version = $v
             | .packages[0].identifier = "ghcr.io/hexamatic/pihole-mcp:" + $v
+            | del(.packages[0].version)
           ' server.json > server.tmp.json
           mv server.tmp.json server.json
           cat server.json
+
+      # `validate` checks the manifest against the live registry without
+      # publishing or authenticating, and catches the server-side rules the
+      # published JSON Schema does not encode — a description over 100
+      # characters, or a `version` on an OCI package. Both of those cost v0.8.0 a
+      # failed publish before this step existed. Runs before login so a bad
+      # manifest fails without ever minting an OIDC token.
+      - name: Validate manifest against the registry
+        run: ./mcp-publisher validate
 
       - name: Authenticate to MCP Registry
         run: ./mcp-publisher login github-oidc
