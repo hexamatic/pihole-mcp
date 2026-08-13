@@ -134,8 +134,21 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError("Parameter 'config' is required (JSON object)"), nil
 		}
 
+		// The Pi-hole API requires the update body wrapped in a "config" key
+		// ({"config": {...}}). The tool parameter is the bare config object, so
+		// wrap it before sending. Validate the JSON first so bad input surfaces
+		// as a clear tool error rather than a 400 from the API.
+		var configObj any
+		if err := json.Unmarshal([]byte(configStr), &configObj); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Parameter 'config' must be valid JSON: %v", err)), nil
+		}
+		wrapped, err := json.Marshal(map[string]any{"config": configObj})
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to encode config payload: %v", err)), nil
+		}
+
 		var result pihole.ConfigResponse
-		if err := c.Do(ctx, "PATCH", "/config", rawJSON(configStr), &result); err != nil {
+		if err := c.Do(ctx, "PATCH", "/config", rawJSON(string(wrapped)), &result); err != nil {
 			return toolError("update config", err), nil
 		}
 
