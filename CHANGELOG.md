@@ -8,6 +8,10 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pihole_config_set` failed on every configuration write.** The handler sent the supplied object as the bare `PATCH /api/config` body, but Pi-hole requires it wrapped in a `config` key and rejects anything else with `No "config" object in body data`, so the tool has never applied a change. The payload is now wrapped before it is sent. Malformed JSON is also reported as a tool error up front rather than surfacing as an opaque API failure. Present since v0.1.0. Found and fixed by [@st0aty](https://github.com/st0aty) ([#48](https://github.com/hexamatic/pihole-mcp/pull/48)).
+
 ## [v0.8.0] - 2026-07-25
 
 ### Highlights
