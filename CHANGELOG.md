@@ -11,6 +11,8 @@ The release body on GitHub for each tagged version is sourced from the matching 
 ### Fixed
 
 - **`pihole_config_set` failed on every configuration write.** The handler sent the supplied object as the bare `PATCH /api/config` body, but Pi-hole requires it wrapped in a `config` key and rejects anything else with `No "config" object in body data`, so the tool has never applied a change. The payload is now wrapped before it is sent. Malformed JSON is also reported as a tool error up front rather than surfacing as an opaque API failure. Present since v0.1.0. Found and fixed by [@st0aty](https://github.com/st0aty) ([#48](https://github.com/hexamatic/pihole-mcp/pull/48)).
+- **`pihole_config_set` accepts a payload that already carries the `config` envelope.** Anyone who worked around the bug above did so by passing `{"config": {...}}`, which was the one shape that reached Pi-hole intact. Wrapping that a second time produced `{"config": {"config": {...}}}`, and because FTL ignores keys it does not recognise and still answers 200, the write reported success while changing nothing. A lone `config` key is now treated as the envelope rather than a section, so both forms behave identically. Pi-hole has no top-level `config` section, so there is no ambiguity to resolve.
+- **`pihole_config_set` rejects JSON that is not an object.** An array or a bare scalar previously travelled to the API and came back as `No "config" object in body data`, which described the transport rather than the mistake.
 
 ## [v0.8.0] - 2026-07-25
 
