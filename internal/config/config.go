@@ -21,6 +21,41 @@ const (
 // DNS-rebinding protection prescribed by the MCP 2025-11-25 spec.
 var defaultAllowedOrigins = []string{"localhost", "127.0.0.1", "[::1]"}
 
+// Identity advertised to MCP clients during the protocol handshake. These mirror
+// the matching fields of server.json, the manifest the MCP Registry publishes,
+// so a client that installed us from the registry and a client talking to the
+// running process see the same name, blurb and icons.
+// TestServerJSONIdentityMatchesConstants fails if the two ever disagree.
+const (
+	ServerTitle       = "Pi-hole MCP Server"
+	ServerDescription = "Manage Pi-hole v6: DNS blocking, domains, clients, query analysis, DHCP, and multi-instance sync."
+	ServerWebsiteURL  = "https://github.com/hexamatic/pihole-mcp"
+)
+
+// ServerIcon is one entry of the icon set advertised to clients, matching the
+// shape of an entry in server.json's "icons" array.
+type ServerIcon struct {
+	Src      string
+	MIMEType string
+	Sizes    []string
+}
+
+// ServerIcons is the icon set advertised over the protocol and in server.json.
+// Raster images come first deliberately: the MCP specification tells clients to
+// prefer PNG or JPEG and warns that an SVG may carry executable content, so the
+// SVG is offered last as a resolution-independent fallback for clients that
+// render it safely.
+var ServerIcons = []ServerIcon{
+	{Src: assetBaseURL + "logo-256.png", MIMEType: "image/png", Sizes: []string{"256x256"}},
+	{Src: assetBaseURL + "logo-120.png", MIMEType: "image/png", Sizes: []string{"120x120"}},
+	{Src: assetBaseURL + "logo.svg", MIMEType: "image/svg+xml", Sizes: []string{"any"}},
+}
+
+// assetBaseURL is where the icons above are served from. Icons have to be
+// fetchable by a client that only has the binary, so they cannot be relative
+// paths into the repository.
+const assetBaseURL = "https://raw.githubusercontent.com/hexamatic/pihole-mcp/main/assets/"
+
 // InstanceConfig describes a single Pi-hole instance.
 type InstanceConfig struct {
 	// Name is the instance identifier used in the "instance" tool argument and
@@ -225,8 +260,23 @@ func loadInstance(prefix, name string) (InstanceConfig, error) {
 	if rawURL == "" {
 		return InstanceConfig{}, fmt.Errorf("%s_URL is required and must not be empty", prefix)
 	}
-	if _, err := url.Parse(rawURL); err != nil {
+	u, err := url.Parse(rawURL)
+	if err != nil {
 		return InstanceConfig{}, fmt.Errorf("%s_URL is not a valid URL: %w", prefix, err)
+	}
+	// url.Parse accepts almost anything, so a bare host or a typo in the scheme
+	// used to be carried all the way to the first tool call and surface there as
+	// an opaque transport error. Reject it at startup, where the message can name
+	// the variable.
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		if u.Host == "" {
+			return InstanceConfig{}, fmt.Errorf("%s_URL must include a host, for example http://192.168.1.2 (got %q)", prefix, rawURL)
+		}
+	case "":
+		return InstanceConfig{}, fmt.Errorf("%s_URL must start with http:// or https://, for example http://192.168.1.2 (got %q)", prefix, rawURL)
+	default:
+		return InstanceConfig{}, fmt.Errorf("%s_URL has scheme %q, but only http and https are supported. If that is a host and port, add the scheme: http://%s", prefix, u.Scheme, rawURL)
 	}
 	pw, ok := os.LookupEnv(prefix + "_PASSWORD")
 	if !ok {

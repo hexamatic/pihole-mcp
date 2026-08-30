@@ -36,8 +36,14 @@ type serverManifest struct {
 	Name        string `json:"name"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
+	WebsiteURL  string `json:"websiteUrl"`
 	Version     string `json:"version"`
-	Packages    []struct {
+	Icons       []struct {
+		Src      string   `json:"src"`
+		MIMEType string   `json:"mimeType"`
+		Sizes    []string `json:"sizes"`
+	} `json:"icons"`
+	Packages []struct {
 		RegistryType         string `json:"registryType"`
 		Identifier           string `json:"identifier"`
 		Version              string `json:"version"`
@@ -183,6 +189,67 @@ func TestServerJSONEnvVarsAreReal(t *testing.T) {
 	for name := range wantRequired {
 		if !seen[name] {
 			t.Errorf("server.json does not advertise %s, which the server cannot start without", name)
+		}
+	}
+}
+
+// TestServerJSONIdentityMatchesConstants pins the registry listing to the
+// identity the running server advertises over the protocol.
+//
+// These are two separate publication routes to the same user: server.json is
+// what someone browsing the MCP Registry reads, and the constants are what the
+// handshake carries to a client that already has the binary. Nothing links
+// them at build time, so without this test a change to one silently leaves the
+// other describing an older release.
+func TestServerJSONIdentityMatchesConstants(t *testing.T) {
+	m := loadServerManifest(t)
+
+	if m.Title != ServerTitle {
+		t.Errorf("server.json title = %q, ServerTitle = %q — these must be identical", m.Title, ServerTitle)
+	}
+	if m.Description != ServerDescription {
+		t.Errorf("server.json description = %q, ServerDescription = %q — these must be identical", m.Description, ServerDescription)
+	}
+	if m.WebsiteURL != ServerWebsiteURL {
+		t.Errorf("server.json websiteUrl = %q, ServerWebsiteURL = %q — these must be identical", m.WebsiteURL, ServerWebsiteURL)
+	}
+}
+
+// TestServerJSONIconsMatchConstants checks the icon sets agree entry for entry,
+// and that a raster icon is offered first.
+//
+// The MCP specification tells clients to prefer PNG or JPEG and warns that an
+// SVG may carry executable content, so a client that follows it either renders
+// nothing or takes a risk when the SVG is all we advertise.
+func TestServerJSONIconsMatchConstants(t *testing.T) {
+	m := loadServerManifest(t)
+
+	if len(m.Icons) != len(ServerIcons) {
+		t.Fatalf("server.json declares %d icons, ServerIcons has %d", len(m.Icons), len(ServerIcons))
+	}
+	for i, want := range ServerIcons {
+		got := m.Icons[i]
+		if got.Src != want.Src || got.MIMEType != want.MIMEType {
+			t.Errorf("icon %d: server.json = %q (%s), ServerIcons = %q (%s)", i, got.Src, got.MIMEType, want.Src, want.MIMEType)
+		}
+		if strings.Join(got.Sizes, ",") != strings.Join(want.Sizes, ",") {
+			t.Errorf("icon %d sizes: server.json = %v, ServerIcons = %v", i, got.Sizes, want.Sizes)
+		}
+	}
+
+	if len(ServerIcons) == 0 || ServerIcons[0].MIMEType != "image/png" {
+		t.Error("the first advertised icon must be a PNG — the MCP specification tells clients to prefer PNG or JPEG and warns that an SVG may carry executable content")
+	}
+}
+
+// TestServerIconAssetsExist checks every advertised icon is a file actually
+// committed to assets/, since an icon URL is served from the repository and a
+// missing file gives clients a 404 with nothing to fall back on.
+func TestServerIconAssetsExist(t *testing.T) {
+	for _, icon := range ServerIcons {
+		name := icon.Src[strings.LastIndex(icon.Src, "/")+1:]
+		if _, err := os.Stat("../../assets/" + name); err != nil {
+			t.Errorf("icon %s is advertised but assets/%s is missing: %v", icon.Src, name, err)
 		}
 	}
 }

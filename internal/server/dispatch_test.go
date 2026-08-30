@@ -9,6 +9,7 @@ import (
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/hexamatic/pihole-mcp/internal/pihole/piholefake"
 	"github.com/hexamatic/pihole-mcp/internal/tools"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
@@ -630,5 +631,90 @@ func TestDispatch_ToolsCall_UnknownInstanceIsErrorResult(t *testing.T) {
 	text, _ := block["text"].(string)
 	if !strings.Contains(text, "nonexistent") {
 		t.Errorf("the error text does not name the instance that was asked for: %q", text)
+	}
+}
+
+// TestPanickingResourceIsRecovered is the regression test for a panic in a
+// resource handler taking the whole process down.
+//
+// WithRecovery only covers the tool path. On stdio, which is the default
+// transport and how nearly every user runs this, a resource handler panic
+// escaped HandleMessage on the read loop and killed the server: the client saw
+// the connection drop, with no error and nothing in the transcript to say why.
+// A dispatch-level test is the only kind that catches this, because calling the
+// handler directly panics no matter which options the server was built with.
+func TestPanickingResourceIsRecovered(t *testing.T) {
+	srv := newDispatchServer(t, newDispatchFake(t))
+	srv.AddResource(
+		mcp.NewResource("pihole://panic-probe", "Panic probe"),
+		func(context.Context, mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			panic("deliberate resource handler panic")
+		},
+	)
+
+	envelope := dispatch(t, srv, `{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"pihole://panic-probe"}}`)
+
+	rpcErr, ok := envelope["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("a panicking resource must answer with a JSON-RPC error, got: %#v", envelope)
+	}
+	if code, _ := rpcErr["code"].(float64); int(code) != mcp.INTERNAL_ERROR {
+		t.Errorf("error code = %v, want %d (internal error)", rpcErr["code"], mcp.INTERNAL_ERROR)
+	}
+}
+
+// TestPanickingToolIsRecovered pins the protection that already existed, so a
+// future options change cannot remove one recovery while the other test keeps
+// the suite green.
+func TestPanickingToolIsRecovered(t *testing.T) {
+	srv := newDispatchServer(t, newDispatchFake(t))
+	srv.AddTool(
+		mcp.NewTool("panic_probe", mcp.WithDescription("Panics on purpose.")),
+		func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			panic("deliberate tool handler panic")
+		},
+	)
+
+	envelope := dispatch(t, srv, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"panic_probe","arguments":{}}}`)
+	if _, present := envelope["error"]; !present {
+		if res, ok := envelope["result"].(map[string]any); !ok || res["isError"] != true {
+			t.Fatalf("a panicking tool must not return a successful result: %#v", envelope)
+		}
+	}
+}
+
+// TestOutputSchemaValidationIsEnabled proves the option is live rather than
+// merely listed.
+//
+// A tool that declares an output schema and then returns something else is a
+// contract the client cannot rely on, and it fails silently: the client
+// deserialises into the declared shape and gets zero values. The tools here
+// generate their schemas from the Go structs they return, so the schemas are
+// accurate by construction and a mismatch is a genuine bug. This registers a
+// deliberately dishonest tool and asserts the server refuses its answer.
+func TestOutputSchemaValidationIsEnabled(t *testing.T) {
+	srv := newDispatchServer(t, newDispatchFake(t))
+
+	type declared struct {
+		Count int `json:"count"`
+	}
+	srv.AddTool(
+		mcp.NewTool("schema_liar",
+			mcp.WithDescription("Declares one output shape and returns another."),
+			mcp.WithOutputSchema[declared](),
+		),
+		func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultStructured(map[string]any{"count": "not a number"}, "1"), nil
+		},
+	)
+
+	envelope := dispatch(t, srv, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"schema_liar","arguments":{}}}`)
+
+	if _, present := envelope["error"]; present {
+		return
+	}
+	res, ok := envelope["result"].(map[string]any)
+	if !ok || res["isError"] != true {
+		t.Fatalf("a result contradicting its own output schema was accepted, so WithOutputSchemaValidation is not in effect: %#v", envelope)
 	}
 }

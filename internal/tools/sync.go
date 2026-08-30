@@ -71,6 +71,7 @@ func RegisterSync(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithOutputSchema[InstanceDiffOutput](),
 	)
 	normaliseReadOnlyAnnotations(&diffTool)
+	applyToolTitle(&diffTool)
 	recordTool(diffTool)
 	s.AddTool(diffTool, withTracing(diffTool.Name, instanceDiffHandler(r)))
 
@@ -89,6 +90,7 @@ func RegisterSync(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithOutputSchema[InstanceSyncOutput](),
 	)
+	applyToolTitle(&syncTool)
 	recordTool(syncTool)
 	s.AddTool(syncTool, withTracing(syncTool.Name, instanceSyncHandler(r)))
 }

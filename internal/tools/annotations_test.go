@@ -133,3 +133,32 @@ func TestInstanceArgGatedByInstanceCount(t *testing.T) {
 		t.Error("multi-instance tool must advertise the instance argument")
 	}
 }
+
+// TestToolTitleIsSet asserts every registered tool carries a title on the tool
+// itself, not only in its annotations.
+//
+// The 2025-11-25 revision moved the display name onto Tool.Title; clients
+// written against it read that field and fall back to the raw tool name, so a
+// title that lives only in the annotations shows "pihole_stats_summary" in a
+// tool picker that could have shown "Query Statistics". Nothing else catches
+// this: docs/TOOLS.md does not render Title, so CI's documentation drift check
+// stays green either way.
+func TestToolTitleIsSet(t *testing.T) {
+	srv := server.NewMCPServer("test", "0.0.0")
+	RegisterAll(srv, dummyRegistry(2))
+
+	tools := srv.ListTools()
+	if len(tools) == 0 {
+		t.Fatal("no tools registered")
+	}
+
+	for name, st := range tools {
+		if st.Tool.Title == "" {
+			t.Errorf("%s: Tool.Title is empty, so spec-current clients display the raw tool name", name)
+			continue
+		}
+		if ann := st.Tool.Annotations.Title; ann != "" && st.Tool.Title != ann {
+			t.Errorf("%s: Tool.Title = %q but Annotations.Title = %q — clients reading either field must see the same name", name, st.Tool.Title, ann)
+		}
+	}
+}

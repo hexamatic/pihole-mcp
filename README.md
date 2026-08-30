@@ -98,6 +98,24 @@ Pre-built binaries for Linux, macOS, and Windows (amd64 and arm64) are available
 
 Releases are checksummed, signed with keyless cosign, and ship SPDX SBOMs and SLSA build provenance — see [SECURITY.md](SECURITY.md#verifying-release-artefacts) for the verification commands.
 
+### Check your setup
+
+Once installed and configured, run the server directly with `-check`. It loads the configuration, contacts every Pi-hole you have configured, and reports each one by name:
+
+```bash
+PIHOLE_URL=http://192.168.1.2 PIHOLE_PASSWORD=your-password pihole-mcp -check
+```
+
+```text
+pihole-mcp 0.9.0
+
+PASS  primary (http://192.168.1.2)  core v6.1.4, FTL v6.7
+
+All 1 instance(s) reachable and authenticated.
+```
+
+It exits non-zero if any instance fails, and prints what to change. Worth running before you wire the server into a client: most clients hide the server's output, so a bad URL or password looks the same as a server that never started.
+
 ## Configuration
 
 | Variable | Required | Default | Description |
@@ -199,6 +217,8 @@ Add to your Claude Desktop configuration file:
 
 Restart Claude Desktop after saving.
 
+If the server does not appear, run `pihole-mcp -check` in a terminal with the same environment variables to see whether it can reach your Pi-hole.
+
 </details>
 
 <details>
@@ -216,6 +236,8 @@ Verify with:
 ```bash
 claude mcp list
 ```
+
+If the server does not appear, run `pihole-mcp -check` in a terminal with the same environment variables to see whether it can reach your Pi-hole.
 
 </details>
 
@@ -243,6 +265,8 @@ Or add via the command palette: `MCP: Add Server`.
 
 > **Note:** VS Code uses `"servers"` as the top-level key (not `"mcpServers"`), and requires `"type": "stdio"`.
 
+If the server does not appear, run `pihole-mcp -check` in a terminal with the same environment variables to see whether it can reach your Pi-hole.
+
 </details>
 
 <details>
@@ -263,6 +287,8 @@ Add to `~/.cursor/mcp.json`:
   }
 }
 ```
+
+If the server does not appear, run `pihole-mcp -check` in a terminal with the same environment variables to see whether it can reach your Pi-hole.
 
 </details>
 
@@ -285,6 +311,8 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 }
 ```
 
+If the server does not appear, run `pihole-mcp -check` in a terminal with the same environment variables to see whether it can reach your Pi-hole.
+
 </details>
 
 <details>
@@ -305,6 +333,8 @@ Open Cline settings > MCP Servers > Configure, and add:
   }
 }
 ```
+
+If the server does not appear, run `pihole-mcp -check` in a terminal with the same environment variables to see whether it can reach your Pi-hole.
 
 </details>
 
@@ -332,6 +362,15 @@ For clients that support Docker-based MCP servers:
 Useful when you don't have Go installed or want to run the server on a remote host.
 
 The `-v` mount is there for `pihole_teleporter_export`. Without it, a backup is written inside the container's own filesystem and is gone as soon as `--rm` removes the container on exit. Pass `output_path` pointing inside the mount (e.g. `/backups/pihole.zip`) to keep it on the host.
+
+To check the container can reach your Pi-hole, run the same image with `-check`. Remember that `localhost` inside a container is the container itself, which is the usual cause of a failure here:
+
+```bash
+docker run --rm \
+  -e PIHOLE_URL=http://192.168.1.2 \
+  -e PIHOLE_PASSWORD=your-password \
+  ghcr.io/hexamatic/pihole-mcp:latest -check
+```
 
 </details>
 

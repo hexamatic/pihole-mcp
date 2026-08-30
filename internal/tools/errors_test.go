@@ -1,8 +1,13 @@
 package tools
 
 import (
+	"crypto/x509"
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
@@ -132,4 +137,68 @@ func mustText(t *testing.T, result *mcp.CallToolResult) string {
 		t.Fatalf("expected TextContent, got %T", result.Content[0])
 	}
 	return tc.Text
+}
+
+// TestToolErrorTransportHints covers the four connection-level failures that
+// never reach the Pi-hole API, so never arrive as a typed API error.
+//
+// Each one used to render as a bare Go error. The model calling the tool sees
+// only this string, and every one of these has a fix the README already
+// documents, so the model was being asked to debug a network problem from
+// "dial tcp 192.168.1.2:80: connect: connection refused".
+func TestToolErrorTransportHints(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "untrusted certificate",
+			err:  fmt.Errorf("pi-hole API request failed: %w", &url.Error{Op: "Get", URL: "https://192.168.1.2/api/stats/summary", Err: x509.UnknownAuthorityError{}}),
+			want: "PIHOLE_TLS_SKIP_VERIFY=true",
+		},
+		{
+			name: "connection refused",
+			err:  fmt.Errorf("pi-hole API request failed: %w", &url.Error{Op: "Get", URL: "http://192.168.1.2/api/stats/summary", Err: &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}}),
+			want: "Nothing is listening",
+		},
+		{
+			name: "name does not resolve",
+			err:  fmt.Errorf("pi-hole API request failed: %w", &url.Error{Op: "Get", URL: "http://pihole.invalid/api", Err: &net.DNSError{Err: "no such host", Name: "pihole.invalid", IsNotFound: true}}),
+			want: "did not resolve",
+		},
+		{
+			name: "missing scheme",
+			err:  fmt.Errorf("pi-hole API request failed: %w", &url.Error{Op: "Get", URL: "192.168.1.2/api", Err: errors.New(`unsupported protocol scheme ""`)}),
+			want: "must start with http:// or https://",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := toolError("get stats", tc.err)
+			if !result.IsError {
+				t.Fatal("expected IsError to be true")
+			}
+			text := mustText(t, result)
+			if !strings.Contains(text, tc.want) {
+				t.Errorf("error gives the caller no way to fix this (want %q):\n%s", tc.want, text)
+			}
+			if !strings.Contains(text, "Failed to get stats") {
+				t.Errorf("error dropped the action: %s", text)
+			}
+		})
+	}
+}
+
+// TestToolErrorLeavesOtherErrorsAlone checks the hints do not fire on errors
+// they do not explain, which would attach a misleading fix to an unrelated
+// failure.
+func TestToolErrorLeavesOtherErrorsAlone(t *testing.T) {
+	text := mustText(t, toolError("get stats", errors.New("unmarshalling response from /stats/summary: unexpected end of JSON input")))
+	for _, unwanted := range []string{"PIHOLE_TLS_SKIP_VERIFY", "Nothing is listening", "did not resolve", "must start with http"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("unrelated error picked up the %q hint: %s", unwanted, text)
+		}
+	}
 }

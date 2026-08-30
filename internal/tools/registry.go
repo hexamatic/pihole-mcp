@@ -41,6 +41,7 @@ func RegisterAll(s *server.MCPServer, r *pihole.Registry) {
 // to cover both shapes the tool can now return.
 func addTool(s *server.MCPServer, r *pihole.Registry, tool mcp.Tool, handler server.ToolHandlerFunc) {
 	normaliseReadOnlyAnnotations(&tool)
+	applyToolTitle(&tool)
 	if r.Len() > 1 {
 		addInstanceParam(&tool, r)
 		widenOutputSchema(&tool)
@@ -136,6 +137,20 @@ var additiveTools = map[string]bool{
 // adds, DestructiveHint alone should be false. This is a no-op for every
 // other tool, so deliberate openWorld/destructive hints on write and delete
 // tools are preserved.
+// applyToolTitle promotes the title annotation to the tool's own Title field.
+//
+// Every tool here carries a human-readable title as an annotation, which is
+// where the field lived before the 2025-11-25 revision moved it onto the tool
+// itself. Clients written against the current spec read Tool.Title and fall
+// back to the bare tool name, so leaving it unset showed "pihole_stats_summary"
+// in a picker that could have shown "Query Statistics". Setting both keeps
+// older clients working.
+func applyToolTitle(tool *mcp.Tool) {
+	if tool.Title == "" {
+		tool.Title = tool.Annotations.Title
+	}
+}
+
 func normaliseReadOnlyAnnotations(tool *mcp.Tool) {
 	if tool.Annotations.ReadOnlyHint != nil && *tool.Annotations.ReadOnlyHint {
 		no := false
