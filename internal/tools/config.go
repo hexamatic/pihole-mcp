@@ -143,8 +143,24 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(fmt.Sprintf("Parameter 'config' must be valid JSON: %v", err)), nil
 		}
 
+		payload, ok := configObj.(map[string]any)
+		if !ok {
+			return mcp.NewToolResultError(`Parameter 'config' must be a JSON object, e.g. {"dns":{"blocking":{"active":true}}}`), nil
+		}
+
+		// Accept a payload that already carries the API envelope. Pi-hole has no
+		// top-level "config" section, so a lone "config" key can only be the
+		// wrapper itself. Wrapping it a second time is the dangerous case: FTL
+		// ignores keys it does not recognise and still answers 200, so the write
+		// would silently apply nothing.
+		if len(payload) == 1 {
+			if inner, wrapped := payload["config"].(map[string]any); wrapped {
+				payload = inner
+			}
+		}
+
 		var result pihole.ConfigResponse
-		if err := c.Do(ctx, "PATCH", "/config", map[string]any{"config": configObj}, &result); err != nil {
+		if err := c.Do(ctx, "PATCH", "/config", map[string]any{"config": payload}, &result); err != nil {
 			return toolError("update config", err), nil
 		}
 

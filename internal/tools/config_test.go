@@ -139,6 +139,87 @@ func TestConfigSet_InvalidJSON(t *testing.T) {
 	}
 }
 
+// captureConfigPatch returns a handler that records the PATCH /config body.
+func captureConfigPatch(got *[]byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/auth" {
+			writeTestJSON(w, map[string]any{"session": map[string]any{"valid": true, "sid": "test-sid"}})
+			return
+		}
+		if r.URL.Path == "/api/config" && r.Method == "PATCH" {
+			*got, _ = io.ReadAll(r.Body)
+			writeTestJSON(w, map[string]any{"config": map[string]any{}})
+			return
+		}
+		http.NotFound(w, r)
+	}
+}
+
+// A caller who worked around the missing wrapper sends {"config": {...}} already.
+// Wrapping that again yields {"config":{"config":{...}}}, which FTL answers 200 to
+// while applying nothing, so the envelope must be detected rather than nested.
+func TestConfigSet_AlreadyWrappedPayloadIsNotDoubleWrapped(t *testing.T) {
+	var gotBody []byte
+	c := newTestClient(t, captureConfigPatch(&gotBody))
+
+	callTool(t, configSetHandler, c, map[string]any{
+		"config": `{"config":{"dns":{"blocking":{"active":false}}}}`,
+	})
+
+	var body map[string]any
+	if err := json.Unmarshal(gotBody, &body); err != nil {
+		t.Fatalf("PATCH body is not valid JSON: %v (raw: %s)", err, gotBody)
+	}
+	cfg, ok := body["config"].(map[string]any)
+	if !ok {
+		t.Fatalf("PATCH body missing 'config' wrapper, got: %s", gotBody)
+	}
+	if _, doubled := cfg["config"]; doubled {
+		t.Fatalf("payload was wrapped twice, got: %s", gotBody)
+	}
+	if _, ok := cfg["dns"].(map[string]any); !ok {
+		t.Fatalf("expected dns section directly under the wrapper, got: %s", gotBody)
+	}
+}
+
+// A bare object with a single "dns" key must still be wrapped normally.
+func TestConfigSet_SingleKeyBarePayloadIsWrapped(t *testing.T) {
+	var gotBody []byte
+	c := newTestClient(t, captureConfigPatch(&gotBody))
+
+	callTool(t, configSetHandler, c, map[string]any{
+		"config": `{"dns":{"blocking":{"active":false}}}`,
+	})
+
+	var body map[string]any
+	if err := json.Unmarshal(gotBody, &body); err != nil {
+		t.Fatalf("PATCH body is not valid JSON: %v (raw: %s)", err, gotBody)
+	}
+	cfg, ok := body["config"].(map[string]any)
+	if !ok {
+		t.Fatalf("PATCH body missing 'config' wrapper, got: %s", gotBody)
+	}
+	if _, ok := cfg["dns"].(map[string]any); !ok {
+		t.Fatalf("expected dns section inside the wrapper, got: %s", gotBody)
+	}
+}
+
+func TestConfigSet_NonObjectJSON(t *testing.T) {
+	for _, tc := range []struct{ name, config string }{
+		{"array", "[1,2,3]"},
+		{"number", "42"},
+		{"string", `"dns"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, piholeHandler(map[string]any{}))
+			text := callToolExpectError(t, configSetHandler, c, map[string]any{"config": tc.config})
+			if !strings.Contains(text, "must be a JSON object") {
+				t.Errorf("expected a JSON object error, got: %s", text)
+			}
+		})
+	}
+}
+
 func TestConfigSet_MissingParam(t *testing.T) {
 	c := newTestClient(t, piholeHandler(map[string]any{
 		"/config": map[string]any{"config": map[string]any{}},
