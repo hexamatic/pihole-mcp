@@ -512,6 +512,10 @@ pihole-mcp -transport http -address localhost:8080
 pihole-mcp -transport sse -address localhost:8080
 ```
 
+Both examples bind loopback, so only this machine can reach them. Before changing that, read
+[Security](#security-http-and-sse-transports) below: neither transport authenticates anything until
+you configure a token.
+
 > **SSE is deprecated.** The MCP specification superseded the HTTP+SSE transport with Streamable HTTP in the 2025-03-26 revision. `-transport sse` is kept for older clients and still receives security fixes, but new deployments should use `-transport http`. It will be removed once the clients that need it have moved on.
 
 ### Security (HTTP and SSE transports)

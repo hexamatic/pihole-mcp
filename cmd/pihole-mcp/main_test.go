@@ -306,3 +306,94 @@ func TestIsLoopbackAddress_ResolvedNames(t *testing.T) {
 		})
 	}
 }
+
+// TestServeHTTPInstallsTheMiddlewareChain drives a real listener to assert that
+// the server actually wraps the MCP handler in the middleware it is configured
+// with, in the right order.
+//
+// Every middleware here has thorough unit tests, and all of them would keep
+// passing if a line were dropped from the Chain in serveHTTPContext. Nothing
+// else covers the wiring, which is the part that decides whether any of it runs.
+func TestServeHTTPInstallsTheMiddlewareChain(t *testing.T) {
+	const token = "placeholder-token-not-real"
+
+	var reached atomic.Int64
+	mcpHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached.Add(1)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	address := freeAddress(t)
+	done := make(chan error, 1)
+	cfg := &config.Config{
+		RateLimit:      120,
+		AllowedOrigins: []string{"localhost", "127.0.0.1"},
+		HTTPAuthToken:  token,
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	// Registered first, so it runs last: cancel below stops the server, then
+	// this waits for it to finish shutting down.
+	defer func() {
+		if err := <-done; err != nil {
+			t.Errorf("serveHTTPContext returned %v", err)
+		}
+	}()
+	defer cancel()
+	go func() { done <- serveHTTPContext(ctx, cfg, address, mcpHandler, func(context.Context) {}) }()
+	waitForListener(t, address)
+
+	url := "http://" + address + "/mcp"
+	tests := []struct {
+		name       string
+		host       string
+		authHeader string
+		want       int
+	}{
+		{"no credentials", "", "", http.StatusUnauthorized},
+		{"wrong credentials", "", "Bearer not-the-configured-token", http.StatusUnauthorized},
+		{"host off the allowlist is refused before authentication", "evil.example", "Bearer " + token, http.StatusForbidden},
+		{"correct credentials", "", "Bearer " + token, http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, url, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.host != "" {
+				req.Host = tt.host
+			}
+			if tt.authHeader != "" {
+				req.Header.Set("Authorization", tt.authHeader)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request: %v", err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != tt.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.want)
+			}
+		})
+	}
+
+	if got := reached.Load(); got != 1 {
+		t.Fatalf("the MCP handler was reached %d times, want exactly the one authenticated request", got)
+	}
+}
+
+// waitForListener blocks until address accepts a connection.
+func waitForListener(t *testing.T, address string) {
+	t.Helper()
+	dialer := &net.Dialer{Timeout: 100 * time.Millisecond}
+	for i := 0; i < 100; i++ {
+		conn, err := dialer.DialContext(t.Context(), "tcp", address)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("nothing listening on %s", address)
+}
