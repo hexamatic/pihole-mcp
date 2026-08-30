@@ -5,6 +5,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
@@ -349,7 +351,13 @@ func writeParams(b *strings.Builder, t mcp.Tool) {
 	b.WriteString("\n")
 }
 
-// propType renders the parameter type, folding in enum options.
+// propType renders the parameter type, folding in the enum options or the
+// declared numeric bounds.
+//
+// Both are constraints a client validates against before the call is ever
+// made, so they belong beside the type. A bound stated only in the description
+// is prose: it reads as advice, and a reader has no way to tell it apart from
+// one the schema does not actually enforce.
 func propType(prop map[string]any) string {
 	typ, _ := prop["type"].(string)
 	if typ == "" {
@@ -362,7 +370,43 @@ func propType(prop map[string]any) string {
 		}
 		return typ + " (" + strings.Join(opts, ", ") + ")"
 	}
+	if bounds := propBounds(prop); bounds != "" {
+		return typ + " (" + bounds + ")"
+	}
 	return typ
+}
+
+// propBounds renders a declared minimum and maximum.
+func propBounds(prop map[string]any) string {
+	low, hasLow := schemaNumber(prop["minimum"])
+	high, hasHigh := schemaNumber(prop["maximum"])
+	switch {
+	case hasLow && hasHigh:
+		return low + " to " + high
+	case hasLow:
+		return "min " + low
+	case hasHigh:
+		return "max " + high
+	}
+	return ""
+}
+
+// schemaNumber formats a JSON Schema numeric bound. The tools are registered
+// in process, so a bound arrives as whatever Go type it was declared with
+// rather than as the float64 a JSON round trip would produce. Both are handled
+// so a cap of 50 never renders as "50.0".
+func schemaNumber(v any) (string, bool) {
+	switch n := v.(type) {
+	case int:
+		return strconv.Itoa(n), true
+	case int64:
+		return strconv.FormatInt(n, 10), true
+	case float64:
+		return strconv.FormatFloat(n, 'f', -1, 64), true
+	case json.Number:
+		return n.String(), true
+	}
+	return "", false
 }
 
 // propDescription renders the description, folding in the default value.

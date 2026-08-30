@@ -77,6 +77,51 @@ func TestPropType(t *testing.T) {
 	}
 }
 
+// A bound the schema declares and the reference does not show is a constraint
+// callers only discover by tripping over it.
+func TestPropTypeBounds(t *testing.T) {
+	cases := []struct {
+		name string
+		prop map[string]any
+		want string
+	}{
+		{"both bounds", map[string]any{"type": "number", "minimum": 1, "maximum": 50}, "number (1 to 50)"},
+		{"minimum only", map[string]any{"type": "number", "minimum": 0}, "number (min 0)"},
+		{"maximum only", map[string]any{"type": "number", "maximum": 1000}, "number (max 1000)"},
+		{"no bounds", map[string]any{"type": "number"}, "number"},
+		// A JSON round trip turns every bound into a float64, which must not
+		// render as "50.0".
+		{"float bounds", map[string]any{"type": "number", "minimum": float64(1), "maximum": float64(50)}, "number (1 to 50)"},
+		{"int64 bound", map[string]any{"type": "number", "minimum": int64(2)}, "number (min 2)"},
+		{"fractional bound", map[string]any{"type": "number", "minimum": 0.5}, "number (min 0.5)"},
+		// An enum is already an exhaustive constraint, so bounds add nothing.
+		{"enum wins", map[string]any{"type": "string", "enum": []any{"a"}, "minimum": 1}, "string (`a`)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := propType(tc.prop); got != tc.want {
+				t.Errorf("propType = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The generated reference has to show the bounds the real tools declare, or
+// this whole exercise is a unit test of a function nothing reaches.
+func TestRenderedDocsCarryDeclaredBounds(t *testing.T) {
+	out := render(registerAll())
+	for _, want := range []string{
+		"| `count` | number (1 to 50) |",
+		"| `length` | number (1 to 100) |",
+		"| `limit` | number (0 to 1000) |",
+		"| `offset` | number (min 0) |",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("generated reference is missing %q", want)
+		}
+	}
+}
+
 func TestPropDescription(t *testing.T) {
 	if got := propDescription(map[string]any{"description": "A thing."}); got != "A thing." {
 		t.Errorf("plain = %q", got)

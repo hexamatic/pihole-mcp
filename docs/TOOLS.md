@@ -60,7 +60,7 @@ Top queried or top blocked domains ranked by count. Returns 10 by default, max 5
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `blocked` | boolean | No | True for top blocked, false/omit for top permitted. |
-| `count` | number | No | Number of results (default 10, max 50). |
+| `count` | number (1 to 50) | No | Number of results (default 10, max 50). |
 | `format` | string | No | Output format: text (default) or csv. |
 
 ### `pihole_stats_top_clients`
@@ -72,7 +72,7 @@ Most active network clients ranked by query count. Use blocked=true for clients 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `blocked` | boolean | No | True for most-blocked clients. |
-| `count` | number | No | Number of results (default 10, max 50). |
+| `count` | number (1 to 50) | No | Number of results (default 10, max 50). |
 | `format` | string | No | Output format: text (default) or csv. |
 
 ### `pihole_stats_upstreams`
@@ -103,7 +103,7 @@ Most recently blocked domains — useful for spotting new tracking domains or fa
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `count` | number | No | Number of domains (default 10, max 50). |
+| `count` | number (1 to 50) | No | Number of domains (default 10, max 50). |
 | `format` | string | No | Output format: text (default) or csv. |
 
 ### `pihole_stats_database`
@@ -126,7 +126,7 @@ Top queried or blocked domains from the long-term database for a date range. Ret
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `blocked` | boolean | No | True for top blocked, false/omit for top permitted. |
-| `count` | number | No | Number of results (default 10, max 50). |
+| `count` | number (1 to 50) | No | Number of results (default 10, max 50). |
 | `format` | string | No | Output format: text (default) or csv. |
 | `from` | number | No | Start Unix timestamp. |
 | `until` | number | No | End Unix timestamp. |
@@ -140,7 +140,7 @@ Most active clients from the long-term database for a date range. Use blocked=tr
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `blocked` | boolean | No | True for most-blocked clients. |
-| `count` | number | No | Number of results (default 10, max 50). |
+| `count` | number (1 to 50) | No | Number of results (default 10, max 50). |
 | `format` | string | No | Output format: text (default) or csv. |
 | `from` | number | No | Start Unix timestamp. |
 | `until` | number | No | End Unix timestamp. |
@@ -262,14 +262,14 @@ Search DNS query log with filters by domain, client, type, status, and time rang
 |---|---|---|---|
 | `client_ip` | string | No | Client IP filter (wildcards supported). |
 | `client_name` | string | No | Client hostname filter. |
-| `cursor` | number | No | Cursor from previous response for next page. |
+| `cursor` | number (min 0) | No | Cursor from previous response for next page. |
 | `detail` | string | No | Response detail: minimal, normal (default), or full. |
 | `disk` | boolean | No | Search the on-disk long-term database instead of FTL's in-memory window. Required for historical ranges; slower. |
 | `dnssec` | string | No | DNSSEC status: SECURE, INSECURE, etc. |
 | `domain` | string | No | Domain filter (wildcards * supported). |
 | `format` | string | No | Output format: text (default) or csv. |
 | `from` | number | No | Start Unix timestamp. |
-| `length` | number | No | Results per page (default 25, max 100). |
+| `length` | number (1 to 100) | No | Results per page (default 25, max 100). |
 | `reply` | string | No | Reply type: NODATA, NXDOMAIN, IP, etc. |
 | `status` | string | No | Status: GRAVITY, FORWARDED, CACHE, etc. |
 | `type` | string | No | Query type: A, AAAA, MX, etc. |
@@ -284,7 +284,7 @@ Available filter values for pihole_queries_search: known domains, client address
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `limit` | number | No | Maximum values to list per category (default 50). |
+| `limit` | number (1 to 1000) | No | Maximum values to list per category (default 50). |
 
 ## History
 
@@ -307,7 +307,7 @@ In-memory per-client query activity (FTL memory, last ~24h), busiest client firs
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `count` | number | No | Max clients to return (default 10, 0 for all). |
+| `count` | number (0 to 1000) | No | Max clients to return (default 10, 0 for all). |
 | `detail` | string | No | Response detail: minimal, normal (default), or full. |
 | `format` | string | No | Output format: text (default) or csv. |
 
@@ -364,8 +364,8 @@ List domains on allow/deny lists. Filter by type (allow/deny) and kind (exact/re
 | `detail` | string | No | Response detail: minimal, normal (default), or full. |
 | `format` | string | No | Output format: text (default) or csv. |
 | `kind` | string | No | Filter: 'exact' or 'regex'. |
-| `limit` | number | No | Maximum entries to return. Default 0, meaning all. |
-| `offset` | number | No | Entries to skip before returning results, for paging with limit. Default 0. |
+| `limit` | number (0 to 1000) | No | Maximum entries to return. Default 0, meaning all. |
+| `offset` | number (min 0) | No | Entries to skip before returning results, for paging with limit. Default 0. |
 | `type` | string | No | Filter: 'allow' or 'deny'. |
 
 ### `pihole_domains_add`
@@ -429,9 +429,9 @@ List groups used for organising domains and clients into sets with independent b
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `format` | string | No | Output format: text (default) or csv. |
-| `limit` | number | No | Maximum entries to return. Default 0, meaning all. |
+| `limit` | number (0 to 1000) | No | Maximum entries to return. Default 0, meaning all. |
 | `name` | string | No | Specific group name to look up. |
-| `offset` | number | No | Entries to skip before returning results, for paging with limit. Default 0. |
+| `offset` | number (min 0) | No | Entries to skip before returning results, for paging with limit. Default 0. |
 
 ### `pihole_groups_add`
 
@@ -490,8 +490,8 @@ List configured clients with their group assignments, paged with limit/offset. C
 |---|---|---|---|
 | `client` | string | No | Specific client to look up (IP, MAC, hostname). |
 | `format` | string | No | Output format: text (default) or csv. |
-| `limit` | number | No | Maximum entries to return. Default 0, meaning all. |
-| `offset` | number | No | Entries to skip before returning results, for paging with limit. Default 0. |
+| `limit` | number (0 to 1000) | No | Maximum entries to return. Default 0, meaning all. |
+| `offset` | number (min 0) | No | Entries to skip before returning results, for paging with limit. Default 0. |
 
 ### `pihole_clients_suggestions`
 
@@ -555,8 +555,8 @@ List configured blocklists and allowlists with domain counts and update status. 
 |---|---|---|---|
 | `detail` | string | No | Response detail: minimal, normal (default), or full. |
 | `format` | string | No | Output format: text (default) or csv. |
-| `limit` | number | No | Maximum entries to return. Default 0, meaning all. |
-| `offset` | number | No | Entries to skip before returning results, for paging with limit. Default 0. |
+| `limit` | number (0 to 1000) | No | Maximum entries to return. Default 0, meaning all. |
+| `offset` | number (min 0) | No | Entries to skip before returning results, for paging with limit. Default 0. |
 | `type` | string | No | Filter: 'allow' or 'block'. |
 
 ### `pihole_lists_add`
@@ -775,8 +775,8 @@ Active DHCP leases: IP, hostname, MAC address, and expiry, paged with limit/offs
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `format` | string | No | Output format: text (default) or csv. |
-| `limit` | number | No | Maximum entries to return. Default 0, meaning all. |
-| `offset` | number | No | Entries to skip before returning results, for paging with limit. Default 0. |
+| `limit` | number (0 to 1000) | No | Maximum entries to return. Default 0, meaning all. |
+| `offset` | number (min 0) | No | Entries to skip before returning results, for paging with limit. Default 0. |
 
 ### `pihole_dhcp_delete_lease`
 
