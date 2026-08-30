@@ -4,6 +4,16 @@ set dotenv-load
 # the colon separator PATH expects before prepending to the inherited PATH.
 export PATH := `mise bin-paths | tr '\n' ':'` + env("PATH")
 
+# Host ports the dev Pi-hole containers publish. Override either when something
+# else on the machine already holds the default, which is the one thing that
+# stops `just dev-up` cold:
+#
+#   PIHOLE_DEV_PORT=8091 just dev-up && PIHOLE_DEV_PORT=8091 just e2e
+#
+# Every recipe below reads these, so a run against a moved port needs no edits.
+export PIHOLE_DEV_PORT := env("PIHOLE_DEV_PORT", "8081")
+export PIHOLE_DEV_PORT_2 := env("PIHOLE_DEV_PORT_2", "8082")
+
 # Default recipe — show help
 [private]
 default:
@@ -100,13 +110,13 @@ check: fmt lint test e2e-coverage
 [group('dev')]
 dev-up:
     docker compose -f docker-compose.dev.yml up -d --wait
-    @echo "\033[32m✓ Pi-hole running at http://localhost:8081/admin (password: test)\033[0m"
+    @echo "\033[32m✓ Pi-hole running at http://localhost:$PIHOLE_DEV_PORT/admin (password: test)\033[0m"
 
-# Start both Pi-hole instances (multi-instance dev: primary 8081 + secondary 8082)
+# Start both Pi-hole instances (multi-instance dev: primary + secondary)
 [group('dev')]
 dev-up-multi:
     docker compose --profile multi -f docker-compose.dev.yml up -d --wait
-    @echo "\033[32m✓ Pi-hole primary at :8081, secondary at :8082 (password: test)\033[0m"
+    @echo "\033[32m✓ Pi-hole primary at :$PIHOLE_DEV_PORT, secondary at :$PIHOLE_DEV_PORT_2 (password: test)\033[0m"
 
 # Stop local Pi-hole
 [group('dev')]
@@ -121,7 +131,7 @@ dev-down-multi:
 # Drive DNS queries through the dev Pi-hole so stats endpoints have data
 [group('dev')]
 seed:
-    sh scripts/seed-dev.sh
+    PIHOLE_URL=http://localhost:$PIHOLE_DEV_PORT PIHOLE_PASSWORD=test sh scripts/seed-dev.sh
 
 # Reset Pi-hole (clean volumes)
 [group('dev')]
@@ -138,19 +148,19 @@ dev-logs:
 # Run integration tests against local Pi-hole
 [group('dev')]
 integration:
-    PIHOLE_URL=http://localhost:8081 PIHOLE_PASSWORD=test go test -tags=integration -race -count=1 ./...
+    PIHOLE_URL=http://localhost:$PIHOLE_DEV_PORT PIHOLE_PASSWORD=test go test -tags=integration -race -count=1 ./...
 
-# Run multi-instance integration tests against both local Pi-holes (8081 + 8082)
+# Run multi-instance integration tests against both local Pi-holes
 [group('dev')]
 integration-multi:
-    PIHOLE_1_URL=http://localhost:8081 PIHOLE_1_PASSWORD=test \
-    PIHOLE_2_URL=http://localhost:8082 PIHOLE_2_PASSWORD=test \
+    PIHOLE_1_URL=http://localhost:$PIHOLE_DEV_PORT PIHOLE_1_PASSWORD=test \
+    PIHOLE_2_URL=http://localhost:$PIHOLE_DEV_PORT_2 PIHOLE_2_PASSWORD=test \
     go test -tags=integration -race -count=1 ./internal/pihole/
 
 # Run E2E test of all tools against local Pi-hole
 [group('dev')]
 e2e: build
-    PIHOLE_URL=http://localhost:8081 PIHOLE_PASSWORD=test scripts/e2e-test.sh ./bin/pihole-mcp
+    PIHOLE_URL=http://localhost:$PIHOLE_DEV_PORT PIHOLE_PASSWORD=test scripts/e2e-test.sh ./bin/pihole-mcp
 
 # Run the Docker-free multi-instance simulation (routing, aggregation, diff, sync)
 [group('dev')]
@@ -162,7 +172,7 @@ sim:
 # empty results, and fixtures captured from it would assert nothing.
 [group('dev')]
 refresh-fixtures: seed
-    PIHOLE_URL=http://localhost:8081 PIHOLE_PASSWORD=test scripts/refresh-fixtures.sh
+    PIHOLE_URL=http://localhost:$PIHOLE_DEV_PORT PIHOLE_PASSWORD=test scripts/refresh-fixtures.sh
 
 # ─── CI ──────────────────────────────────────────────────────────────────────
 
@@ -194,7 +204,7 @@ changelog-draft VERSION:
 # Run the server with HTTP transport (for testing)
 [group('dev')]
 run-http: build
-    PIHOLE_URL=http://localhost:8081 PIHOLE_PASSWORD=test bin/pihole-mcp -transport http -address localhost:9090
+    PIHOLE_URL=http://localhost:$PIHOLE_DEV_PORT PIHOLE_PASSWORD=test bin/pihole-mcp -transport http -address localhost:9090
 
 # ─── Cleanup ─────────────────────────────────────────────────────────────────
 

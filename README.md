@@ -573,6 +573,7 @@ Pi-hole's embedded web server closes connections under load. pihole-mcp retries 
 just setup
 
 # Start local Pi-hole (http://localhost:8081, password: test)
+# Port already taken? PIHOLE_DEV_PORT=8091 just dev-up
 just dev-up
 
 # Run quality checks (format + lint + test)

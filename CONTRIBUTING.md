@@ -29,7 +29,7 @@ just check
 ## Development Workflow
 
 1. **Create a branch** from `main` for your change
-2. **Start the dev environment:** `just dev-up` (Pi-hole at http://localhost:8081)
+2. **Start the dev environment:** `just dev-up` (Pi-hole at http://localhost:8081). If something else on your machine already holds that port, set `PIHOLE_DEV_PORT` and every recipe follows it: `PIHOLE_DEV_PORT=8091 just dev-up`. `PIHOLE_DEV_PORT_2` does the same for the secondary instance used by `just dev-up-multi`.
 3. **Make your changes** — one logical change per PR
 4. **Run quality checks:** `just check` (format, lint, test)
 5. **Test against live Pi-hole:** `just integration`

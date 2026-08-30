@@ -4,13 +4,17 @@
 # API: http://localhost:8081/api/
 # API Docs: http://localhost:8081/api/docs
 # Password: test
+#
+# The published HTTP ports default to 8081 and 8082 and can be moved with
+# PIHOLE_DEV_PORT and PIHOLE_DEV_PORT_2 when something else already holds them.
+# The justfile exports both, so `PIHOLE_DEV_PORT=8091 just dev-up` is enough.
 
 services:
   pihole:
     image: pihole/pihole:2026.07.2
     container_name: pihole-dev
     ports:
-      - "8081:80"       # Web UI + API
+      - "${PIHOLE_DEV_PORT:-8081}:80"   # Web UI + API
       - "5354:53/udp"   # DNS (non-standard port to avoid conflicts)
       - "5354:53/tcp"
     environment:
@@ -37,7 +41,7 @@ services:
     container_name: pihole-dev-secondary
     profiles: ["multi"]
     ports:
-      - "8082:80"       # Web UI + API
+      - "${PIHOLE_DEV_PORT_2:-8082}:80" # Web UI + API
       - "5355:53/udp"   # DNS (non-standard port to avoid conflicts)
       - "5355:53/tcp"
     environment:
