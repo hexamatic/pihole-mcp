@@ -142,13 +142,9 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err := json.Unmarshal([]byte(configStr), &configObj); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Parameter 'config' must be valid JSON: %v", err)), nil
 		}
-		wrapped, err := json.Marshal(map[string]any{"config": configObj})
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to encode config payload: %v", err)), nil
-		}
 
 		var result pihole.ConfigResponse
-		if err := c.Do(ctx, "PATCH", "/config", rawJSON(string(wrapped)), &result); err != nil {
+		if err := c.Do(ctx, "PATCH", "/config", map[string]any{"config": configObj}, &result); err != nil {
 			return toolError("update config", err), nil
 		}
 
