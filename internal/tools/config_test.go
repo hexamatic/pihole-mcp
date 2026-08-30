@@ -128,6 +128,17 @@ func TestConfigSet_Success(t *testing.T) {
 	}
 }
 
+func TestConfigSet_InvalidJSON(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{}))
+
+	text := callToolExpectError(t, configSetHandler, c, map[string]any{
+		"config": "{not valid json",
+	})
+	if !strings.Contains(text, "must be valid JSON") {
+		t.Errorf("expected a JSON validation error, got: %s", text)
+	}
+}
+
 func TestConfigSet_MissingParam(t *testing.T) {
 	c := newTestClient(t, piholeHandler(map[string]any{
 		"/config": map[string]any{"config": map[string]any{}},
