@@ -522,27 +522,23 @@ func (f *Fake) handleConfig(w http.ResponseWriter, r *http.Request, p []string) 
 		return
 	}
 
-	// GET /config/dns → return the dns section.
+	// GET /config/dns → return the dns section, nested under its full path
+	// from the root exactly as FTL does: {"config":{"dns":{"hosts":[...]}}}.
+	// Verified in FTL's get_json_config (src/api/config.c): the builder starts
+	// at the root config object and walks conf_item->p creating one object per
+	// path element (config.c:519), then adds the whole tree under "config"
+	// (config.c:646). The requested element is only a FILTER over which items
+	// are included, never a change of root.
 	//
-	// KNOWN DIVERGENCE, deliberately left in place. Real FTL nests the section
-	// under its full path from the root: the body is
-	// {"config":{"dns":{"hosts":[...]}}}, not the flat {"config":{"hosts":[...]}}
-	// served here. Verified in FTL's get_json_config (src/api/config.c): the
-	// builder starts at the root config object and walks conf_item->p creating
-	// one object per path element (config.c:519), then adds the whole tree
-	// under "config" (config.c:646). The requested element is only a FILTER
-	// over which items are included, never a change of root.
-	//
-	// The fake is not corrected here because internal/pihole/sync.go:238 reads
-	// resp.Config[field] flat to match it, and internal/tools/config.go's get
-	// handlers do the same. Correcting one side alone turns five currently
-	// green sync tests red while the production bug stays. Both sides must move
-	// together, which is outside this test-only change. Do not read the five
-	// green sync tests as evidence that the flat shape is right.
+	// The fake served this flat until the escaping session, which is why five
+	// sync tests were green while pihole_instance_sync read zero local DNS and
+	// CNAME records from every real Pi-hole. Both sides moved together.
 	if len(p) == 1 && r.Method == http.MethodGet {
 		writeJSON(w, http.StatusOK, pihole.ConfigResponse{Config: map[string]any{
-			"hosts":        toAnySlice(f.hosts),
-			"cnameRecords": toAnySlice(f.cnames),
+			"dns": map[string]any{
+				"hosts":        toAnySlice(f.hosts),
+				"cnameRecords": toAnySlice(f.cnames),
+			},
 		}})
 		return
 	}

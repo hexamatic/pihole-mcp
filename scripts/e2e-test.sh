@@ -273,6 +273,12 @@ echo "--- Query Log ---"
 call_tool "pihole_queries_search" '{"length":3}'
 call_tool "pihole_queries_search" '{"length":3,"detail":"minimal"}' "queries_search (minimal)"
 call_tool "pihole_queries_search" '{"length":3,"format":"csv"}' "queries_search (csv)"
+# An upstream is routinely written host#port. Spliced into the query string raw,
+# the '#' ended the request at the fragment: FTL was asked about 8.8.8.8 and the
+# length parameter never arrived at all. Nothing in the reply says which
+# question was answered, so this asserts only that the call succeeds; the wire
+# itself is pinned by TestQueriesSearch_EscapesFilterValues.
+call_tool "pihole_queries_search" '{"upstream":"8.8.8.8#53","length":3}' "queries_search (host#port upstream filter)"
 call_tool "pihole_queries_suggestions"
 
 echo ""
@@ -309,6 +315,49 @@ call_tool "pihole_domains_delete" '{"type":"deny","kind":"exact","domain":"e2e-t
 # the absence check just as a populated list without this entry would.
 call_tool_expect_absent "pihole_domains_list" '{"type":"deny","kind":"exact"}' "domains_list (deleted domain gone)" "e2e-test.example.com"
 
+# A regex rule containing '+' is the case that proves path escaping. url.PathEscape
+# leaves a plus alone because it is a legal sub-delimiter, but FTL reads it as a
+# space and looks up a different row: this DELETE answered 404 spelled with a
+# literal '+' and 204 spelled with %2B. Unescaped, the rule could be created and
+# then never removed. The regex also proves the kind-aware validator, which used
+# to reject '$' and '|' as shell metacharacters.
+call_tool "pihole_domains_add" '{"type":"deny","kind":"regex","domain":"^ads[0-9]+\\.example\\.com","comment":"e2e regex"}' "domains_add (regex with a plus)"
+call_tool_expect "pihole_domains_list" '{"type":"deny","kind":"regex"}' "domains_list (regex rule present)" "^ads[0-9]+\\.example\\.com"
+call_tool "pihole_domains_delete" '{"type":"deny","kind":"regex","domain":"^ads[0-9]+\\.example\\.com"}' "domains_delete (regex with a plus)"
+call_tool_expect_absent "pihole_domains_list" '{"type":"deny","kind":"regex"}' "domains_list (regex rule gone)" "^ads[0-9]+"
+
+# An anchored suffix match is the most ordinary blocklist rule there is, and
+# '$' was on the exact rules' shell-metacharacter list, so it could not be added
+# at all.
+call_tool "pihole_domains_add" '{"type":"deny","kind":"regex","domain":"(^|\\.)doubleclick\\.net$","comment":"e2e anchored"}' "domains_add (anchored alternation)"
+call_tool_expect "pihole_domains_list" '{"type":"deny","kind":"regex"}' "domains_list (anchored rule present)" "doubleclick"
+call_tool "pihole_domains_delete" '{"type":"deny","kind":"regex","domain":"(^|\\.)doubleclick\\.net$"}' "domains_delete (anchored alternation)"
+
+# FTL replaces comment and enabled together on every PUT, so an update that
+# named only the comment used to re-enable the rule. The reply says "Updated"
+# either way; only the read-back shows whether the rule is still paused. This is
+# the sequence a user runs when they pause a rule and then annotate why.
+call_tool "pihole_domains_add" '{"type":"deny","kind":"exact","domain":"e2e-paused.example.com","comment":"paused","enabled":false}' "domains_add (disabled)"
+call_tool_expect "pihole_domains_list" '{"type":"deny","kind":"exact"}' "domains_list (added rule is disabled)" "e2e-paused.example.com (deny/exact, disabled)"
+call_tool "pihole_domains_update" '{"type":"deny","kind":"exact","domain":"e2e-paused.example.com","comment":"paused pending review"}' "domains_update (comment only)"
+call_tool_expect "pihole_domains_list" '{"type":"deny","kind":"exact"}' "domains_list (comment-only update left it disabled)" "e2e-paused.example.com (deny/exact, disabled)"
+call_tool_expect "pihole_domains_list" '{"type":"deny","kind":"exact"}' "domains_list (comment-only update reached FTL)" "paused pending review"
+# The mirror: disabling a rule must not erase the comment that says why it exists.
+call_tool "pihole_domains_update" '{"type":"deny","kind":"exact","domain":"e2e-paused.example.com","enabled":true}' "domains_update (enabled only)"
+call_tool_expect "pihole_domains_list" '{"type":"deny","kind":"exact"}' "domains_list (enabled-only update kept the comment)" "paused pending review"
+call_tool "pihole_domains_delete" '{"type":"deny","kind":"exact","domain":"e2e-paused.example.com"}' "domains_delete (paused rule)"
+
+# The batch-delete tools pass the caller's JSON array straight through, and FTL
+# requires an array of objects ([{"item":"..."}]), which is the shape every tool
+# description documents. A bare array of identifiers is rejected with 400
+# "Batch delete requires an array of objects", so the shape is the caller's to
+# get right and the tool's job is to relay it unchanged.
+call_tool "pihole_domains_add" '{"type":"deny","kind":"exact","domain":"e2e-batch1.example.com, e2e-batch2.example.com"}' "domains_add (bulk, comma-separated)"
+call_tool_expect "pihole_domains_list" '{"type":"deny","kind":"exact"}' "domains_list (first bulk rule present)" "e2e-batch1.example.com"
+call_tool_expect "pihole_domains_list" '{"type":"deny","kind":"exact"}' "domains_list (second bulk rule present)" "e2e-batch2.example.com"
+call_tool "pihole_domains_batch_delete" '{"items":"[{\"item\":\"e2e-batch1.example.com\",\"type\":\"deny\",\"kind\":\"exact\"},{\"item\":\"e2e-batch2.example.com\",\"type\":\"deny\",\"kind\":\"exact\"}]"}' "domains_batch_delete"
+call_tool_expect_absent "pihole_domains_list" '{"type":"deny","kind":"exact"}' "domains_list (batch-deleted rules gone)" "e2e-batch"
+
 echo ""
 echo "--- Group CRUD ---"
 call_tool "pihole_groups_add" '{"name":"e2e-test-group","comment":"e2e test"}' "groups_add"
@@ -318,6 +367,20 @@ call_tool "pihole_groups_update" '{"name":"e2e-test-group","comment":"e2e amende
 call_tool_expect "pihole_groups_list" '{}' "groups_list (update reached FTL)" "e2e amended"
 call_tool "pihole_groups_delete" '{"name":"e2e-test-group"}' "groups_delete"
 call_tool_expect_absent "pihole_groups_list" '{}' "groups_list (deleted group gone)" "e2e-test-group"
+
+# A group name is free-form text. A '#' ends the path at the fragment, so the
+# write reached a different group or none while the reply still said "Updated",
+# and the group could never be deleted afterwards.
+call_tool "pihole_groups_add" '{"name":"Kids #2","comment":"e2e test"}' "groups_add (name with a hash)"
+call_tool_expect "pihole_groups_list" '{}' "groups_list (hashed group present)" "Kids #2"
+call_tool "pihole_groups_update" '{"name":"Kids #2","comment":"e2e amended"}' "groups_update (name with a hash)"
+call_tool_expect "pihole_groups_list" '{}' "groups_list (hashed group update reached FTL)" "e2e amended"
+call_tool "pihole_groups_delete" '{"name":"Kids #2"}' "groups_delete (name with a hash)"
+call_tool_expect_absent "pihole_groups_list" '{}' "groups_list (hashed group gone)" "Kids #2"
+
+call_tool "pihole_groups_add" '{"name":"e2e-batch-group","comment":"e2e batch"}' "groups_add (for batch delete)"
+call_tool "pihole_groups_batch_delete" '{"items":"[{\"item\":\"e2e-batch-group\"}]"}' "groups_batch_delete"
+call_tool_expect_absent "pihole_groups_list" '{}' "groups_list (batch-deleted group gone)" "e2e-batch-group"
 
 echo ""
 echo "--- Clients ---"
@@ -334,6 +397,10 @@ call_tool "pihole_clients_update" '{"client":"203.0.113.7","comment":"e2e amende
 call_tool_expect "pihole_clients_list" '{}' "clients_list (update reached FTL)" "e2e amended"
 call_tool "pihole_clients_delete" '{"client":"203.0.113.7"}' "clients_delete"
 call_tool_expect_absent "pihole_clients_list" '{}' "clients_list (deleted client gone)" "203.0.113.7"
+
+call_tool "pihole_clients_add" '{"client":"203.0.113.8","comment":"e2e batch"}' "clients_add (for batch delete)"
+call_tool "pihole_clients_batch_delete" '{"items":"[{\"item\":\"203.0.113.8\"}]"}' "clients_batch_delete"
+call_tool_expect_absent "pihole_clients_list" '{}' "clients_list (batch-deleted client gone)" "203.0.113.8"
 
 echo ""
 echo "--- Lists ---"
@@ -354,25 +421,28 @@ call_tool_expect "pihole_lists_list" '{}' "lists_list (update reached FTL)" "e2e
 call_tool "pihole_lists_delete" '{"address":"https://e2e.example.com/blocklist.txt","type":"block"}' "lists_delete"
 call_tool_expect_absent "pihole_lists_list" '{}' "lists_list (deleted list gone)" "e2e.example.com/blocklist.txt"
 
+# A subscription URL carrying a token is ordinary. Spliced into the path raw,
+# everything from the '?' became the request's own query string: the write
+# landed on a different row or none, and the list could never be updated or
+# unsubscribed from afterwards.
+call_tool "pihole_lists_add" '{"address":"https://e2e.example.com/private.txt?token=abc123","type":"block","comment":"e2e token"}' "lists_add (address with a query string)"
+call_tool_expect "pihole_lists_list" '{}' "lists_list (tokenised list present)" "https://e2e.example.com/private.txt?token=abc123"
+call_tool "pihole_lists_update" '{"address":"https://e2e.example.com/private.txt?token=abc123","type":"block","comment":"e2e token amended"}' "lists_update (address with a query string)"
+call_tool_expect "pihole_lists_list" '{}' "lists_list (tokenised list update reached FTL)" "e2e token amended"
+call_tool "pihole_lists_delete" '{"address":"https://e2e.example.com/private.txt?token=abc123","type":"block"}' "lists_delete (address with a query string)"
+call_tool_expect_absent "pihole_lists_list" '{}' "lists_list (tokenised list gone)" "private.txt?token=abc123"
+
+call_tool "pihole_lists_add" '{"address":"https://e2e.example.com/batch.txt","type":"block","comment":"e2e batch"}' "lists_add (for batch delete)"
+call_tool "pihole_lists_batch_delete" '{"items":"[{\"item\":\"https://e2e.example.com/batch.txt\",\"type\":\"block\"}]"}' "lists_batch_delete"
+call_tool_expect_absent "pihole_lists_list" '{}' "lists_list (batch-deleted list gone)" "e2e.example.com/batch.txt"
+
 echo ""
 echo "--- Configuration ---"
 call_tool "pihole_config_get" '{"section":"dns"}' "config_get (dns)"
 call_tool "pihole_config_get" '{"detail":"minimal"}' "config_get (minimal)"
 call_tool "pihole_config_get_value" '{"element":"dns.upstreams"}' "config_get_value (dns.upstreams)"
-# The probe value deliberately carries NO '#'. config.go:245 splices the value
-# into the path unescaped, so http.NewRequestWithContext reads everything from a
-# '#' onwards as a URL fragment and discards it: "127.0.0.99#53" reaches FTL as
-# "127.0.0.99", and restart=false is swallowed with it. A read-back anchored on
-# "127.0.0.99#53" could therefore never pass, and its absence check would be a
-# tautology that passes just as happily against a remove that did nothing.
-# Anchoring on a value the add genuinely lands and the remove genuinely clears
-# is what lets both assertions fail when the round trip regresses.
-#
-# A host#port upstream cannot be exercised end to end until config.go:245 and
-# :281 escape the value. The unit-level acceptance test for that fix is already
-# written: TestConfigAddRemoveValue_ReservedCharactersAreEscaped in
-# internal/tools/config_test.go, currently skipped. Add a '#'-bearing case here
-# once it lands.
+# A plain probe value first, so the round trip is proven independently of the
+# escaping. 127.0.0.99 is in the loopback range and reaches nothing.
 call_tool "pihole_config_add_value" '{"element":"dns.upstreams","value":"127.0.0.99","restart":false}' "config_add_value (round-trip add)"
 # config.go:219 emits fmt.Sprintf("**%s:** %s", element, formatted). Whether
 # `formatted` is the bare array or the enclosing object depends on how FTL
@@ -381,6 +451,16 @@ call_tool "pihole_config_add_value" '{"element":"dns.upstreams","value":"127.0.0
 call_tool_expect "pihole_config_get_value" '{"element":"dns.upstreams"}' "config_get_value (upstream present after add)" "127.0.0.99"
 call_tool "pihole_config_remove_value" '{"element":"dns.upstreams","value":"127.0.0.99","restart":false}' "config_remove_value (round-trip remove)"
 call_tool_expect_absent "pihole_config_get_value" '{"element":"dns.upstreams"}' "config_get_value (upstream gone after remove)" "127.0.0.99"
+
+# 127.0.0.1#5335 is the canonical Unbound upstream and the single most common
+# advanced Pi-hole setup. The '#' used to end the path at the fragment, so FTL
+# was sent 127.0.0.1, the appended restart=false went into the discarded
+# fragment with it, and the tool reported the full value as added. The read-back
+# is anchored on the port, which only appears if the whole value landed.
+call_tool "pihole_config_add_value" '{"element":"dns.upstreams","value":"127.0.0.1#5335","restart":false}' "config_add_value (host#port upstream)"
+call_tool_expect "pihole_config_get_value" '{"element":"dns.upstreams"}' "config_get_value (host#port upstream present)" "127.0.0.1#5335"
+call_tool "pihole_config_remove_value" '{"element":"dns.upstreams","value":"127.0.0.1#5335","restart":false}' "config_remove_value (host#port upstream)"
+call_tool_expect_absent "pihole_config_get_value" '{"element":"dns.upstreams"}' "config_get_value (host#port upstream gone)" "127.0.0.1#5335"
 call_tool "pihole_config_set" '{"config":"{\"dns\":{\"cache\":{\"size\":10001}}}"}' "config_set (round-trip write)"
 # The echo in the config_set reply (config.go:172) comes from FTL's own
 # response, and FTL answers 200 for a body whose keys it ignored, so the echo is

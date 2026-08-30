@@ -120,8 +120,11 @@ func TestListsAdd_Success(t *testing.T) {
 	// went to: an allow list added as a block list looks identical in the
 	// reply, and quietly blocks everything it was meant to permit.
 	req.AssertQuery(t, "type", "block")
-	req.AssertBodyKeys(t, "address")
+	// An add sends comment and enabled every time rather than leaving FTL's
+	// defaults to decide them.
+	req.AssertBodyKeys(t, "address", "comment", "enabled")
 	req.AssertField(t, "address", "https://example.com/new.txt")
+	req.AssertField(t, "enabled", true)
 }
 
 // Mirror of the domains case, plus the type parameter. A list added with a
@@ -246,4 +249,115 @@ func TestListsBatchDelete_Success(t *testing.T) {
 	req.AssertRawPath(t, "/lists:batchDelete")
 	req.AssertNoQueryString(t)
 	req.AssertRawBody(t, items)
+}
+
+// ---------------------------------------------------------------------------
+// Silent wrong writes
+// ---------------------------------------------------------------------------
+
+// A list PUT is a full replacement of comment and enabled, exactly as for
+// domains and groups. Verified against FTL v6.7: a comment-only PUT of a
+// disabled list read back enabled.
+func TestListsUpdate_CommentOnlyKeepsTheListDisabled(t *testing.T) {
+	const addr = "https://lists.example.com/ads.txt"
+	rec := piholeHandler(map[string]any{
+		"GET /lists/" + addr: map[string]any{"lists": []any{
+			map[string]any{"address": addr, "type": "block", "comment": "off while testing", "enabled": false},
+		}},
+		"PUT /lists/" + addr: map[string]any{"lists": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, listsUpdateHandler, c, map[string]any{
+		"address": addr, "type": "block", "comment": "edited",
+	})
+
+	req := rec.Only(t, "PUT", "/lists/"+addr)
+	req.AssertField(t, "comment", "edited")
+	req.AssertField(t, "enabled", false)
+	req.AssertQuery(t, "type", "block")
+}
+
+func TestListsUpdate_EnabledOnlyKeepsTheComment(t *testing.T) {
+	const addr = "https://lists.example.com/ads.txt"
+	rec := piholeHandler(map[string]any{
+		"GET /lists/" + addr: map[string]any{"lists": []any{
+			map[string]any{"address": addr, "type": "block", "comment": "nightly refresh", "enabled": true},
+		}},
+		"PUT /lists/" + addr: map[string]any{"lists": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, listsUpdateHandler, c, map[string]any{
+		"address": addr, "type": "block", "enabled": false,
+	})
+
+	req := rec.Only(t, "PUT", "/lists/"+addr)
+	req.AssertField(t, "comment", "nightly refresh")
+	req.AssertField(t, "enabled", false)
+}
+
+// A blocklist URL carries a query string of its own often enough to matter,
+// and splicing it into the path raw ends the path at the '?': everything after
+// it becomes the request's query, so the update lands on a different row or on
+// none, and the reply says "Updated" either way.
+func TestListsUpdate_EscapesAQueryStringInTheAddress(t *testing.T) {
+	const addr = "https://lists.example.com/ads.txt?token=abc123"
+	rec := piholeHandler(map[string]any{
+		"GET /lists/" + addr: map[string]any{"lists": []any{}},
+		"PUT /lists/" + addr: map[string]any{"lists": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, listsUpdateHandler, c, map[string]any{
+		"address": addr, "type": "block", "comment": "edited",
+	})
+
+	req := rec.Only(t, "PUT", "/lists/"+addr)
+	req.AssertRawPath(t, "/lists/https:%2F%2Flists.example.com%2Fads.txt%3Ftoken=abc123")
+	req.AssertQuery(t, "type", "block")
+	req.AssertNoQuery(t, "token")
+}
+
+func TestListsDelete_EscapesAQueryStringInTheAddress(t *testing.T) {
+	const addr = "https://lists.example.com/ads.txt?token=abc123"
+	rec := piholeHandler(map[string]any{
+		"DELETE /lists/" + addr: map[string]any{},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, listsDeleteHandler, c, map[string]any{"address": addr, "type": "block"})
+
+	req := rec.Only(t, "DELETE", "/lists/"+addr)
+	req.AssertRawPath(t, "/lists/https:%2F%2Flists.example.com%2Fads.txt%3Ftoken=abc123")
+	req.AssertQuery(t, "type", "block")
+	req.AssertNoQuery(t, "token")
+}
+
+func TestListsAdd_AlwaysSendsCommentAndEnabled(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"POST /lists": map[string]any{"lists": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, listsAddHandler, c, map[string]any{
+		"address": "https://lists.example.com/ads.txt", "type": "block",
+	})
+
+	req := rec.Only(t, "POST", "/lists")
+	req.AssertBodyKeys(t, "address", "comment", "enabled")
+	req.AssertField(t, "enabled", true)
+}
+
+func TestListsUpdate_ReadFailureLeavesTheListAlone(t *testing.T) {
+	const addr = "https://lists.example.com/ads.txt"
+	rec := piholeHandler(map[string]any{
+		"PUT /lists/" + addr: map[string]any{"lists": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callToolExpectError(t, listsUpdateHandler, c, map[string]any{
+		"address": addr, "type": "block", "comment": "edited",
+	})
+	rec.AssertNone(t, "PUT", "/lists/"+addr)
 }

@@ -62,10 +62,12 @@ func TestGroupsAdd_Success(t *testing.T) {
 	req := rec.Only(t, "POST", "/groups")
 	req.AssertRawPath(t, "/groups")
 	req.AssertNoQueryString(t)
-	// A new group with no explicit enabled leaves the key out so the API
-	// applies its own default of enabled.
-	req.AssertBodyKeys(t, "name")
+	// An add sends comment and enabled every time rather than leaving FTL's
+	// defaults to decide them. FTL stores an empty comment as NULL, so the
+	// empty string costs nothing.
+	req.AssertBodyKeys(t, "name", "comment", "enabled")
 	req.AssertField(t, "name", "guests")
+	req.AssertField(t, "enabled", true)
 }
 
 // Mirror of the domains case: the comment and enabled branches of the add
@@ -189,4 +191,123 @@ func TestGroupsBatchDelete_Success(t *testing.T) {
 	req.AssertRawPath(t, "/groups:batchDelete")
 	req.AssertNoQueryString(t)
 	req.AssertRawBody(t, items)
+}
+
+// ---------------------------------------------------------------------------
+// Silent wrong writes
+// ---------------------------------------------------------------------------
+
+// Same full-replacement rule as domains and lists, verified against FTL v6.7:
+// a comment-only PUT of a disabled group read back enabled, and an
+// enabled-only PUT read back with a null comment.
+func TestGroupsUpdate_CommentOnlyKeepsTheGroupDisabled(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"GET /groups/kids": map[string]any{"groups": []any{
+			map[string]any{"name": "kids", "comment": "school hours", "enabled": false},
+		}},
+		"PUT /groups/kids": map[string]any{"groups": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, groupsUpdateHandler, c, map[string]any{"name": "kids", "comment": "edited"})
+
+	req := rec.Only(t, "PUT", "/groups/kids")
+	req.AssertField(t, "comment", "edited")
+	req.AssertField(t, "enabled", false)
+}
+
+func TestGroupsUpdate_EnabledOnlyKeepsTheComment(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"GET /groups/kids": map[string]any{"groups": []any{
+			map[string]any{"name": "kids", "comment": "school hours", "enabled": true},
+		}},
+		"PUT /groups/kids": map[string]any{"groups": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, groupsUpdateHandler, c, map[string]any{"name": "kids", "enabled": false})
+
+	req := rec.Only(t, "PUT", "/groups/kids")
+	req.AssertField(t, "comment", "school hours")
+	req.AssertField(t, "enabled", false)
+}
+
+// A rename still carries both fields, and the new name is the only extra key.
+func TestGroupsUpdate_RenameCarriesTheOtherFields(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"GET /groups/kids": map[string]any{"groups": []any{
+			map[string]any{"name": "kids", "comment": "school hours", "enabled": false},
+		}},
+		"PUT /groups/kids": map[string]any{"groups": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, groupsUpdateHandler, c, map[string]any{"name": "kids", "new_name": "children"})
+
+	req := rec.Only(t, "PUT", "/groups/kids")
+	req.AssertBodyKeys(t, "name", "comment", "enabled")
+	req.AssertField(t, "name", "children")
+	req.AssertField(t, "comment", "school hours")
+	req.AssertField(t, "enabled", false)
+}
+
+// A group name is free-form text, so it holds whatever the user typed. A '#'
+// ends the path at the fragment and the request reaches a different group, or
+// none, while the reply still says "Updated".
+func TestGroupsUpdate_EscapesReservedCharactersInTheName(t *testing.T) {
+	const name = "Kids #2"
+	rec := piholeHandler(map[string]any{
+		"/groups/" + name: map[string]any{"groups": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, groupsUpdateHandler, c, map[string]any{"name": name, "comment": "edited"})
+
+	rec.Only(t, "PUT", "/groups/"+name).AssertRawPath(t, "/groups/Kids%20%232")
+}
+
+func TestGroupsDelete_EscapesReservedCharactersInTheName(t *testing.T) {
+	const name = "Kids #2"
+	rec := piholeHandler(map[string]any{"/groups/" + name: map[string]any{}})
+	c := newTestClient(t, rec)
+
+	callTool(t, groupsDeleteHandler, c, map[string]any{"name": name})
+
+	rec.Only(t, "DELETE", "/groups/"+name).AssertRawPath(t, "/groups/Kids%20%232")
+}
+
+func TestGroupsAdd_AlwaysSendsCommentAndEnabled(t *testing.T) {
+	rec := piholeHandler(map[string]any{"POST /groups": map[string]any{"groups": []any{}}})
+	c := newTestClient(t, rec)
+
+	callTool(t, groupsAddHandler, c, map[string]any{"name": "kids"})
+
+	req := rec.Only(t, "POST", "/groups")
+	req.AssertBodyKeys(t, "name", "comment", "enabled")
+	req.AssertField(t, "enabled", true)
+}
+
+func TestGroupsUpdate_ReadFailureLeavesTheGroupAlone(t *testing.T) {
+	rec := piholeHandler(map[string]any{"PUT /groups/kids": map[string]any{"groups": []any{}}})
+	c := newTestClient(t, rec)
+
+	callToolExpectError(t, groupsUpdateHandler, c, map[string]any{"name": "kids", "comment": "edited"})
+	rec.AssertNone(t, "PUT", "/groups/kids")
+}
+
+// The lookup filter is the same free-form name as the write path, so an
+// unescaped '#' truncates it and the tool reports on a different group, or on
+// none, as though that were the answer.
+func TestGroupsList_EscapesTheNameFilter(t *testing.T) {
+	const name = "Kids #2"
+	rec := piholeHandler(map[string]any{
+		"/groups/" + name: map[string]any{"groups": []any{
+			map[string]any{"name": name, "comment": "after school", "enabled": true},
+		}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, groupsListHandler, c, map[string]any{"name": name})
+
+	rec.Only(t, "GET", "/groups/"+name).AssertRawPath(t, "/groups/Kids%20%232")
 }

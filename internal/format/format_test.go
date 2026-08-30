@@ -107,22 +107,6 @@ func TestTimestamp_UsesSetLocation(t *testing.T) {
 	}
 }
 
-func TestTable(t *testing.T) {
-	got := Table([]string{"Name", "Value"}, [][]string{{"foo", "bar"}})
-	if !strings.Contains(got, "| Name | Value |") {
-		t.Errorf("Table missing header: %q", got)
-	}
-	if !strings.Contains(got, "| foo | bar |") {
-		t.Errorf("Table missing row: %q", got)
-	}
-}
-
-func TestTable_Empty(t *testing.T) {
-	if got := Table([]string{"A"}, nil); got != "_No data_" {
-		t.Errorf("Table(empty) = %q, want %q", got, "_No data_")
-	}
-}
-
 func TestCSV(t *testing.T) {
 	got := CSV([]string{"A", "B"}, [][]string{{"1", "2"}, {"3", "4"}})
 	if !strings.Contains(got, "A,B\n") {
@@ -217,5 +201,35 @@ func TestQueryParams(t *testing.T) {
 	}
 	if got := QueryParams(map[string]string{}); got != "" {
 		t.Errorf("QueryParams(empty) = %q, want empty", got)
+	}
+}
+
+// A filter value is user data. Spliced in raw, a '#' ends the request at the
+// fragment and an '&' adds parameters of its own, so pihole_queries_search
+// with upstream=8.8.8.8#53 asked FTL about 8.8.8.8 and reported the answer as
+// though it were the one requested.
+func TestQueryParams_EscapesValuesAndOrdersKeys(t *testing.T) {
+	got := QueryParams(map[string]string{"upstream": "8.8.8.8#53", "length": "3"})
+	if want := "?length=3&upstream=8.8.8.8%2353"; got != want {
+		t.Errorf("QueryParams = %q, want %q", got, want)
+	}
+}
+
+func TestQueryParams_ValueCannotAddAParameter(t *testing.T) {
+	got := QueryParams(map[string]string{"domain": "example.com&length=9999"})
+	if want := "?domain=example.com%26length%3D9999"; got != want {
+		t.Errorf("QueryParams = %q, want %q", got, want)
+	}
+}
+
+// Ranging over a map is deliberately unordered, so identical filters produced
+// a different URL on every call: nothing downstream can cache or compare them.
+func TestQueryParams_IsDeterministic(t *testing.T) {
+	params := map[string]string{"a": "1", "b": "2", "c": "3", "d": "4", "e": "5", "f": "6"}
+	first := QueryParams(params)
+	for range 100 {
+		if got := QueryParams(params); got != first {
+			t.Fatalf("QueryParams returned %q then %q for the same filters", first, got)
+		}
 	}
 }

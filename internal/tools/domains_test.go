@@ -114,11 +114,12 @@ func TestDomainsAdd_Success(t *testing.T) {
 	req := rec.Only(t, "POST", "/domains/deny/exact")
 	req.AssertRawPath(t, "/domains/deny/exact")
 	req.AssertNoQueryString(t)
-	// An add with no explicit enabled leaves the key out so the API applies its
-	// own default, which for a new entry is enabled. Anything else in the body
-	// would be a key FTL did not ask for.
-	req.AssertBodyKeys(t, "domain")
-	req.AssertField(t, "domain", "example.com")
+	// An add sends comment and enabled every time rather than leaving FTL's
+	// defaults to decide them, and the rules go out as an array: FTL rejects a
+	// comma-joined string with 400 "Invalid domain".
+	req.AssertBodyKeys(t, "domain", "comment", "enabled")
+	req.AssertField(t, "domain", []any{"example.com"})
+	req.AssertField(t, "enabled", true)
 	// Without Content-Type the body is an unlabelled blob. pihole.Client sets
 	// the header for every request that carries one.
 	req.AssertHeader(t, "Content-Type", "application/json")
@@ -150,7 +151,7 @@ func TestDomainsAdd_SendsCommentAndExplicitDisable(t *testing.T) {
 
 	req := rec.Only(t, "POST", "/domains/deny/exact")
 	req.AssertBodyKeys(t, "domain", "comment", "enabled")
-	req.AssertField(t, "domain", "example.com")
+	req.AssertField(t, "domain", []any{"example.com"})
 	req.AssertField(t, "comment", "blocked by policy")
 	req.AssertField(t, "enabled", false)
 	req.AssertNoQueryString(t)
@@ -256,4 +257,198 @@ func TestDomainsList_Error(t *testing.T) {
 	if text == "" {
 		t.Error("expected error text, got empty string")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Silent wrong writes
+// ---------------------------------------------------------------------------
+
+// FTL replaces both comment and enabled on every PUT: a body carrying only a
+// comment re-enables a disabled rule, and one carrying only enabled nulls the
+// comment. Verified against FTL v6.7. The tool therefore reads the entry back
+// first and sends both fields, so editing one leaves the other alone.
+func TestDomainsUpdate_CommentOnlyKeepsTheEntryDisabled(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"GET /domains/deny/exact/example.com": map[string]any{"domains": []any{
+			map[string]any{"domain": "example.com", "type": "deny", "kind": "exact",
+				"comment": "paused for the holidays", "enabled": false},
+		}},
+		"PUT /domains/deny/exact/example.com": map[string]any{"domains": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, domainsUpdateHandler, c, map[string]any{
+		"type": "deny", "kind": "exact", "domain": "example.com", "comment": "edited",
+	})
+
+	req := rec.Only(t, "PUT", "/domains/deny/exact/example.com")
+	req.AssertBodyKeys(t, "comment", "enabled")
+	req.AssertField(t, "comment", "edited")
+	req.AssertField(t, "enabled", false)
+}
+
+// The mirror image: disabling an entry must not wipe the comment that says why
+// it exists.
+func TestDomainsUpdate_EnabledOnlyKeepsTheComment(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"GET /domains/deny/exact/example.com": map[string]any{"domains": []any{
+			map[string]any{"domain": "example.com", "type": "deny", "kind": "exact",
+				"comment": "tracker", "enabled": true},
+		}},
+		"PUT /domains/deny/exact/example.com": map[string]any{"domains": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, domainsUpdateHandler, c, map[string]any{
+		"type": "deny", "kind": "exact", "domain": "example.com", "enabled": false,
+	})
+
+	req := rec.Only(t, "PUT", "/domains/deny/exact/example.com")
+	req.AssertBodyKeys(t, "comment", "enabled")
+	req.AssertField(t, "comment", "tracker")
+	req.AssertField(t, "enabled", false)
+}
+
+// A caller that supplies both fields replaces both, so there is nothing to
+// carry over and no round trip to pay for.
+func TestDomainsUpdate_BothFieldsSuppliedSkipsTheRead(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"PUT /domains/deny/exact/example.com": map[string]any{"domains": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, domainsUpdateHandler, c, map[string]any{
+		"type": "deny", "kind": "exact", "domain": "example.com",
+		"comment": "paused", "enabled": false,
+	})
+
+	rec.AssertNone(t, "GET", "/domains/deny/exact/example.com")
+	req := rec.Only(t, "PUT", "/domains/deny/exact/example.com")
+	req.AssertField(t, "comment", "paused")
+	req.AssertField(t, "enabled", false)
+}
+
+// FTL answers a lookup for a rule that does not exist with 200 and an empty
+// array, and its PUT is an upsert. An update that creates the entry keeps
+// working, with the tool's documented defaults.
+func TestDomainsUpdate_MissingEntryStillWrites(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"GET /domains/deny/exact/new.example.com": map[string]any{"domains": []any{}},
+		"PUT /domains/deny/exact/new.example.com": map[string]any{"domains": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, domainsUpdateHandler, c, map[string]any{
+		"type": "deny", "kind": "exact", "domain": "new.example.com", "comment": "fresh",
+	})
+
+	req := rec.Only(t, "PUT", "/domains/deny/exact/new.example.com")
+	req.AssertField(t, "comment", "fresh")
+	req.AssertField(t, "enabled", true)
+}
+
+// If the read fails there is no way to know what the PUT would reset, so the
+// write must not happen at all. Reporting the read failure is the whole point:
+// writing anyway is how the comment gets nulled.
+func TestDomainsUpdate_ReadFailureLeavesTheEntryAlone(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"PUT /domains/deny/exact/example.com": map[string]any{"domains": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	text := callToolExpectError(t, domainsUpdateHandler, c, map[string]any{
+		"type": "deny", "kind": "exact", "domain": "example.com", "comment": "edited",
+	})
+	if !strings.Contains(strings.ToLower(text), "read") {
+		t.Errorf("error text does not say the read failed: %s", text)
+	}
+	rec.AssertNone(t, "PUT", "/domains/deny/exact/example.com")
+}
+
+// A regex rule containing '+' is the case that proves escaping. url.PathEscape
+// leaves a plus alone because it is a legal sub-delimiter, but FTL reads it as
+// a space: against FTL v6.7 this DELETE answered 404 with a literal '+' and
+// 204 with %2B, on the same row. So a rule like this could be created and then
+// never removed.
+func TestDomainsDelete_EscapesReservedCharactersInTheDomain(t *testing.T) {
+	const rule = `^ads[0-9]+\.example\.com`
+	rec := piholeHandler(map[string]any{
+		"DELETE /domains/deny/regex/" + rule: map[string]any{},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, domainsDeleteHandler, c, map[string]any{
+		"type": "deny", "kind": "regex", "domain": rule,
+	})
+
+	req := rec.Only(t, "DELETE", "/domains/deny/regex/"+rule)
+	req.AssertRawPath(t, `/domains/deny/regex/%5Eads%5B0-9%5D%2B%5C.example%5C.com`)
+}
+
+func TestDomainsUpdate_EscapesReservedCharactersInTheDomain(t *testing.T) {
+	const rule = `^ads[0-9]+\.example\.com`
+	rec := piholeHandler(map[string]any{
+		"GET /domains/deny/regex/" + rule: map[string]any{"domains": []any{}},
+		"PUT /domains/deny/regex/" + rule: map[string]any{"domains": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, domainsUpdateHandler, c, map[string]any{
+		"type": "deny", "kind": "regex", "domain": rule, "comment": "trackers",
+	})
+
+	rec.Only(t, "PUT", "/domains/deny/regex/"+rule).
+		AssertRawPath(t, `/domains/deny/regex/%5Eads%5B0-9%5D%2B%5C.example%5C.com`)
+}
+
+// The description promises bulk add, and against a real Pi-hole the joined
+// string was rejected outright: FTL answered 400 "Invalid domain" for
+// {"domain":"a.example.com,b.example.com"} and created both rules for the
+// array form.
+func TestDomainsAdd_BulkSendsAnArray(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"POST /domains/deny/exact": map[string]any{"domains": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, domainsAddHandler, c, map[string]any{
+		"type": "deny", "kind": "exact", "domain": "a.example.com, b.example.com",
+	})
+
+	req := rec.Only(t, "POST", "/domains/deny/exact")
+	req.AssertField(t, "domain", []any{"a.example.com", "b.example.com"})
+}
+
+// A regex is never split on commas: they are significant inside a quantifier,
+// so splitting ^ads{1,3}\.example\.com would send two rules, neither of which
+// compiles.
+func TestDomainsAdd_RegexIsNeverSplitOnCommas(t *testing.T) {
+	const rule = `^ads{1,3}\.example\.com`
+	rec := piholeHandler(map[string]any{
+		"POST /domains/deny/regex": map[string]any{"domains": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, domainsAddHandler, c, map[string]any{
+		"type": "deny", "kind": "regex", "domain": rule,
+	})
+
+	rec.Only(t, "POST", "/domains/deny/regex").AssertField(t, "domain", []any{rule})
+}
+
+// Adding a rule must not leave FTL's own defaults to decide the enabled state.
+func TestDomainsAdd_AlwaysSendsCommentAndEnabled(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"POST /domains/deny/exact": map[string]any{"domains": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, domainsAddHandler, c, map[string]any{
+		"type": "deny", "kind": "exact", "domain": "example.com",
+	})
+
+	req := rec.Only(t, "POST", "/domains/deny/exact")
+	req.AssertBodyKeys(t, "domain", "comment", "enabled")
+	req.AssertField(t, "enabled", true)
+	req.AssertField(t, "comment", "")
 }

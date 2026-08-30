@@ -41,7 +41,7 @@ func searchDomainsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		n := int(req.GetFloat("max_results", 20))
 		params["N"] = fmt.Sprintf("%d", n)
 
-		path := "/search/" + domain + format.QueryParams(params)
+		path := "/search/" + pihole.EscapePathSegment(domain) + format.QueryParams(params)
 		var result pihole.SearchResponse
 		if err := c.Get(ctx, path, &result); err != nil {
 			return toolError("search domains", err), nil

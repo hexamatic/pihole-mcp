@@ -156,3 +156,21 @@ func TestSearchDomains_Partial(t *testing.T) {
 	// canned, so the rendered output looks the same either way.
 	h.Only(t, "GET", "").AssertQuery(t, "partial", "true")
 }
+
+// The search term is spliced straight into the path, so a term carrying '#'
+// or '?' truncates the request: FTL searches for the prefix and the tool
+// reports the answer to a question nobody asked.
+func TestSearchDomains_EscapesTheSearchTerm(t *testing.T) {
+	const term = "ads.example.com?x=1"
+	rec := piholeHandler(map[string]any{
+		"/search/" + term: map[string]any{"search": map[string]any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, searchDomainsHandler, c, map[string]any{"domain": term})
+
+	req := rec.Only(t, "GET", "/search/"+term)
+	req.AssertRawPath(t, "/search/ads.example.com%3Fx=1")
+	req.AssertQuery(t, "N", "20")
+	req.AssertNoQuery(t, "x")
+}

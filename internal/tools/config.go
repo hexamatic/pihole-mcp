@@ -75,7 +75,9 @@ func configGetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			if err := validateMaxLength("section", section, maxConfigPathLen); err != nil {
 				return mcp.NewToolResultError("Invalid " + err.Error()), nil
 			}
-			path += "/" + section
+			// A section is normally one component, but escapeConfigElement also
+			// handles a dotted path without turning its separators into %2F.
+			path += "/" + escapeConfigElement(section)
 		}
 
 		var result pihole.ConfigResponse
@@ -153,10 +155,16 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		// wrapper itself. Wrapping it a second time is the dangerous case: FTL
 		// ignores keys it does not recognise and still answers 200, so the write
 		// would silently apply nothing.
-		if len(payload) == 1 {
-			if inner, wrapped := payload["config"].(map[string]any); wrapped {
-				payload = inner
+		// Unwrap as many envelopes as the caller supplied. Someone working
+		// around the original bug by adding the key themselves can easily add
+		// it to a payload that already had it, and one unwrap would then leave
+		// a doubled envelope on the wire for FTL to ignore.
+		for len(payload) == 1 {
+			inner, wrapped := payload["config"].(map[string]any)
+			if !wrapped {
+				break
 			}
+			payload = inner
 		}
 
 		var result pihole.ConfigResponse
@@ -191,18 +199,24 @@ func configGetValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
-		element = strings.ReplaceAll(element, ".", "/")
-		path := "/config/" + element
+		path := "/config/" + escapeConfigElement(element)
 
 		var result pihole.ConfigResponse
 		if err := c.Get(ctx, path, &result); err != nil {
 			return toolError("get config value", err), nil
 		}
 
+		// FTL nests the requested item under its full path from the root, so
+		// dns.hosts comes back as {"config":{"dns":{"hosts":[...]}}}. The
+		// element is a filter over what is included, never a change of root,
+		// so walk down to the leaf before rendering it. Printing result.Config
+		// straight out returns the wrapper the user did not ask for.
+		value := unwrapConfigValue(result.Config, element)
+
 		// Format the value — use JSON for complex types, plain text for scalars.
 		var formatted string
-		if len(result.Config) == 1 {
-			for _, v := range result.Config {
+		if len(value) == 1 {
+			for _, v := range value {
 				switch v.(type) {
 				case string, float64, bool, nil:
 					formatted = fmt.Sprintf("%v", v)
@@ -212,7 +226,7 @@ func configGetValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 				}
 			}
 		} else {
-			j, _ := json.Marshal(result.Config)
+			j, _ := json.Marshal(value)
 			formatted = string(j)
 		}
 
@@ -241,8 +255,7 @@ func configAddValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
-		element = strings.ReplaceAll(element, ".", "/")
-		path := "/config/" + element + "/" + value
+		path := "/config/" + escapeConfigElement(element) + "/" + pihole.EscapePathSegment(value)
 
 		if !req.GetBool("restart", true) {
 			path += "?restart=false"
@@ -278,8 +291,7 @@ func configRemoveValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
-		element = strings.ReplaceAll(element, ".", "/")
-		path := "/config/" + element + "/" + value
+		path := "/config/" + escapeConfigElement(element) + "/" + pihole.EscapePathSegment(value)
 
 		if !req.GetBool("restart", true) {
 			path += "?restart=false"
@@ -325,4 +337,29 @@ func configPropertiesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 		return mcp.NewToolResultText(b.String()), nil
 	}
+}
+
+// unwrapConfigValue walks a config response down the dotted element path to
+// the value the caller asked for. FTL builds the body from the root of the
+// config tree, so a request for dns.hosts arrives wrapped in one object per
+// path component. Anything that does not match that shape is returned as it
+// came, so an unexpected body is still rendered rather than swallowed.
+func unwrapConfigValue(cfg map[string]any, element string) map[string]any {
+	out := cfg
+	parts := strings.Split(element, ".")
+	for i, p := range parts {
+		v, ok := out[p]
+		if !ok {
+			return cfg
+		}
+		if i == len(parts)-1 {
+			return map[string]any{p: v}
+		}
+		next, ok := v.(map[string]any)
+		if !ok {
+			return cfg
+		}
+		out = next
+	}
+	return out
 }

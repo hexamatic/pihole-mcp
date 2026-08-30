@@ -131,21 +131,6 @@ var e2eToolCall = regexp.MustCompile(`\bcall_[A-Za-z0-9_]*[ \t]+(?:"([A-Za-z0-9_
 // allowed to be missing from the script if it is named here, so no coverage
 // gap can be hidden without someone writing down why it is acceptable.
 var e2eSkips = map[string]string{
-	// The four batch-delete tools cannot be exercised until their payload
-	// shape is corrected. Every one of them POSTs a bare JSON array of
-	// identifiers, and FTL requires an array of objects. Verified against
-	// Pi-hole v6 2026.07.2 on 30 August 2026: all four answered
-	// "Invalid request: Batch delete requires an array of objects".
-	// Add the cases in the session that fixes the shape, and delete these
-	// four entries in the same change.
-	"pihole_domains_batch_delete": "The tool sends a bare array of identifiers where FTL requires an array of objects, " +
-		"so every call fails; an end-to-end case can only be written once the payload shape is corrected.",
-	"pihole_groups_batch_delete": "Same bare-array payload defect as pihole_domains_batch_delete; the call cannot succeed " +
-		"against any Pi-hole, so there is no passing case to write yet.",
-	"pihole_lists_batch_delete": "Same bare-array payload defect as pihole_domains_batch_delete; the call cannot succeed " +
-		"against any Pi-hole, so there is no passing case to write yet.",
-	"pihole_clients_batch_delete": "Same bare-array payload defect as pihole_domains_batch_delete; the call cannot succeed " +
-		"against any Pi-hole, so there is no passing case to write yet.",
 	"pihole_auth_revoke_session": "Revoking a session invalidates the credentials the harness itself is authenticated with, " +
 		"so every later case in the run would fail on authentication rather than on the behaviour it means to test.",
 	"pihole_action_flush_logs": "Flushing the query log erases the recorded queries that the statistics, query log and " +

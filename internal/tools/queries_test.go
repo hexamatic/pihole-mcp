@@ -281,3 +281,43 @@ func TestQueriesSuggestions_Normal(t *testing.T) {
 	req := h.Only(t, "GET", "/queries/suggestions")
 	req.AssertNoQueryString(t)
 }
+
+// The filter values are user data and reach FTL through format.QueryParams.
+// An upstream is routinely written host#port, and spliced in raw the '#' ended
+// the request at the fragment: FTL was asked about 8.8.8.8, length never
+// arrived, and the tool reported the answer as though it were the one
+// requested.
+func TestQueriesSearch_EscapesFilterValues(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/queries": map[string]any{"queries": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, queriesSearchHandler, c, map[string]any{
+		"upstream": "8.8.8.8#53", "length": float64(3),
+	})
+
+	req := rec.Only(t, "GET", "/queries")
+	req.AssertQuery(t, "upstream", "8.8.8.8#53")
+	req.AssertQuery(t, "length", "3")
+	if req.RawQuery != "length=3&upstream=8.8.8.8%2353" {
+		t.Errorf("RawQuery = %q, want length=3&upstream=8.8.8.8%%2353", req.RawQuery)
+	}
+}
+
+// A filter value cannot smuggle a second parameter into the request.
+func TestQueriesSearch_FilterValueCannotAddAParameter(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/queries": map[string]any{"queries": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, queriesSearchHandler, c, map[string]any{
+		"domain": "example.com&length=9999", "length": float64(3),
+	})
+
+	req := rec.Only(t, "GET", "/queries")
+	req.AssertQueryKeys(t, "domain", "length")
+	req.AssertQuery(t, "length", "3")
+	req.AssertQuery(t, "domain", "example.com&length=9999")
+}

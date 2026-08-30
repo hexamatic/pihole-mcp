@@ -132,7 +132,7 @@ func TestClientsAdd_Success(t *testing.T) {
 	req := rec.Only(t, "POST", "/clients")
 	req.AssertRawPath(t, "/clients")
 	req.AssertNoQueryString(t)
-	req.AssertBodyKeys(t, "client")
+	req.AssertBodyKeys(t, "client", "comment")
 	req.AssertField(t, "client", "192.168.1.30")
 }
 
@@ -220,4 +220,103 @@ func TestClientsBatchDelete_Success(t *testing.T) {
 	req.AssertRawPath(t, "/clients:batchDelete")
 	req.AssertNoQueryString(t)
 	req.AssertRawBody(t, items)
+}
+
+// A client identifier is free-form: Pi-hole accepts an IP, a MAC, a hostname
+// or an interface name, so it can carry characters the path treats as
+// structure. Unescaped, the request reaches a different row or none.
+func TestClientsUpdate_EscapesReservedCharactersInTheClient(t *testing.T) {
+	const client = "eth0#lan"
+	rec := piholeHandler(map[string]any{
+		"PUT /clients/" + client: map[string]any{"clients": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, clientsUpdateHandler, c, map[string]any{"client": client, "comment": "edited"})
+
+	rec.Only(t, "PUT", "/clients/"+client).AssertRawPath(t, "/clients/eth0%23lan")
+}
+
+func TestClientsDelete_EscapesReservedCharactersInTheClient(t *testing.T) {
+	const client = "eth0#lan"
+	rec := piholeHandler(map[string]any{"DELETE /clients/" + client: map[string]any{}})
+	c := newTestClient(t, rec)
+
+	callTool(t, clientsDeleteHandler, c, map[string]any{"client": client})
+
+	rec.Only(t, "DELETE", "/clients/"+client).AssertRawPath(t, "/clients/eth0%23lan")
+}
+
+// A client row has no enabled column, so its update is comment-only and needs
+// no read-back: FTL preserves group membership across a PUT that omits it.
+func TestClientsUpdate_SendsCommentAndNothingElse(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"PUT /clients/192.168.1.50": map[string]any{"clients": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, clientsUpdateHandler, c, map[string]any{"client": "192.168.1.50", "comment": "laptop"})
+
+	req := rec.Only(t, "PUT", "/clients/192.168.1.50")
+	req.AssertBodyKeys(t, "comment")
+	req.AssertNoField(t, "enabled")
+	rec.AssertNone(t, "GET", "/clients/192.168.1.50")
+}
+
+// Same as the write paths: a client identifier carrying a reserved character
+// must reach the row it names, or the tool describes a different client.
+func TestClientsList_EscapesTheClientFilter(t *testing.T) {
+	const client = "eth0#lan"
+	rec := piholeHandler(map[string]any{
+		"/clients/" + client: map[string]any{"clients": []any{
+			map[string]any{"client": client, "comment": "wired"},
+		}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, clientsListHandler, c, map[string]any{"client": client})
+
+	rec.Only(t, "GET", "/clients/"+client).AssertRawPath(t, "/clients/eth0%23lan")
+}
+
+// A client row's only mutable field is its comment, and FTL replaces it on
+// every PUT: an update that does not name one erases it. Verified against FTL
+// v6.7, where PUT with an empty body left the comment null. The three sibling
+// families read the entry back before writing; clients has to as well.
+func TestClientsUpdate_OmittedCommentIsPreserved(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"GET /clients/192.168.1.50": map[string]any{"clients": []any{
+			map[string]any{"client": "192.168.1.50", "comment": "kids tablet"},
+		}},
+		"PUT /clients/192.168.1.50": map[string]any{"clients": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, clientsUpdateHandler, c, map[string]any{"client": "192.168.1.50"})
+
+	rec.Only(t, "PUT", "/clients/192.168.1.50").AssertField(t, "comment", "kids tablet")
+}
+
+// A caller that supplied the comment replaces it, so there is nothing to carry
+// over and no round trip to pay for.
+func TestClientsUpdate_SuppliedCommentSkipsTheRead(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"PUT /clients/192.168.1.50": map[string]any{"clients": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, clientsUpdateHandler, c, map[string]any{"client": "192.168.1.50", "comment": "laptop"})
+
+	rec.AssertNone(t, "GET", "/clients/192.168.1.50")
+	rec.Only(t, "PUT", "/clients/192.168.1.50").AssertField(t, "comment", "laptop")
+}
+
+func TestClientsUpdate_ReadFailureLeavesTheClientAlone(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"PUT /clients/192.168.1.50": map[string]any{"clients": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callToolExpectError(t, clientsUpdateHandler, c, map[string]any{"client": "192.168.1.50"})
+	rec.AssertNone(t, "PUT", "/clients/192.168.1.50")
 }

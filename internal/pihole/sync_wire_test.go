@@ -130,3 +130,36 @@ func TestApplyPlan_PutsTheRightRequestsOnTheWire(t *testing.T) {
 		}
 	})
 }
+
+// The escaping case sync_wire_test could not cover before the production fix:
+// url.PathEscape leaves '+' alone, and FTL reads a bare plus as a space, so a
+// regex rule containing one syncs to a path that addresses a different row.
+// Against FTL v6.7 the same rule answered 404 spelled with '+' and 204 spelled
+// with %2B.
+func TestApplyPlan_EscapesPlusInRuleNames(t *testing.T) {
+	const rule = `^ads[0-9]+\.example\.com`
+
+	srcFake := piholefake.New()
+	t.Cleanup(srcFake.Close)
+	src := pihole.New(srcFake.URL(), "test", pihole.WithName("primary"), pihole.WithRetry(0, time.Second))
+	srcFake.AddDomain("deny", "regex", rule, "blocked", true)
+	srcFake.AddGroup("Kids #2", "after school", true)
+
+	tgtFake, tgt, rec := recordedTarget(t)
+	// Matching identities with differing comments make both an update, which
+	// is the operation that puts the name into the path.
+	tgtFake.AddDomain("deny", "regex", rule, "different comment", true)
+	tgtFake.AddGroup("Kids #2", "different comment", true)
+
+	d, err := pihole.ComputeDiff(context.Background(), src, tgt, pihole.DefaultSyncCategories)
+	if err != nil {
+		t.Fatalf("ComputeDiff: %v", err)
+	}
+	if res := pihole.ApplyPlan(context.Background(), tgt, d, true); res.Failed != 0 {
+		t.Fatalf("ApplyPlan failed ops: %d (%+v)", res.Failed, res.Ops)
+	}
+
+	rec.Only(t, "PUT", "/domains/deny/regex/"+rule).
+		AssertRawPath(t, `/domains/deny/regex/%5Eads%5B0-9%5D%2B%5C.example%5C.com`)
+	rec.Only(t, "PUT", "/groups/Kids #2").AssertRawPath(t, "/groups/Kids%20%232")
+}

@@ -34,7 +34,7 @@ func FuzzValidateDomainName(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, s string) {
-		if err := validateDomainName(s); err != nil {
+		if err := validateDomainName(s, "exact"); err != nil {
 			return
 		}
 		// Accepted input must uphold every documented invariant.

@@ -214,15 +214,17 @@ func TestConfigGetValue_Success(t *testing.T) {
 	rec := piholeHandler(map[string]any{
 		"/config/dns/upstreams": map[string]any{
 			"config": map[string]any{
-				"upstreams": []any{"1.1.1.1#53", "8.8.8.8#53"},
+				"dns": map[string]any{"upstreams": []any{"1.1.1.1#53", "8.8.8.8#53"}},
 			},
 		},
 	})
 	c := newTestClient(t, rec)
 
 	text := callTool(t, configGetValueHandler, c, map[string]any{"element": "dns.upstreams"})
-	if !strings.Contains(text, "dns/upstreams") {
-		t.Errorf("expected element path in output, got: %s", text)
+	// The element is echoed back in the dotted spelling the caller used, not
+	// the slash-separated path form it is turned into on the way out.
+	if !strings.Contains(text, "dns.upstreams") {
+		t.Errorf("expected element in output, got: %s", text)
 	}
 	if !strings.Contains(text, "1.1.1.1#53") {
 		t.Errorf("expected upstream value, got: %s", text)
@@ -239,60 +241,11 @@ func TestConfigGetValue_Success(t *testing.T) {
 	req.AssertNoQueryString(t)
 }
 
-// A value carrying a '#' is truncated before the request leaves the client,
-// because the handler concatenates it into the path unescaped and
-// http.NewRequestWithContext then reads everything from the '#' onwards as a
-// URL fragment. Pi-hole upstreams are routinely written host#port
-// (127.0.0.1#5335 is the standard Unbound configuration), FTL answers 200 to
-// the truncated path, and the tool reports the full value as added. A
-// different value is written from the one the caller asked for.
-//
-// This test pins the broken behaviour deliberately, so that it goes RED the
-// moment internal/tools/config.go:245 and :281 escape the value. That is the
-// point of it: the fix must not be able to land unnoticed. When it does land,
-// delete this test and remove the t.Skip from the pair below, which already
-// carries the assertions the fixed code has to satisfy.
-//
-// Note the restart flag is swallowed by the same fragment: it is appended
-// after the unescaped value, so "?restart=false" ends up inside the discarded
-// fragment and never reaches the wire either.
-func TestConfigAddRemoveValue_UnescapedHashTruncatesThePath_KNOWNBUG(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		handler func(*pihole.Registry) server.ToolHandlerFunc
-		method  string
-	}{
-		{"add", configAddValueHandler, "PUT"},
-		{"remove", configRemoveValueHandler, "DELETE"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := piholeHandler(map[string]any{
-				"/config/dns/upstreams/127.0.0.1": map[string]any{},
-			})
-			c := newTestClient(t, rec)
-
-			callTool(t, tc.handler, c, map[string]any{
-				"element": "dns.upstreams",
-				"value":   "127.0.0.1#5335",
-				"restart": false,
-			})
-
-			req := rec.Only(t, tc.method, "/config/dns/upstreams/127.0.0.1")
-			req.AssertRawPath(t, "/config/dns/upstreams/127.0.0.1")
-			req.AssertNoQuery(t, "restart")
-		})
-	}
-}
-
-// The acceptance test for the escaping fix. Remove the Skip once
-// internal/tools/config.go escapes the value with url.PathEscape; the restart
-// parameter must stay appended after the escaped value so the four restart
-// cases above keep passing.
+// 127.0.0.1#5335 is the canonical Unbound upstream, and the '#' used to end
+// the path at the fragment: FTL saw /config/dns/upstreams/127.0.0.1, the
+// appended restart parameter went into the discarded fragment with it, and the
+// tool reported success for a value it had not written.
 func TestConfigAddRemoveValue_ReservedCharactersAreEscaped(t *testing.T) {
-	t.Skip("pending the production fix at internal/tools/config.go:245 and :281 " +
-		"(the value is spliced into the path unescaped); see " +
-		"TestConfigAddRemoveValue_UnescapedHashTruncatesThePath_KNOWNBUG")
-
 	for _, tc := range []struct {
 		name    string
 		handler func(*pihole.Registry) server.ToolHandlerFunc
@@ -484,4 +437,108 @@ func TestConfigProperties_Empty(t *testing.T) {
 	if !strings.Contains(text, "No read-only config keys reported") {
 		t.Errorf("expected empty-state message, got: %s", text)
 	}
+}
+
+// A '+' is the trap inside the trap. url.PathEscape leaves it alone because a
+// plus is a legal sub-delimiter in a path, but FTL decodes it as a space, so
+// the escape has to be spelled out. Verified against FTL v6.7.
+func TestConfigAddRemoveValue_EscapesAPlusInTheValue(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		handler func(*pihole.Registry) server.ToolHandlerFunc
+		method  string
+	}{
+		{"add", configAddValueHandler, "PUT"},
+		{"remove", configRemoveValueHandler, "DELETE"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := piholeHandler(map[string]any{
+				"/config/dns/hosts/10.0.0.1+alias.lan": map[string]any{},
+			})
+			c := newTestClient(t, rec)
+
+			callTool(t, tc.handler, c, map[string]any{
+				"element": "dns.hosts",
+				"value":   "10.0.0.1+alias.lan",
+			})
+
+			rec.Only(t, tc.method, "/config/dns/hosts/10.0.0.1+alias.lan").
+				AssertRawPath(t, "/config/dns/hosts/10.0.0.1%2Balias.lan")
+		})
+	}
+}
+
+// The element is a dotted path, and the dots are separators: escaping the
+// joined string turns every one of them into %2F and 404s the request. Each
+// component is escaped on its own, so the separators survive and a component
+// carrying a reserved character still travels intact.
+func TestConfigValue_ElementSeparatorsSurviveEscaping(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/config/dns/upstreams": map[string]any{"config": map[string]any{"upstreams": []any{}}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, configGetValueHandler, c, map[string]any{"element": "dns.upstreams"})
+
+	rec.Only(t, "GET", "/config/dns/upstreams").AssertRawPath(t, "/config/dns/upstreams")
+}
+
+// unwrapConfigValue walks the response down to the leaf. Everything that does
+// not match the shape FTL sends is handed back untouched rather than being
+// reported as an empty value.
+func TestUnwrapConfigValue(t *testing.T) {
+	nested := map[string]any{"dns": map[string]any{"hosts": []any{"10.0.0.1 nas.lan"}}}
+
+	for _, tt := range []struct {
+		name    string
+		cfg     map[string]any
+		element string
+		want    map[string]any
+	}{
+		{"nested section", nested, "dns.hosts", map[string]any{"hosts": []any{"10.0.0.1 nas.lan"}}},
+		{"single component", map[string]any{"dns": "x"}, "dns", map[string]any{"dns": "x"}},
+		{"component missing", nested, "dhcp.leases", nested},
+		{"leaf is not an object", nested, "dns.hosts.deeper", nested},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := unwrapConfigValue(tt.cfg, tt.element)
+			if fmt.Sprint(got) != fmt.Sprint(tt.want) {
+				t.Errorf("unwrapConfigValue(%v, %q) = %v, want %v", tt.cfg, tt.element, got, tt.want)
+			}
+		})
+	}
+}
+
+// The section is user-supplied and goes straight into the path. A reserved
+// character truncates the request, and the reply then describes a section
+// nobody asked for.
+func TestConfigGet_EscapesTheSection(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/config/dns#x": map[string]any{"config": map[string]any{"dns": map[string]any{}}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, configGetHandler, c, map[string]any{"section": "dns#x"})
+
+	rec.Only(t, "GET", "/config/dns#x").AssertRawPath(t, "/config/dns%23x")
+}
+
+// Unwrapping one envelope is not enough. A caller that wrapped twice, which is
+// exactly what someone working around the original bug would do after reading
+// that the payload needs a config key, reduced to a single wrap and was then
+// re-wrapped on the way out. Pi-hole has no top-level config section, so a lone
+// config key can only ever be the envelope, at any depth.
+func TestConfigSet_DoublyWrappedPayloadIsNotSentWrapped(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"PATCH /config": map[string]any{"config": map[string]any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, configSetHandler, c, map[string]any{
+		"config": `{"config":{"config":{"dns":{"cache":{"size":10001}}}}}`,
+	})
+
+	req := rec.Only(t, "PATCH", "/config")
+	req.AssertField(t, "config.dns.cache.size", 10001)
+	req.AssertNoField(t, "config.config")
 }

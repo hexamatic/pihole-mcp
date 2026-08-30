@@ -364,7 +364,7 @@ Add domains to an allow or deny list. Supports bulk add via comma-separated doma
 |---|---|---|---|
 | `type` | string | Yes | 'allow' or 'deny'. |
 | `kind` | string | Yes | 'exact' or 'regex'. |
-| `domain` | string | Yes | Domain(s) to add (comma-separated for bulk). |
+| `domain` | string | Yes | Domain(s) to add. Comma-separated for bulk when kind is exact; a regex is taken whole. |
 | `comment` | string | No | Comment for the entry. |
 | `enabled` | boolean | No | Enabled state (default true). |
 
@@ -497,7 +497,7 @@ Add a client by IP, MAC, hostname, CIDR subnet, or interface name (prefixed with
 
 *destructive*
 
-Update a configured client's comment or group assignments.
+Update a configured client's comment. Group assignments are managed through the group tools.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -518,11 +518,11 @@ Remove a configured client. The device remains on the network but loses group-ba
 
 *destructive*
 
-Remove multiple configured clients at once. Provide a JSON array of client identifiers.
+Remove multiple configured clients at once. Each item needs the client identifier.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `items` | string | Yes | JSON array of client identifiers, e.g. ["192.168.1.10","192.168.1.20"] |
+| `items` | string | Yes | JSON array: [{"item":"192.168.1.10"}] |
 
 ## Lists
 
