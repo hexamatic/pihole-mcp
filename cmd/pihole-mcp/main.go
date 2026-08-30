@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,6 +38,11 @@ const (
 	// registered after the first sweep would otherwise hold a long-lived GET
 	// open until the grace period expired.
 	drainInterval = 5 * time.Millisecond
+
+	// hostLookupTimeout bounds the name resolution behind the startup
+	// authentication warning, so a slow or broken resolver delays the log line
+	// rather than the server.
+	hostLookupTimeout = 2 * time.Second
 )
 
 func main() {
@@ -200,12 +207,24 @@ func serveHTTP(cfg *config.Config, address string, mcpHandler http.Handler, clos
 // caller. Splitting it out keeps the signal handling out of the tests, which
 // would otherwise have to raise a real SIGTERM and could not run on Windows.
 func serveHTTPContext(ctx context.Context, cfg *config.Config, address string, mcpHandler http.Handler, closeSessions func(context.Context)) error {
-	rl := middleware.NewRateLimiter(cfg.RateLimit, middleware.ComputeBurst(cfg.RateLimit))
+	rl := middleware.NewRateLimiter(cfg.RateLimit, middleware.ComputeBurst(cfg.RateLimit),
+		middleware.WithTrustedProxies(cfg.TrustedProxies))
 	rl.BindShutdown(ctx)
 	ov := middleware.NewOriginValidator(cfg.AllowedOrigins)
+	// Failed authentication is charged to its own budget rather than the one
+	// above, so a flood of wrong tokens throttles the sender without starving a
+	// client at the same address that does hold the token.
+	authFailures := middleware.NewFailureLimiter(middleware.WithTrustedProxies(cfg.TrustedProxies))
+	authFailures.BindShutdown(ctx)
+	auth := middleware.NewBearerAuth(cfg.HTTPAuthToken, middleware.WithFailurePenalty(authFailures.Penalise))
 
+	warnIfUnauthenticated(address, auth.Enabled())
+
+	// Authentication sits ahead of the rate limiter deliberately: a caller with
+	// no token must not be able to spend the budget of one that has it.
 	handler := middleware.Chain(
 		ov.Middleware,
+		auth.Middleware,
 		rl.Middleware,
 	)(mcpHandler)
 
@@ -215,8 +234,8 @@ func serveHTTPContext(ctx context.Context, cfg *config.Config, address string, m
 		ReadHeaderTimeout: httpReadHeaderTimeout,
 	}
 
-	log.Printf("starting %T on %s (rate-limit=%d/min, allowed-origins=%v)",
-		mcpHandler, address, cfg.RateLimit, cfg.AllowedOrigins)
+	log.Printf("starting %T on %s (auth=%s, rate-limit=%d/min, allowed-origins=%v, trusted-proxies=%v)",
+		mcpHandler, address, authState(auth.Enabled()), cfg.RateLimit, cfg.AllowedOrigins, cfg.TrustedProxies)
 
 	// ListenAndServe returns as soon as Shutdown closes the listener, so
 	// without this channel the process exited while the drain was still running
@@ -279,4 +298,71 @@ func drain(ctx context.Context, s *http.Server, closeSessions func(context.Conte
 			closeSessions(ctx)
 		}
 	}
+}
+
+func authState(enabled bool) string {
+	if enabled {
+		return "bearer token"
+	}
+	return "none"
+}
+
+// warnIfUnauthenticated reports the one combination that hands an unauthenticated
+// MCP server to a whole network: a listen address that is not loopback with no
+// bearer token configured.
+//
+// It warns rather than refusing to start. Refusing would break the reverse-proxy
+// deployment the README documents, where the proxy in front holds the
+// authentication and pihole-mcp binds 0.0.0.0 inside a container on purpose. The
+// operator who meant it loses nothing; the operator who did not gets told, in the
+// place they are already looking when a new server does not behave.
+func warnIfUnauthenticated(address string, authEnabled bool) {
+	if authEnabled || isLoopbackAddress(address) {
+		return
+	}
+	log.Printf("ERROR: listening on %s, which is reachable beyond this machine, with no authentication. "+
+		"Anyone who can reach this port can control your Pi-hole. Set PIHOLE_HTTP_AUTH_TOKEN "+
+		"(or PIHOLE_HTTP_AUTH_TOKEN_FILE), or bind localhost, or put a reverse proxy that authenticates in front. "+
+		"Origin and Host validation does not authenticate anything: both headers are set by the caller.", address)
+}
+
+// lookupIP resolves a hostname. A variable so tests can exercise the resolved
+// branches of isLoopbackAddress without depending on the machine's DNS.
+var lookupIP = net.DefaultResolver.LookupIPAddr
+
+// isLoopbackAddress reports whether a listen address reaches only this machine.
+//
+// A bare port or a wildcard host ("", "0.0.0.0", "::") listens on every
+// interface. Anything that will not resolve to loopback addresses is treated as
+// not loopback, so an address this cannot classify produces a warning rather
+// than silence.
+func isLoopbackAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = strings.Trim(address, "[]")
+	}
+	if host == "" {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	// Resolved without asking anyone: a host with no "localhost" entry, or a
+	// resolver that is slow or broken, must not turn the default bind address
+	// into a spurious "no authentication" warning.
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), hostLookupTimeout)
+	defer cancel()
+	ips, err := lookupIP(ctx, host)
+	if err != nil || len(ips) == 0 {
+		return false
+	}
+	for _, ip := range ips {
+		if !ip.IP.IsLoopback() {
+			return false
+		}
+	}
+	return true
 }

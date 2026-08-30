@@ -29,6 +29,27 @@ This MCP server handles Pi-hole API credentials. Users should:
 - **Restrict network access** to the Pi-hole instance using firewall rules
 - **Keep dependencies updated** — enable Dependabot or run `go get -u` regularly
 
+### HTTP and SSE transports
+
+The default transport is stdio, which is a single-process, single-user channel and is not exposed
+on the network. The optional `http` and `sse` transports are, and they have **no authentication
+until one is configured**:
+
+- **Set `PIHOLE_HTTP_AUTH_TOKEN` (or `PIHOLE_HTTP_AUTH_TOKEN_FILE`) whenever the listen address is
+  not loopback.** Without it, anyone who can reach the port can disable blocking, rewrite
+  blocklists and read query history. The server logs an error at startup in that state, and starts
+  anyway so that a reverse proxy holding the authentication remains a valid deployment.
+- **Rejected requests are throttled per address**, on a budget separate from `PIHOLE_RATE_LIMIT`
+  and active even when that is set to `0`, so a shared token cannot be guessed at line rate. The
+  server logs the throttling, at most once a minute per address.
+- **Do not treat `PIHOLE_ALLOWED_ORIGINS` as access control.** Origin and Host validation is
+  DNS-rebinding protection for browsers. Both headers are supplied by the caller, so any
+  non-browser client sets them to whatever the allowlist accepts.
+- **Prefer the file form of the token.** A value passed as an environment variable on a command
+  line is readable via `ps` by every user on the host.
+- **Set `PIHOLE_TRUSTED_PROXIES` only for proxies you control.** It is what makes the rate limiter
+  believe `X-Forwarded-For`, and that header is client-supplied.
+
 ## Verifying Release Artefacts
 
 Every release from v0.8.0 onwards ships with checksums, keyless [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) signatures, SPDX SBOMs, and SLSA build provenance. To verify a download:
@@ -74,6 +95,7 @@ The following are in scope for security reports:
 
 - Credential leakage (Pi-hole passwords exposed in logs, errors, or responses)
 - Authentication bypass in the session management logic
+- Bypass of the HTTP/SSE bearer token, Origin/Host validation, or rate limiting
 - Injection vulnerabilities in API request construction
 - Denial of service through resource exhaustion
 

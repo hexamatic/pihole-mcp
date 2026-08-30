@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -15,6 +16,12 @@ const (
 	defaultRateLimit      = 120
 	defaultMaxRetries     = 3
 	defaultRetryMaxDelay  = 8 * time.Second
+
+	// minAuthTokenLength is the shortest PIHOLE_HTTP_AUTH_TOKEN accepted. A
+	// bearer token short enough to guess is worse than no token, because it
+	// reads as protection that isn't there. Rejected at startup, where the
+	// message can name the variable, rather than silently accepted.
+	minAuthTokenLength = 16
 )
 
 // defaultAllowedOrigins is the loopback-only allowlist. Matches the
@@ -84,7 +91,22 @@ type Config struct {
 
 	// AllowedOrigins is the Origin/Host allowlist for the HTTP/SSE transports.
 	// Defaults to loopback. The special value "*" disables enforcement.
+	//
+	// This is DNS-rebinding protection, not authentication: both headers are
+	// supplied by the client, so any non-browser caller can set them freely.
+	// HTTPAuthToken is the access control.
 	AllowedOrigins []string
+
+	// HTTPAuthToken is the shared bearer token the HTTP and SSE transports
+	// require on every request. Empty (the default) leaves the transports
+	// unauthenticated, which is only safe on a loopback bind.
+	HTTPAuthToken string
+
+	// TrustedProxies lists the networks whose X-Forwarded-For header the rate
+	// limiter believes when working out which client a request came from.
+	// Empty (the default) means the header is ignored entirely and the
+	// immediate peer address is used.
+	TrustedProxies []netip.Prefix
 
 	// MaxRetries is how many times a failed Pi-hole API call is re-attempted
 	// after the first try. 0 disables retrying.
@@ -147,6 +169,20 @@ func Load() (*Config, error) {
 		if len(cfg.AllowedOrigins) == 0 {
 			return nil, fmt.Errorf("PIHOLE_ALLOWED_ORIGINS must contain at least one entry (or '*' to disable enforcement)")
 		}
+	}
+
+	token, err := loadAuthToken()
+	if err != nil {
+		return nil, err
+	}
+	cfg.HTTPAuthToken = token
+
+	if v := os.Getenv("PIHOLE_TRUSTED_PROXIES"); v != "" {
+		proxies, err := parseTrustedProxies(v)
+		if err != nil {
+			return nil, err
+		}
+		cfg.TrustedProxies = proxies
 	}
 
 	if v := os.Getenv("PIHOLE_MAX_RETRIES"); v != "" {
@@ -296,4 +332,88 @@ func parseOrigins(raw string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// loadAuthToken resolves the shared bearer token for the HTTP and SSE
+// transports from PIHOLE_HTTP_AUTH_TOKEN or PIHOLE_HTTP_AUTH_TOKEN_FILE.
+//
+// The file form exists because an environment variable set on the command line
+// is visible in `ps` to every user on the host, and container platforms mount
+// secrets as files. Surrounding whitespace is stripped from both forms: a file
+// written by `echo` ends in a newline, and a trailing space in an exported
+// variable is never intentional.
+//
+// An empty value is treated as "not set" rather than "empty token", so a
+// misconfigured secret mount cannot silently disable authentication while
+// looking configured.
+func loadAuthToken() (string, error) {
+	inline, inlineSet := os.LookupEnv("PIHOLE_HTTP_AUTH_TOKEN")
+	path, pathSet := os.LookupEnv("PIHOLE_HTTP_AUTH_TOKEN_FILE")
+	inline, path = strings.TrimSpace(inline), strings.TrimSpace(path)
+	inlineSet, pathSet = inlineSet && inline != "", pathSet && path != ""
+
+	switch {
+	case inlineSet && pathSet:
+		return "", fmt.Errorf("set either PIHOLE_HTTP_AUTH_TOKEN or PIHOLE_HTTP_AUTH_TOKEN_FILE, not both")
+	case pathSet:
+		raw, err := os.ReadFile(path) //nolint:gosec // G304: reading the operator-nominated secret file is the point of this variable
+		if err != nil {
+			return "", fmt.Errorf("PIHOLE_HTTP_AUTH_TOKEN_FILE %q could not be read: %w", path, err)
+		}
+		token := strings.TrimSpace(string(raw))
+		if token == "" {
+			return "", fmt.Errorf("PIHOLE_HTTP_AUTH_TOKEN_FILE %q is empty; write the token to it or unset the variable", path)
+		}
+		return token, validateAuthToken(token, "PIHOLE_HTTP_AUTH_TOKEN_FILE "+path)
+	case inlineSet:
+		return inline, validateAuthToken(inline, "PIHOLE_HTTP_AUTH_TOKEN")
+	default:
+		return "", nil
+	}
+}
+
+// validateAuthToken rejects a token short enough to be guessed. source names
+// the variable or file the value came from so the message is actionable.
+func validateAuthToken(token, source string) error {
+	if len(token) < minAuthTokenLength {
+		return fmt.Errorf("%s must be at least %d characters (got %d); generate one with: openssl rand -base64 32",
+			source, minAuthTokenLength, len(token))
+	}
+	return nil
+}
+
+// parseTrustedProxies parses a comma-separated list of CIDR blocks and bare IP
+// addresses into prefixes. A bare address becomes a single-host prefix.
+//
+// Nothing is trusted by default. X-Forwarded-For is client-supplied, so a
+// server that believes it unconditionally lets any caller pick its own
+// rate-limit bucket; the header is only consulted when the immediate peer is
+// one of these.
+func parseTrustedProxies(raw string) ([]netip.Prefix, error) {
+	parts := strings.Split(raw, ",")
+	out := make([]netip.Prefix, 0, len(parts))
+	for _, p := range parts {
+		entry := strings.TrimSpace(p)
+		if entry == "" {
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			prefix, err := netip.ParsePrefix(entry)
+			if err != nil {
+				return nil, fmt.Errorf("PIHOLE_TRUSTED_PROXIES entry %q is not a valid CIDR block: %w", entry, err)
+			}
+			out = append(out, prefix.Masked())
+			continue
+		}
+		addr, err := netip.ParseAddr(entry)
+		if err != nil {
+			return nil, fmt.Errorf("PIHOLE_TRUSTED_PROXIES entry %q is not a valid IP address or CIDR block (for example 10.0.0.0/8 or 192.168.1.5): %w", entry, err)
+		}
+		addr = addr.Unmap()
+		out = append(out, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("PIHOLE_TRUSTED_PROXIES must contain at least one IP address or CIDR block, or be unset")
+	}
+	return out, nil
 }

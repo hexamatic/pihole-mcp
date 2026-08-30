@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -206,5 +209,100 @@ func TestRunCheckReportsConfigurationError(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "FAIL") {
 		t.Errorf("configuration failure was not reported as FAIL:\n%s", out.String())
+	}
+}
+
+func TestIsLoopbackAddress(t *testing.T) {
+	tests := []struct {
+		address string
+		want    bool
+	}{
+		{"localhost:8080", true},
+		{"127.0.0.1:8080", true},
+		{"127.0.0.53:8080", true},
+		{"[::1]:8080", true},
+		{"::1", true},
+		{"0.0.0.0:8080", false},
+		{"[::]:8080", false},
+		{":8080", false},
+		{"192.168.1.10:8080", false},
+		{"pihole-mcp.invalid:8080", false},
+	}
+	for _, tt := range tests {
+		if got := isLoopbackAddress(tt.address); got != tt.want {
+			t.Errorf("isLoopbackAddress(%q) = %v, want %v", tt.address, got, tt.want)
+		}
+	}
+}
+
+// TestWarnIfUnauthenticated pins the one combination that must be loud: a bind
+// reachable beyond this machine with no token. Everything else stays quiet, and
+// nothing here refuses to start.
+func TestWarnIfUnauthenticated(t *testing.T) {
+	tests := []struct {
+		name        string
+		address     string
+		authEnabled bool
+		wantWarning bool
+	}{
+		{"non-loopback with no token", "0.0.0.0:8080", false, true},
+		{"non-loopback with a token", "0.0.0.0:8080", true, false},
+		{"loopback with no token", "localhost:8080", false, false},
+		{"loopback with a token", "127.0.0.1:8080", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			log.SetOutput(&buf)
+			t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+			warnIfUnauthenticated(tt.address, tt.authEnabled)
+
+			logged := buf.String()
+			if tt.wantWarning {
+				if !strings.Contains(logged, "ERROR") {
+					t.Fatalf("want an error-level warning, got %q", logged)
+				}
+				if !strings.Contains(logged, "PIHOLE_HTTP_AUTH_TOKEN") {
+					t.Errorf("the warning must name the variable that fixes it, got %q", logged)
+				}
+			} else if logged != "" {
+				t.Fatalf("want no warning, got %q", logged)
+			}
+		})
+	}
+}
+
+func TestAuthState(t *testing.T) {
+	if got := authState(true); got != "bearer token" {
+		t.Errorf("authState(true) = %q, want %q", got, "bearer token")
+	}
+	if got := authState(false); got != "none" {
+		t.Errorf("authState(false) = %q, want %q", got, "none")
+	}
+}
+
+func TestIsLoopbackAddress_ResolvedNames(t *testing.T) {
+	tests := []struct {
+		name    string
+		resolve []net.IPAddr
+		err     error
+		want    bool
+	}{
+		{"every address is loopback", []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}, {IP: net.ParseIP("::1")}}, nil, true},
+		{"one address is not", []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}, {IP: net.ParseIP("192.168.1.10")}}, nil, false},
+		{"resolves to nothing", nil, nil, false},
+		{"does not resolve", nil, errors.New("no such host"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := lookupIP
+			lookupIP = func(context.Context, string) ([]net.IPAddr, error) { return tt.resolve, tt.err }
+			t.Cleanup(func() { lookupIP = original })
+
+			if got := isLoopbackAddress("pihole-mcp.lan:8080"); got != tt.want {
+				t.Errorf("isLoopbackAddress = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

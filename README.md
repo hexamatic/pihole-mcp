@@ -125,15 +125,18 @@ It exits non-zero if any instance fails, and prints what to change. Worth runnin
 | `PIHOLE_REQUEST_TIMEOUT` | No | `30s` | HTTP request timeout |
 | `PIHOLE_MAX_RETRIES` | No | `3` | Retries after a failed Pi-hole API call. `0` disables. |
 | `PIHOLE_RETRY_MAX_DELAY` | No | `8s` | Upper bound on a single backoff wait. |
-| `PIHOLE_RATE_LIMIT` | No | `120` | Per-session requests-per-minute cap on the HTTP/SSE transports. `0` disables. |
-| `PIHOLE_ALLOWED_ORIGINS` | No | `localhost,127.0.0.1,[::1]` | Comma-separated Origin/Host allowlist for HTTP/SSE transports. The literal `*` disables enforcement (unsafe). |
+| `PIHOLE_HTTP_AUTH_TOKEN` | No | — | Shared bearer token required on every HTTP/SSE request. Minimum 16 characters. Unset means no authentication. |
+| `PIHOLE_HTTP_AUTH_TOKEN_FILE` | No | — | Path to a file holding the bearer token, so it stays out of `ps`. Mutually exclusive with `PIHOLE_HTTP_AUTH_TOKEN`. |
+| `PIHOLE_RATE_LIMIT` | No | `120` | Per-session requests-per-minute cap on the HTTP/SSE transports, under a per-address ceiling of four times that. `0` disables. |
+| `PIHOLE_ALLOWED_ORIGINS` | No | `localhost,127.0.0.1,[::1]` | Comma-separated Origin/Host allowlist for HTTP/SSE transports. The literal `*` disables enforcement (unsafe). Not authentication. |
+| `PIHOLE_TRUSTED_PROXIES` | No | — | Comma-separated IPs or CIDR blocks whose `X-Forwarded-For` the rate limiter believes. Unset means the header is ignored. |
 | `PIHOLE_TLS_SKIP_VERIFY` | No | `false` | Disable TLS certificate verification for Pi-hole connections. Only for instances serving self-signed certificates — prefer a trusted certificate where possible. |
 | `TZ` | No | System timezone (UTC in Docker) | IANA timezone for rendered timestamps (e.g. `Australia/Adelaide`). Timezone data is embedded in the binary, so this works in the Docker image out of the box. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OpenTelemetry collector endpoint. Setting it enables tracing; ignored in slim builds. |
 
 Application passwords are recommended for automation — they bypass TOTP 2FA and can be revoked independently.
 
-`PIHOLE_RATE_LIMIT` and `PIHOLE_ALLOWED_ORIGINS` only apply to the `http` and `sse` transports; stdio is a single-process, single-user channel by definition and isn't gated.
+`PIHOLE_HTTP_AUTH_TOKEN`, `PIHOLE_HTTP_AUTH_TOKEN_FILE`, `PIHOLE_RATE_LIMIT`, `PIHOLE_ALLOWED_ORIGINS` and `PIHOLE_TRUSTED_PROXIES` only apply to the `http` and `sse` transports; stdio is a single-process, single-user channel by definition and isn't gated. See [Security](#security-http-and-sse-transports) before exposing either transport beyond loopback.
 
 ### Multiple instances
 
@@ -513,17 +516,72 @@ pihole-mcp -transport sse -address localhost:8080
 
 ### Security (HTTP and SSE transports)
 
-The `http` and `sse` transports apply two security middlewares to every request, in line with the MCP 2025-11-25 spec's DNS-rebinding protection guidance. stdio is unaffected (single-process, single-user).
+**The `http` and `sse` transports have no authentication until you configure one.** stdio is
+unaffected: it is a single-process, single-user channel by definition.
 
-- **Origin and Host validation.** Both headers must resolve to a host in `PIHOLE_ALLOWED_ORIGINS` (default loopback only). Missing `Origin` is allowed for non-browser MCP clients. Mismatches return HTTP 403. To expose pihole-mcp on a LAN, extend the allowlist:
+The default listen address is `localhost:8080`, so out of the box only this machine can reach the
+server. Change the bind address without setting a token and anyone who can reach the port can
+control your Pi-hole: disable blocking, rewrite your blocklists, read every DNS query on the
+network.
+
+- **Bearer authentication (recommended whenever the bind address is not loopback).** Set a shared
+  token and every request must carry it in an `Authorization: Bearer` header. Requests without it
+  are answered `401` before anything else runs. Tokens must be at least 16 characters.
+
+  ```bash
+  export PIHOLE_HTTP_AUTH_TOKEN="$(openssl rand -base64 32)"
+  # A bind beyond loopback needs the allowlist extended too, or clients reach a
+  # 403 from the Host check before the token is ever looked at.
+  export PIHOLE_ALLOWED_ORIGINS="localhost,127.0.0.1,[::1],192.168.1.10"
+  pihole-mcp -transport http -address 0.0.0.0:8080
+  ```
+
+  An environment variable set on a command line is visible in `ps` to every user on the host, so
+  the token can be read from a file instead. This is also the shape container platforms mount
+  secrets in:
+
+  ```bash
+  export PIHOLE_HTTP_AUTH_TOKEN_FILE=/run/secrets/pihole-mcp-token
+  ```
+
+  Set one or the other, not both. The token is compared in constant time, so a wrong token tells
+  an attacker nothing about how much of it was right. Rejected requests are charged to a separate
+  failed-authentication budget of roughly twenty attempts per address and then one a second, so the
+  token cannot be guessed at line rate, a flood of wrong tokens cannot starve a client at the same
+  address that does hold it, and the server logs the throttling once rather than once per attempt.
+
+  Binding a non-loopback address with no token logs an error at startup and carries on. It does not
+  refuse to start, because putting a reverse proxy that authenticates in front of it is a
+  legitimate deployment.
+
+- **Origin and Host validation.** Both headers must resolve to a host in `PIHOLE_ALLOWED_ORIGINS`
+  (default loopback only). Mismatches return `403`. Missing `Origin` is allowed, because non-browser
+  MCP clients do not send one.
+
+  **This is not authentication.** It is DNS-rebinding protection, and it only protects browsers: a
+  page a victim visits cannot make their browser attach an `Origin` the allowlist accepts. Both
+  headers are chosen by the caller, so any client that is not a browser sets them to whatever the
+  allowlist wants. Use `PIHOLE_HTTP_AUTH_TOKEN` for access control.
 
   ```bash
   export PIHOLE_ALLOWED_ORIGINS="localhost,127.0.0.1,[::1],pihole-mcp.lan"
   ```
 
-  The literal `*` disables enforcement entirely — only use it if you're behind a reverse proxy doing its own access control.
+  The literal `*` disables enforcement entirely. That is reasonable behind a reverse proxy, or with
+  a bearer token set, and not otherwise.
 
-- **Per-session rate limiting.** A token bucket keyed by `Mcp-Session-Id` (fallback to client IP) caps requests at `PIHOLE_RATE_LIMIT` per minute (default `120`, burst `max(120/4, 30)`). Throttled requests return HTTP 429 with `Retry-After: 1`. `0` disables.
+- **Rate limiting.** A token bucket per client address, with a second bucket per MCP session
+  underneath it. `PIHOLE_RATE_LIMIT` (default `120`, burst `max(120/4, 30)`) is the per-session
+  rate; one address may send four times that. Throttled requests return `429` with `Retry-After: 1`.
+  `0` disables.
+
+  The address ceiling is what actually bounds a caller, because `Mcp-Session-Id` is a header the
+  client writes: without a ceiling, a caller sending a fresh session id on every request would never
+  be limited at all. The header is also being removed from the transport in MCP revision
+  `2026-07-28`, after which the ceiling is the whole limiter. Every request is charged to the
+  ceiling first, including one the session bucket then rejects, so a client that is already being
+  throttled keeps drawing on the budget its neighbours share. IPv6 clients are counted per `/64`,
+  since a single host is routinely given a whole one.
 
   ```bash
   # Tighter limit for a small fleet
@@ -532,6 +590,20 @@ The `http` and `sse` transports apply two security middlewares to every request,
   # Disable (only when running behind a proxy with its own rate limit)
   export PIHOLE_RATE_LIMIT=0
   ```
+
+- **Behind a reverse proxy.** By default the client address is the connection's peer address, which
+  behind a proxy is the proxy itself, so every client through it shares one ceiling. Name the proxy
+  networks and `X-Forwarded-For` is used instead, taking the rightmost entry that is not itself a
+  listed proxy:
+
+  ```bash
+  export PIHOLE_TRUSTED_PROXIES="192.168.1.5"
+  ```
+
+  Nothing is trusted by default, deliberately: `X-Forwarded-For` is client-supplied, so a server
+  that believes it unconditionally lets any caller pick its own rate-limit bucket. **Every host
+  inside a prefix you list gets that power**, so name the individual proxies where you can and keep
+  any CIDR block as tight as the deployment allows. `10.0.0.0/8` trusts your whole network.
 
 ### OpenTelemetry
 
