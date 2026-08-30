@@ -215,17 +215,49 @@ func TestInfoMetrics_Normal(t *testing.T) {
 	}))
 
 	text := callTool(t, infoMetricsHandler, c, nil)
-	if !strings.Contains(text, "dns_cache_size") {
-		t.Errorf("expected 'dns_cache_size' key, got: %s", text)
+	want := "dhcp.leases_allocated: 15\n" +
+		"dhcp.leases_pruned: 3\n" +
+		"dns_cache_size: 10000\n" +
+		"reply_NODATA: 512\n"
+	if text != want {
+		t.Errorf("got:\n%s\nwant:\n%s", text, want)
 	}
-	if !strings.Contains(text, "reply_NODATA") {
-		t.Errorf("expected 'reply_NODATA' key, got: %s", text)
+	// Every metric FTL reports lives under a nested key, so the old
+	// "dhcp: 2 sub-keys" rendering meant the tool never returned a metric.
+	if strings.Contains(text, "sub-keys") {
+		t.Errorf("expected metric values rather than sub-key counts, got: %s", text)
 	}
-	if !strings.Contains(text, "dhcp") {
-		t.Errorf("expected 'dhcp' key, got: %s", text)
+}
+
+func TestInfoMetrics_MinimalNamesGroups(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/info/metrics": map[string]any{
+			"metrics": map[string]any{
+				"dns":  map[string]any{"cache": map[string]any{"size": 10000}},
+				"dhcp": map[string]any{"leases_allocated": 15},
+			},
+		},
+	}))
+
+	text := callTool(t, infoMetricsHandler, c, map[string]any{"detail": "minimal"})
+	if text != "Metric groups: dhcp, dns" {
+		t.Errorf("got %q, want the group names in sorted order", text)
 	}
-	if !strings.Contains(text, "sub-keys") {
-		t.Errorf("expected 'sub-keys' for nested map, got: %s", text)
+}
+
+// The real fixture is the shape that matters: a cache-hit number has to reach
+// the caller at the default detail level.
+func TestInfoMetrics_FixtureExposesCacheNumbers(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/info/metrics": loadFixture(t, "info_metrics"),
+	}))
+
+	text := callTool(t, infoMetricsHandler, c, nil)
+	if !strings.Contains(text, "dns.cache.size: ") {
+		t.Errorf("expected a dns.cache.size value, got: %s", text)
+	}
+	if strings.Contains(text, "sub-keys") {
+		t.Errorf("expected values rather than sub-key counts, got: %s", text)
 	}
 }
 
@@ -389,5 +421,37 @@ func TestInfoDatabase_EmptyFields(t *testing.T) {
 	text := callTool(t, infoDatabaseHandler, c, nil)
 	if !strings.Contains(text, "N/A") {
 		t.Errorf("expected N/A for empty SQLite version, got: %s", text)
+	}
+}
+
+func TestInfoMetrics_NormalEmptyMetrics(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/info/metrics": map[string]any{"metrics": map[string]any{}},
+	}))
+
+	if text := callTool(t, infoMetricsHandler, c, nil); text != "No metrics returned." {
+		t.Errorf("got %q, want a named empty result", text)
+	}
+}
+
+// FTL reports 0 for a timestamp it does not have yet. Rendering that through
+// the timestamp formatter would put 1970 in front of the caller.
+func TestInfoDatabase_ZeroTimestampsNotRendered(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/info/database": map[string]any{
+			"size": 90112, "queries": 27, "sqlite_version": "3.53.1",
+			"earliest_timestamp": 1783733685.9495127, "earliest_timestamp_disk": 0,
+		},
+	}))
+
+	text := callTool(t, infoDatabaseHandler, c, nil)
+	if !strings.Contains(text, "**Earliest query:**") {
+		t.Errorf("expected the earliest query date, got: %s", text)
+	}
+	if strings.Contains(text, "Earliest on disk") {
+		t.Errorf("reported an on-disk date FTL does not have yet: %s", text)
+	}
+	if strings.Contains(text, "1970") {
+		t.Errorf("rendered a zero timestamp as a date: %s", text)
 	}
 }

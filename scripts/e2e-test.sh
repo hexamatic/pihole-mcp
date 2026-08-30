@@ -182,6 +182,30 @@ call_tool_expect_absent() {
     esac
 }
 
+# call_tool_expect_error <name> <args> <label> <substring>
+# The call must FAIL, and its error text must contain <substring>. call_tool's
+# expect_error only proves something went wrong; a rejected parameter has to say
+# which parameter, or the caller cannot fix it.
+call_tool_expect_error() {
+    local name="$1"
+    local args="${2:-}"
+    [ -z "$args" ] && args='{}'
+    local label="${3:-$name}"
+    local want="$4"
+
+    run_tool "single" "$name" "$args"
+
+    if [ "$RESULT_IS_ERROR" != "True" ]; then
+        record_fail "$label" "expected an error, got: $RESULT_TEXT"
+        return 0
+    fi
+
+    case "$RESULT_TEXT" in
+        *"$want"*) record_pass "$label" ;;
+        *) record_fail "$label" "expected \"$want\" in error: $RESULT_TEXT" ;;
+    esac
+}
+
 # call_multi runs a tool against a multi-instance server (PIHOLE_1_*, PIHOLE_2_*).
 # A non-empty 4th argument inverts the result check (the call is expected to fail).
 call_multi() {
@@ -266,6 +290,10 @@ call_tool "pihole_info_dismiss_message" '{"id":999999}' "info_dismiss_message (u
 call_tool "pihole_info_client"
 call_tool "pihole_info_ftl"
 call_tool "pihole_info_metrics"
+# Every metric FTL reports is nested, so the old rendering counted sub-keys and
+# returned no metric. A cache number has to reach the caller.
+call_tool_expect "pihole_info_metrics" '{}' "info_metrics (returns a cache number)" "dns.cache."
+call_tool_expect "pihole_info_metrics" '{"detail":"minimal"}' "info_metrics (minimal names groups)" "Metric groups:"
 call_tool "pihole_info_sensors"
 
 echo ""
@@ -279,12 +307,28 @@ call_tool "pihole_queries_search" '{"length":3,"format":"csv"}' "queries_search 
 # question was answered, so this asserts only that the call succeeds; the wire
 # itself is pinned by TestQueriesSearch_EscapesFilterValues.
 call_tool "pihole_queries_search" '{"upstream":"8.8.8.8#53","length":3}' "queries_search (host#port upstream filter)"
+call_tool "pihole_queries_search" '{"length":3,"disk":true}' "queries_search (long-term database)"
+# A range before the database starts used to return a bare zero, which reads
+# exactly like a Pi-hole with no traffic.
+call_tool_expect "pihole_queries_search" '{"from":100000,"until":200000}' "queries_search (empty range explains itself)" "No queries matched"
+call_tool_expect_error "pihole_queries_search" '{"length":-5}' "queries_search (negative length names the parameter)" "'length'"
 call_tool "pihole_queries_suggestions"
+# The description leads with "known domains", and the handler used to list
+# every category except domains and client names.
+call_tool_expect "pihole_queries_suggestions" '{}' "queries_suggestions (lists domains)" "**Domains:**"
+call_tool_expect "pihole_queries_suggestions" '{}' "queries_suggestions (lists client names)" "**Client names:**"
+call_tool_expect_error "pihole_stats_top_domains" '{"count":-5}' "stats_top_domains (count=-5 names the parameter)" "'count'"
 
 echo ""
 echo "--- History ---"
 call_tool "pihole_history_graph"
+# The graph tools exist to return a time series and used to report only how
+# many slots there were.
+call_tool_expect "pihole_history_graph" '{"format":"csv"}' "history_graph (per-slot rows)" "Time,Total,Cached,Blocked,Forwarded"
+call_tool "pihole_history_graph" '{"detail":"full"}' "history_graph (full)"
 call_tool "pihole_history_clients" '{"count":3}'
+call_tool "pihole_history_clients" '{"count":3,"format":"csv"}' "history_clients (csv)"
+call_tool_expect_error "pihole_history_clients" '{"count":-5}' "history_clients (count=-5 names the parameter)" "'count'"
 call_tool "pihole_history_database" '{"from":1712300000,"until":1712400000}' "history_database (range)"
 call_tool "pihole_history_database" '{}' "history_database (default 7d)"
 call_tool "pihole_history_database_clients" '{"from":1712300000,"until":1712400000}' "history_database_clients (range)"
@@ -408,6 +452,11 @@ call_tool "pihole_lists_list"
 call_tool "pihole_lists_list" '{"detail":"minimal"}' "lists_list (minimal)"
 call_tool "pihole_lists_list" '{"detail":"full"}' "lists_list (full)"
 call_tool "pihole_lists_list" '{"format":"csv"}' "lists_list (csv)"
+call_tool "pihole_lists_list" '{"limit":1}' "lists_list (limit)"
+call_tool "pihole_clients_list" '{"limit":1,"offset":0}' "clients_list (limit/offset)"
+call_tool "pihole_groups_list" '{"limit":1,"format":"csv"}' "groups_list (limit + csv)"
+call_tool "pihole_dhcp_leases" '{"limit":1}' "dhcp_leases (limit)"
+call_tool_expect_error "pihole_domains_list" '{"limit":-5}' "domains_list (limit=-5 names the parameter)" "'limit'"
 # Full CRUD against an example.com address, which is reserved by RFC 2606 and
 # will never resolve, so gravity never fetches anything from it. The address
 # carries slashes on purpose: FTL takes the whole remainder after /api/lists as
@@ -439,7 +488,13 @@ call_tool_expect_absent "pihole_lists_list" '{}' "lists_list (batch-deleted list
 echo ""
 echo "--- Configuration ---"
 call_tool "pihole_config_get" '{"section":"dns"}' "config_get (dns)"
+# A tool that promises the full config has to be able to emit a configuration
+# value at the detail level callers get by default. It used to answer
+# "**dns:** 29 settings" and no value at all.
+call_tool_expect "pihole_config_get" '{"section":"dns"}' "config_get (dns returns an upstream)" "dns.upstreams:"
+call_tool_expect "pihole_config_get" '{"section":"dns"}' "config_get (dns returns the cache size)" "dns.cache.size:"
 call_tool "pihole_config_get" '{"detail":"minimal"}' "config_get (minimal)"
+call_tool_expect "pihole_config_get" '{"detail":"minimal"}' "config_get (minimal names sections sorted)" "Config sections: database, debug, dhcp, dns,"
 call_tool "pihole_config_get_value" '{"element":"dns.upstreams"}' "config_get_value (dns.upstreams)"
 # A plain probe value first, so the round trip is proven independently of the
 # escaping. 127.0.0.99 is in the loopback range and reaches nothing.

@@ -15,9 +15,11 @@ import (
 func RegisterDomains(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_domains_list",
 		mcp.WithTitleAnnotation("List Domain Rules"),
-		mcp.WithDescription("List domains on allow/deny lists. Filter by type (allow/deny) and kind (exact/regex). Use pihole_search_domains for cross-list search."),
+		mcp.WithDescription("List domains on allow/deny lists. Filter by type (allow/deny) and kind (exact/regex), page with limit/offset. Use pihole_search_domains for cross-list search."),
 		mcp.WithString("type", mcp.Description("Filter: 'allow' or 'deny'."), mcp.Enum("allow", "deny")),
 		mcp.WithString("kind", mcp.Description("Filter: 'exact' or 'regex'."), mcp.Enum("exact", "regex")),
+		limitParam,
+		offsetParam,
 		detailParam,
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -70,6 +72,13 @@ func domainsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		// Validate paging before the request: a bad parameter is a bad
+		// parameter whether or not the collection turns out to be empty,
+		// and an empty list is not an answer to limit=-5.
+		limit, offset, err := getPage(req, maxPageLimit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		path := "/domains"
 		if t := req.GetString("type", ""); t != "" {
 			path += "/" + t
@@ -87,40 +96,51 @@ func domainsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultText("No domains found."), nil
 		}
 
-		// Build structured output.
-		domains := make([]DomainOutput, len(result.Domains))
-		for i, d := range result.Domains {
-			domains[i] = DomainOutput{
-				Domain:  d.Domain,
-				Type:    d.Type,
-				Kind:    d.Kind,
-				Enabled: d.Enabled,
-				Comment: d.Comment,
+		total := len(result.Domains)
+		start, end := pageBounds(total, limit, offset)
+		page := result.Domains[start:end]
+
+		detail := getDetail(req)
+
+		// Count is always the size of the whole collection; Domains carries
+		// the page. At minimal the page is deliberately empty: the text was
+		// already one short line, while the structured content still shipped
+		// every gravity-sized entry behind it, so asking for less returned
+		// exactly as many bytes. The field stays present and non-nil so the
+		// declared output schema still matches.
+		domains := make([]DomainOutput, 0, len(page))
+		if detail != "minimal" {
+			for _, d := range page {
+				domains = append(domains, DomainOutput{
+					Domain:  d.Domain,
+					Type:    d.Type,
+					Kind:    d.Kind,
+					Enabled: d.Enabled,
+					Comment: d.Comment,
+				})
 			}
 		}
 		output := DomainsListOutput{
 			Domains: domains,
-			Count:   len(result.Domains),
+			Count:   total,
 		}
 
-		detail := getDetail(req)
-
 		if detail == "minimal" {
-			return mcp.NewToolResultStructured(output, fmt.Sprintf("%d domains.", len(result.Domains))), nil
+			return mcp.NewToolResultStructured(output, fmt.Sprintf("%d domains.", total)), nil
 		}
 
 		if wantCSV(req) {
 			headers := []string{"Domain", "Type", "Kind", "Enabled", "Comment"}
-			rows := make([][]string, 0, len(result.Domains))
-			for _, d := range result.Domains {
+			rows := make([][]string, 0, len(page))
+			for _, d := range page {
 				rows = append(rows, []string{d.Domain, d.Type, d.Kind, format.Bool(d.Enabled), d.Comment})
 			}
-			return mcp.NewToolResultStructured(output, format.CSV(headers, rows)), nil
+			return mcp.NewToolResultStructured(output, format.CSV(headers, rows)+format.Truncate(len(page), total)), nil
 		}
 
 		var b strings.Builder
-		fmt.Fprintf(&b, "**%d domains:**\n", len(result.Domains))
-		for _, d := range result.Domains {
+		b.WriteString(pageHeading("domains", len(page), total))
+		for _, d := range page {
 			status := "enabled"
 			if !d.Enabled {
 				status = "disabled"

@@ -1,6 +1,8 @@
 package format
 
 import (
+	"encoding/csv"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -114,6 +116,45 @@ func TestCSV(t *testing.T) {
 	}
 	if !strings.Contains(got, "1,2\n") {
 		t.Errorf("CSV missing row: %q", got)
+	}
+}
+
+// A comment is free text, so a comma, a double quote or a newline in one used
+// to splice itself straight into the row and change its column count. The
+// round trip is the assertion that matters: what a reader parses back has to
+// be the fields that went in.
+func TestCSV_QuotesAndRoundTrips(t *testing.T) {
+	headers := []string{"Domain", "Comment"}
+	rows := [][]string{
+		{"ads.example.com", "blocked, permanently"},
+		{"cdn.example.com", `he said "no"`},
+		{"api.example.com", "line one\nline two"},
+		{"plain.example.com", "nothing special"},
+	}
+
+	got := CSV(headers, rows)
+
+	if !strings.Contains(got, `"blocked, permanently"`) {
+		t.Errorf("comma field not quoted: %q", got)
+	}
+	if !strings.Contains(got, `"he said ""no"""`) {
+		t.Errorf("double quote not doubled: %q", got)
+	}
+
+	records, err := csv.NewReader(strings.NewReader(got)).ReadAll()
+	if err != nil {
+		t.Fatalf("output is not valid CSV: %v\n%s", err, got)
+	}
+	if len(records) != len(rows)+1 {
+		t.Fatalf("parsed %d records, want %d (header plus %d rows)", len(records), len(rows)+1, len(rows))
+	}
+	if !slices.Equal(records[0], headers) {
+		t.Errorf("header round-tripped as %q, want %q", records[0], headers)
+	}
+	for i, want := range rows {
+		if !slices.Equal(records[i+1], want) {
+			t.Errorf("row %d round-tripped as %q, want %q", i, records[i+1], want)
+		}
 	}
 }
 

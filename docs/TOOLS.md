@@ -103,14 +103,14 @@ Most recently blocked domains — useful for spotting new tracking domains or fa
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `count` | number | No | Number of domains (default 10). |
+| `count` | number | No | Number of domains (default 10, max 50). |
 | `format` | string | No | Output format: text (default) or csv. |
 
 ### `pihole_stats_database`
 
 *read-only*
 
-Long-term database statistics for a time range. Returns totals for queries, blocked, and clients.
+Long-term database statistics aggregated over a time range: one set of totals for queries, blocked and clients. Use pihole_history_database for the same range broken into time slots.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -192,7 +192,7 @@ _No parameters._
 
 *read-only*
 
-Query database details: file size, total stored queries, and SQLite version.
+Query database details: file size, total stored queries, SQLite version, and how far back the stored queries reach.
 
 _No parameters._
 
@@ -236,7 +236,7 @@ FTL engine process info: PID, privacy level, client and domain counts, and datab
 
 *read-only*
 
-Live DNS and DHCP operational metrics including cache contents, reply counts, and lease statistics.
+Live DNS and DHCP operational metrics as dotted key/value lines: cache size, inserts, evictions, reply counts and lease statistics.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -256,7 +256,7 @@ _No parameters._
 
 *read-only*
 
-Search DNS query log with filters by domain, client, type, status, and time range. Returns 25 most recent by default with cursor pagination.
+Search DNS query log with filters by domain, client, type, status, and time range. Returns 25 most recent by default with cursor pagination. Set disk=true to search the long-term database for anything older than FTL's in-memory window.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -264,6 +264,7 @@ Search DNS query log with filters by domain, client, type, status, and time rang
 | `client_name` | string | No | Client hostname filter. |
 | `cursor` | number | No | Cursor from previous response for next page. |
 | `detail` | string | No | Response detail: minimal, normal (default), or full. |
+| `disk` | boolean | No | Search the on-disk long-term database instead of FTL's in-memory window. Required for historical ranges; slower. |
 | `dnssec` | string | No | DNSSEC status: SECURE, INSECURE, etc. |
 | `domain` | string | No | Domain filter (wildcards * supported). |
 | `format` | string | No | Output format: text (default) or csv. |
@@ -279,9 +280,11 @@ Search DNS query log with filters by domain, client, type, status, and time rang
 
 *read-only*
 
-Available filter values for pihole_queries_search: known domains, clients, types, statuses, and reply types.
+Available filter values for pihole_queries_search: known domains, client addresses and names, upstreams, query types, statuses, reply types and DNSSEC states.
 
-_No parameters._
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `limit` | number | No | Maximum values to list per category (default 50). |
 
 ## History
 
@@ -289,28 +292,35 @@ _No parameters._
 
 *read-only*
 
-In-memory query activity (FTL memory, last ~24h): total/cached/blocked/forwarded per slot. For arbitrary date ranges, use pihole_history_database.
+In-memory query activity (FTL memory, last ~24h): total/cached/blocked/forwarded per time slot. detail=full or format=csv returns every slot. For arbitrary date ranges, use pihole_history_database.
 
-_No parameters._
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `detail` | string | No | Response detail: minimal, normal (default), or full. |
+| `format` | string | No | Output format: text (default) or csv. |
 
 ### `pihole_history_clients`
 
 *read-only*
 
-In-memory per-client query activity (FTL memory, last ~24h). For arbitrary date ranges, use pihole_history_database_clients.
+In-memory per-client query activity (FTL memory, last ~24h), busiest client first. detail=full returns the per-slot time series. For arbitrary date ranges, use pihole_history_database_clients.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `count` | number | No | Max clients to return (default 10, 0=all). |
+| `count` | number | No | Max clients to return (default 10, 0 for all). |
+| `detail` | string | No | Response detail: minimal, normal (default), or full. |
+| `format` | string | No | Output format: text (default) or csv. |
 
 ### `pihole_history_database`
 
 *read-only*
 
-Long-term query activity from the FTL database (durable, arbitrary date range). Returns time-bucketed totals for total/cached/blocked/forwarded queries.
+Long-term query activity from the FTL database as a time series: one bucket per slot across the range. Use pihole_stats_database instead for a single set of totals over the whole range.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
+| `detail` | string | No | Response detail: minimal, normal (default), or full. |
+| `format` | string | No | Output format: text (default) or csv. |
 | `from` | number | No | Start Unix timestamp (default: 7 days ago). |
 | `until` | number | No | End Unix timestamp (default: now). |
 
@@ -318,10 +328,12 @@ Long-term query activity from the FTL database (durable, arbitrary date range). 
 
 *read-only*
 
-Long-term per-client query activity from the FTL database (durable, arbitrary date range).
+Long-term per-client query activity from the FTL database (durable, arbitrary date range), busiest client first. detail=full returns the per-slot time series.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
+| `detail` | string | No | Response detail: minimal, normal (default), or full. |
+| `format` | string | No | Output format: text (default) or csv. |
 | `from` | number | No | Start Unix timestamp (default: 7 days ago). |
 | `until` | number | No | End Unix timestamp (default: now). |
 
@@ -345,13 +357,15 @@ Search for a domain across all allow/deny lists and gravity blocklists. Use befo
 
 *read-only · structured output*
 
-List domains on allow/deny lists. Filter by type (allow/deny) and kind (exact/regex). Use pihole_search_domains for cross-list search.
+List domains on allow/deny lists. Filter by type (allow/deny) and kind (exact/regex), page with limit/offset. Use pihole_search_domains for cross-list search.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `detail` | string | No | Response detail: minimal, normal (default), or full. |
 | `format` | string | No | Output format: text (default) or csv. |
 | `kind` | string | No | Filter: 'exact' or 'regex'. |
+| `limit` | number | No | Maximum entries to return. Default 0, meaning all. |
+| `offset` | number | No | Entries to skip before returning results, for paging with limit. Default 0. |
 | `type` | string | No | Filter: 'allow' or 'deny'. |
 
 ### `pihole_domains_add`
@@ -410,11 +424,14 @@ Remove multiple domains at once. Each item needs domain, type (allow/deny), and 
 
 *read-only*
 
-List groups used for organising domains and clients into sets with independent blocking rules.
+List groups used for organising domains and clients into sets with independent blocking rules. Page with limit/offset.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
+| `format` | string | No | Output format: text (default) or csv. |
+| `limit` | number | No | Maximum entries to return. Default 0, meaning all. |
 | `name` | string | No | Specific group name to look up. |
+| `offset` | number | No | Entries to skip before returning results, for paging with limit. Default 0. |
 
 ### `pihole_groups_add`
 
@@ -467,12 +484,14 @@ Delete multiple groups at once. Provide a JSON array of group names.
 
 *read-only*
 
-List configured clients with their group assignments. Clients can be identified by IP, MAC, hostname, subnet, or interface.
+List configured clients with their group assignments, paged with limit/offset. Clients can be identified by IP, MAC, hostname, subnet, or interface.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `client` | string | No | Specific client to look up (IP, MAC, hostname). |
 | `format` | string | No | Output format: text (default) or csv. |
+| `limit` | number | No | Maximum entries to return. Default 0, meaning all. |
+| `offset` | number | No | Entries to skip before returning results, for paging with limit. Default 0. |
 
 ### `pihole_clients_suggestions`
 
@@ -530,12 +549,14 @@ Remove multiple configured clients at once. Each item needs the client identifie
 
 *read-only*
 
-List configured blocklists and allowlists with domain counts and update status. Filter by type (allow/block).
+List configured blocklists and allowlists with domain counts and update status. Filter by type (allow/block), page with limit/offset.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `detail` | string | No | Response detail: minimal, normal (default), or full. |
 | `format` | string | No | Output format: text (default) or csv. |
+| `limit` | number | No | Maximum entries to return. Default 0, meaning all. |
+| `offset` | number | No | Entries to skip before returning results, for paging with limit. Default 0. |
 | `type` | string | No | Filter: 'allow' or 'block'. |
 
 ### `pihole_lists_add`
@@ -591,7 +612,7 @@ Unsubscribe from multiple lists at once. Each item needs URL and type (allow/blo
 
 *read-only*
 
-Get Pi-hole configuration. Specify a section (dns, webserver, dhcp, etc.) for a subset, or omit for full config.
+Get Pi-hole configuration as dotted key/value lines. Name a section (dns, webserver, dhcp) for a subset, or omit for everything. detail=minimal lists section names; detail=full returns raw JSON.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -749,11 +770,13 @@ Permanently delete a network device record by ID. Use pihole_network_devices fir
 
 *read-only*
 
-Active DHCP leases: IP, hostname, MAC address, and expiry. Empty if Pi-hole's DHCP server is disabled.
+Active DHCP leases: IP, hostname, MAC address, and expiry, paged with limit/offset. Empty if Pi-hole's DHCP server is disabled.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `format` | string | No | Output format: text (default) or csv. |
+| `limit` | number | No | Maximum entries to return. Default 0, meaning all. |
+| `offset` | number | No | Entries to skip before returning results, for paging with limit. Default 0. |
 
 ### `pihole_dhcp_delete_lease`
 

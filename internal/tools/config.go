@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/hexamatic/pihole-mcp/internal/format"
@@ -16,7 +17,7 @@ import (
 func RegisterConfig(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_config_get",
 		mcp.WithTitleAnnotation("Get Configuration"),
-		mcp.WithDescription("Get Pi-hole configuration. Specify a section (dns, webserver, dhcp, etc.) for a subset, or omit for full config."),
+		mcp.WithDescription("Get Pi-hole configuration as dotted key/value lines. Name a section (dns, webserver, dhcp) for a subset, or omit for everything. detail=minimal lists section names; detail=full returns raw JSON."),
 		mcp.WithString("section", mcp.Description("Config section: dns, webserver, dhcp, files, misc, etc.")),
 		detailParam,
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -92,22 +93,20 @@ func configGetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			for k := range result.Config {
 				sections = append(sections, k)
 			}
+			sort.Strings(sections)
 			return mcp.NewToolResultText(fmt.Sprintf("Config sections: %s", strings.Join(sections, ", "))), nil
 		}
 
 		if detail == "normal" {
-			var b strings.Builder
-			for section, value := range result.Config {
-				switch v := value.(type) {
-				case map[string]any:
-					fmt.Fprintf(&b, "**%s:** %d settings\n", section, len(v))
-				case []any:
-					fmt.Fprintf(&b, "**%s:** %d items\n", section, len(v))
-				default:
-					fmt.Fprintf(&b, "**%s:** %v\n", section, v)
-				}
+			// One dotted line per setting. The old normal detail counted the
+			// keys in each section and printed the counts, so a tool whose
+			// description promises the full config could not emit a single
+			// configuration value at the level callers get by default.
+			flat := flattenTree(result.Config)
+			if flat == "" {
+				return mcp.NewToolResultText("No configuration returned."), nil
 			}
-			return mcp.NewToolResultText(b.String()), nil
+			return mcp.NewToolResultText(flat), nil
 		}
 
 		// full: JSON dump
@@ -317,6 +316,7 @@ func configPropertiesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 
 		ros := result.Config.ReadOnly
+		sort.Slice(ros, func(i, j int) bool { return ros[i].Key < ros[j].Key })
 		if len(ros) == 0 {
 			return mcp.NewToolResultText("No read-only config keys reported."), nil
 		}

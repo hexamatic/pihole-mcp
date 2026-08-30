@@ -3,6 +3,7 @@
 package format
 
 import (
+	"encoding/csv"
 	"fmt"
 	"net/url"
 	"strings"
@@ -83,18 +84,22 @@ func TimestampIn(unix float64, loc *time.Location) string {
 
 // CSV renders comma-separated values from headers and rows.
 // ~29% fewer tokens than Markdown tables for tabular data.
+//
+// Fields go through encoding/csv, so a comment carrying a comma, a double
+// quote or a newline is quoted per RFC 4180 rather than splicing itself into
+// extra columns. Joining the fields by hand produced a row whose column count
+// depended on the data, which a reader has no way to detect.
 func CSV(headers []string, rows [][]string) string {
 	if len(rows) == 0 {
 		return "No data"
 	}
 
 	var b strings.Builder
-	b.WriteString(strings.Join(headers, ","))
-	b.WriteString("\n")
-	for _, row := range rows {
-		b.WriteString(strings.Join(row, ","))
-		b.WriteString("\n")
-	}
+	w := csv.NewWriter(&b)
+	// A strings.Builder never fails a write, so the only error csv.Writer can
+	// report here is one it cannot produce.
+	_ = w.Write(headers)
+	_ = w.WriteAll(rows)
 	return b.String()
 }
 

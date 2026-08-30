@@ -15,8 +15,10 @@ import (
 func RegisterClients(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_clients_list",
 		mcp.WithTitleAnnotation("List Clients"),
-		mcp.WithDescription("List configured clients with their group assignments. Clients can be identified by IP, MAC, hostname, subnet, or interface."),
+		mcp.WithDescription("List configured clients with their group assignments, paged with limit/offset. Clients can be identified by IP, MAC, hostname, subnet, or interface."),
 		mcp.WithString("client", mcp.Description("Specific client to look up (IP, MAC, hostname).")),
+		limitParam,
+		offsetParam,
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 	), clientsListHandler(r))
@@ -65,6 +67,13 @@ func clientsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		// Validate paging before the request: a bad parameter is a bad
+		// parameter whether or not the collection turns out to be empty,
+		// and an empty list is not an answer to limit=-5.
+		limit, offset, err := getPage(req, maxPageLimit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		path := "/clients"
 		if client := req.GetString("client", ""); client != "" {
 			path += "/" + pihole.EscapePathSegment(client)
@@ -79,18 +88,22 @@ func clientsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultText("No configured clients."), nil
 		}
 
+		total := len(result.Clients)
+		start, end := pageBounds(total, limit, offset)
+		page := result.Clients[start:end]
+
 		if wantCSV(req) {
 			headers := []string{"Client", "Name", "Comment", "Groups"}
-			rows := make([][]string, 0, len(result.Clients))
-			for _, cl := range result.Clients {
+			rows := make([][]string, 0, len(page))
+			for _, cl := range page {
 				rows = append(rows, []string{cl.Client, cl.Name, cl.Comment, fmt.Sprintf("%v", cl.Groups)})
 			}
-			return mcp.NewToolResultText(format.CSV(headers, rows)), nil
+			return mcp.NewToolResultText(format.CSV(headers, rows) + format.Truncate(len(page), total)), nil
 		}
 
 		var b strings.Builder
-		fmt.Fprintf(&b, "**%d clients:**\n", len(result.Clients))
-		for _, cl := range result.Clients {
+		b.WriteString(pageHeading("clients", len(page), total))
+		for _, cl := range page {
 			fmt.Fprintf(&b, "- %s", cl.Client)
 			if cl.Name != "" {
 				fmt.Fprintf(&b, " (%s)", cl.Name)

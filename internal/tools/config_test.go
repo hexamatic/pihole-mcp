@@ -41,11 +41,64 @@ func TestConfigGet_Normal(t *testing.T) {
 	}))
 
 	text := callTool(t, configGetHandler, c, nil)
-	if !strings.Contains(text, "**dns:**") {
-		t.Errorf("expected section summary, got: %s", text)
+	if !strings.Contains(text, "dns.blocking.active: true") {
+		t.Errorf("expected the flattened setting and its value, got: %s", text)
 	}
-	if !strings.Contains(text, "1 settings") {
-		t.Errorf("expected settings count, got: %s", text)
+	// The old normal detail rendered "**dns:** 1 settings", which is a count of
+	// the answer rather than the answer. A tool promising the full config has
+	// to be able to emit a configuration value.
+	if strings.Contains(text, "settings") {
+		t.Errorf("expected values rather than a per-section count, got: %s", text)
+	}
+}
+
+// Two identical calls have to produce identical bytes. The renderer used to
+// range over the config map directly, so section order changed per call and a
+// reader had no way to tell a reordering from a change.
+func TestConfigGet_NormalIsDeterministic(t *testing.T) {
+	routes := map[string]any{
+		"/config": map[string]any{
+			"config": map[string]any{
+				"webserver": map[string]any{"port": "80", "threads": 50},
+				"dns":       map[string]any{"upstreams": []any{"8.8.8.8#53", "1.1.1.1"}},
+				"dhcp":      map[string]any{"active": false},
+				"misc":      map[string]any{},
+			},
+		},
+	}
+
+	first := callTool(t, configGetHandler, newTestClient(t, piholeHandler(routes)), nil)
+	for i := range 8 {
+		got := callTool(t, configGetHandler, newTestClient(t, piholeHandler(routes)), nil)
+		if got != first {
+			t.Fatalf("call %d rendered different bytes:\n%s\nwant:\n%s", i, got, first)
+		}
+	}
+
+	want := "dhcp.active: false\n" +
+		"dns.upstreams: [\"8.8.8.8#53\",\"1.1.1.1\"]\n" +
+		"misc: {}\n" +
+		"webserver.port: 80\n" +
+		"webserver.threads: 50\n"
+	if first != want {
+		t.Errorf("rendered:\n%s\nwant:\n%s", first, want)
+	}
+}
+
+func TestConfigGet_MinimalListsSectionsSorted(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/config": map[string]any{
+			"config": map[string]any{
+				"webserver": map[string]any{"port": "80"},
+				"dns":       map[string]any{"active": true},
+				"dhcp":      map[string]any{"active": false},
+			},
+		},
+	}))
+
+	text := callTool(t, configGetHandler, c, map[string]any{"detail": "minimal"})
+	if text != "Config sections: dhcp, dns, webserver" {
+		t.Errorf("got %q, want the section names in sorted order", text)
 	}
 }
 
@@ -541,4 +594,16 @@ func TestConfigSet_DoublyWrappedPayloadIsNotSentWrapped(t *testing.T) {
 	req := rec.Only(t, "PATCH", "/config")
 	req.AssertField(t, "config.dns.cache.size", 10001)
 	req.AssertNoField(t, "config.config")
+}
+
+// A config response with nothing in it must say so rather than render as an
+// empty string, which a caller cannot distinguish from a failed read.
+func TestConfigGet_NormalEmptyConfig(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/config": map[string]any{"config": map[string]any{}},
+	}))
+
+	if text := callTool(t, configGetHandler, c, nil); text != "No configuration returned." {
+		t.Errorf("got %q, want a named empty result", text)
+	}
 }

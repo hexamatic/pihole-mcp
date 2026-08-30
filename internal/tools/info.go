@@ -31,7 +31,7 @@ func RegisterInfo(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_info_database",
 		mcp.WithTitleAnnotation("Database Info"),
-		mcp.WithDescription("Query database details: file size, total stored queries, and SQLite version."),
+		mcp.WithDescription("Query database details: file size, total stored queries, SQLite version, and how far back the stored queries reach."),
 		mcp.WithReadOnlyHintAnnotation(true),
 	), infoDatabaseHandler(r))
 
@@ -64,7 +64,7 @@ func RegisterInfo(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_info_metrics",
 		mcp.WithTitleAnnotation("Operational Metrics"),
-		mcp.WithDescription("Live DNS and DHCP operational metrics including cache contents, reply counts, and lease statistics."),
+		mcp.WithDescription("Live DNS and DHCP operational metrics as dotted key/value lines: cache size, inserts, evictions, reply counts and lease statistics."),
 		detailParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 	), infoMetricsHandler(r))
@@ -193,9 +193,21 @@ func infoDatabaseHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		size := format.SizeWithUnit(db.Size, db.Unit)
 		sqlite := format.ValueOr(db.SQLite, "N/A")
 
-		return mcp.NewToolResultText(fmt.Sprintf(
-			"**Size:** %s | **Queries:** %s | **SQLite:** %s",
-			size, format.Number(db.Queries), sqlite)), nil
+		var b strings.Builder
+		fmt.Fprintf(&b, "**Size:** %s | **Queries:** %s | **SQLite:** %s",
+			size, format.Number(db.Queries), sqlite)
+		// How far back the database reaches decides whether a historical query
+		// search can succeed at all, so report it here rather than leaving the
+		// caller to discover it from an empty result.
+		if db.EarliestTimestamp > 0 {
+			fmt.Fprintf(&b, "\n**Earliest query:** %s", format.Timestamp(db.EarliestTimestamp))
+		}
+		if db.EarliestTimestampDisk > 0 {
+			fmt.Fprintf(&b, "\n**Earliest on disk:** %s (%s queries)",
+				format.Timestamp(db.EarliestTimestampDisk), format.Number(db.QueriesDisk))
+		}
+
+		return mcp.NewToolResultText(b.String()), nil
 	}
 }
 
@@ -318,8 +330,13 @@ func infoMetricsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		detail := getDetail(req)
 
 		if detail == "minimal" {
+			keys := make([]string, 0, len(metrics.Metrics))
+			for k := range metrics.Metrics {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
 			return mcp.NewToolResultText(fmt.Sprintf(
-				"Metrics: %d top-level keys", len(metrics.Metrics))), nil
+				"Metric groups: %s", strings.Join(keys, ", "))), nil
 		}
 
 		if detail == "full" {
@@ -334,24 +351,15 @@ func infoMetricsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultText(b.String()), nil
 		}
 
-		// normal: key-value pairs
-		keys := make([]string, 0, len(metrics.Metrics))
-		for k := range metrics.Metrics {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		var b strings.Builder
-		for _, k := range keys {
-			v := metrics.Metrics[k]
-			if nested, ok := v.(map[string]any); ok {
-				fmt.Fprintf(&b, "**%s:** %d sub-keys\n", k, len(nested))
-			} else {
-				fmt.Fprintf(&b, "**%s:** %v\n", k, v)
-			}
+		// normal: one dotted line per metric. Every metric FTL reports lives
+		// one or two levels down (dns.cache.*, dhcp.*), so summarising the top
+		// level as "N sub-keys" meant the tool returned no metrics at all.
+		flat := flattenTree(metrics.Metrics)
+		if flat == "" {
+			return mcp.NewToolResultText("No metrics returned."), nil
 		}
 
-		return mcp.NewToolResultText(b.String()), nil
+		return mcp.NewToolResultText(flat), nil
 	}
 }
 

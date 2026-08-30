@@ -150,3 +150,211 @@ func TestHistoryDatabaseClients_Normal(t *testing.T) {
 		t.Errorf("expected 'other clients' bucket, got: %s", text)
 	}
 }
+
+// The graph tools exist to return a time series and threw all of it away,
+// reporting only how many slots there were. It is ~3.5 KB for a full day, so
+// it is opt-in, but it has to be reachable.
+func TestHistoryGraph_FullEmitsEverySlot(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/history": map[string]any{
+			"history": []any{
+				map[string]any{"timestamp": 1700000000, "total": 10, "cached": 4, "blocked": 3, "forwarded": 3},
+				map[string]any{"timestamp": 1700000600, "total": 20, "cached": 8, "blocked": 6, "forwarded": 6},
+			},
+		},
+	}))
+
+	normal := callTool(t, historyGraphHandler, c, nil)
+	if strings.Contains(normal, "Time,Total") {
+		t.Errorf("normal detail should stay a summary, got: %s", normal)
+	}
+
+	full := callTool(t, historyGraphHandler, c, map[string]any{"detail": "full"})
+	if !strings.Contains(full, "Time,Total,Cached,Blocked,Forwarded") {
+		t.Errorf("expected per-slot rows at detail=full, got: %s", full)
+	}
+	if !strings.Contains(full, ",20,8,6,6") {
+		t.Errorf("expected the second slot's counts, got: %s", full)
+	}
+
+	csv := callTool(t, historyGraphHandler, c, map[string]any{"format": "csv"})
+	if !strings.HasPrefix(csv, "Time,Total,Cached,Blocked,Forwarded") {
+		t.Errorf("expected bare CSV at format=csv, got: %s", csv)
+	}
+}
+
+// Ranging over the client map meant two identical calls listed the same
+// clients in a different order, which reads as movement in the data.
+func TestHistoryClients_SortedByTotal(t *testing.T) {
+	routes := map[string]any{
+		"/history/clients": map[string]any{
+			"clients": map[string]any{
+				"192.168.1.10": map[string]any{"name": "desktop", "total": 5},
+				"192.168.1.20": map[string]any{"name": nil, "total": 90},
+				"192.168.1.30": map[string]any{"name": nil, "total": 5},
+			},
+			"history": []any{},
+		},
+	}
+
+	first := callTool(t, historyClientsHandler, newTestClient(t, piholeHandler(routes)), nil)
+	want := "**3 clients:**\n" +
+		"- 192.168.1.20 — 90 queries\n" +
+		"- desktop (192.168.1.10) — 5 queries\n" +
+		"- 192.168.1.30 — 5 queries\n"
+	if first != want {
+		t.Errorf("got:\n%s\nwant busiest first, ties by client:\n%s", first, want)
+	}
+
+	for i := range 8 {
+		got := callTool(t, historyClientsHandler, newTestClient(t, piholeHandler(routes)), nil)
+		if got != first {
+			t.Fatalf("call %d rendered a different order:\n%s", i, got)
+		}
+	}
+}
+
+func TestHistoryClients_FullEmitsTheSeries(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/history/clients": map[string]any{
+			"clients": map[string]any{
+				"192.168.1.10": map[string]any{"name": "desktop", "total": 7},
+				"192.168.1.20": map[string]any{"name": nil, "total": 3},
+			},
+			"history": []any{
+				map[string]any{"timestamp": 1700000000, "data": map[string]any{"192.168.1.10": 4, "192.168.1.20": 1}},
+				map[string]any{"timestamp": 1700000600, "data": map[string]any{"192.168.1.10": 3, "192.168.1.20": 2}},
+			},
+		},
+	}))
+
+	full := callTool(t, historyClientsHandler, c, map[string]any{"detail": "full"})
+	if !strings.HasPrefix(full, "Time,desktop (192.168.1.10),192.168.1.20\n") {
+		t.Errorf("expected one column per client, busiest first, got: %s", full)
+	}
+	if !strings.Contains(full, ",3,2\n") {
+		t.Errorf("expected the second slot's per-client counts, got: %s", full)
+	}
+}
+
+func TestHistoryClients_NegativeCountIsNamedError(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/history/clients": map[string]any{"clients": map[string]any{}, "history": []any{}},
+	}))
+
+	msg := callToolExpectError(t, historyClientsHandler, c, map[string]any{"count": -5})
+	if !strings.Contains(msg, "'count'") {
+		t.Errorf("error %q does not name the parameter", msg)
+	}
+}
+
+// detail=full asks for the series. Saying so when there is none beats an
+// empty table that reads as "no traffic".
+func TestHistoryClients_FullWithNoSeries(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/history/clients": map[string]any{
+			"clients": map[string]any{
+				"192.168.1.10": map[string]any{"name": nil, "total": 7},
+			},
+			"history": []any{},
+		},
+	}))
+
+	text := callTool(t, historyClientsHandler, c, map[string]any{"detail": "full"})
+	if text != "No per-slot client history returned." {
+		t.Errorf("got %q, want a named empty series", text)
+	}
+}
+
+func TestHistoryClients_Minimal(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/history/clients": map[string]any{
+			"clients": map[string]any{
+				"192.168.1.10": map[string]any{"name": nil, "total": 7},
+				"192.168.1.20": map[string]any{"name": nil, "total": 3},
+			},
+			"history": []any{},
+		},
+	}))
+
+	if text := callTool(t, historyClientsHandler, c, map[string]any{"detail": "minimal"}); text != "**2 clients.**\n" {
+		t.Errorf("got %q, want a single-line count", text)
+	}
+}
+
+func TestHistoryDatabase_CSVEmitsSlots(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/history/database": map[string]any{
+			"history": []any{
+				map[string]any{"timestamp": 1700000000, "total": 11, "cached": 5, "blocked": 3, "forwarded": 3},
+				map[string]any{"timestamp": 1700086400, "total": 22, "cached": 9, "blocked": 7, "forwarded": 6},
+			},
+		},
+	}))
+
+	text := callTool(t, historyDatabaseHandler, c, map[string]any{"format": "csv"})
+	if !strings.HasPrefix(text, "Time,Total,Cached,Blocked,Forwarded\n") {
+		t.Errorf("expected per-slot CSV, got: %s", text)
+	}
+	if !strings.Contains(text, ",22,9,7,6") {
+		t.Errorf("expected the second bucket's counts, got: %s", text)
+	}
+}
+
+func TestHistoryClients_CSV(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/history/clients": map[string]any{
+			"clients": map[string]any{
+				"192.168.1.10": map[string]any{"name": "desktop", "total": 7},
+				"192.168.1.20": map[string]any{"name": nil, "total": 3},
+			},
+			"history": []any{},
+		},
+	}))
+
+	text := callTool(t, historyClientsHandler, c, map[string]any{"format": "csv"})
+	want := "Client,Name,Queries\n192.168.1.10,desktop,7\n192.168.1.20,,3\n"
+	if text != want {
+		t.Errorf("got:\n%s\nwant:\n%s", text, want)
+	}
+}
+
+// The long-term endpoint names its clients by address but keys its per-slot
+// buckets by database row id, so those ids are not clients. Deriving clients
+// from the series here invented two named "1" and "2" alongside the real
+// 127.0.0.1. Verified against FTL v6.7.
+func TestHistoryDatabaseClients_DoesNotInventClientsFromBucketIDs(t *testing.T) {
+	routes := map[string]any{
+		"/history/database/clients": map[string]any{
+			"clients": map[string]any{
+				"127.0.0.1": map[string]any{"name": ""},
+			},
+			"history": []any{
+				map[string]any{"timestamp": 1788092400, "data": map[string]any{"1": 1, "2": 1}},
+			},
+		},
+	}
+	c := newTestClient(t, piholeHandler(routes))
+
+	text := callTool(t, historyDatabaseClientsHandler, c, nil)
+	if !strings.Contains(text, "**1 clients:**") {
+		t.Errorf("expected only the declared client, got: %s", text)
+	}
+	for _, invented := range []string{"- 1 —", "- 2 —"} {
+		if strings.Contains(text, invented) {
+			t.Errorf("invented a client from a bucket id (%q) in: %s", invented, text)
+		}
+	}
+	// The counts must not simply vanish either.
+	if !strings.Contains(text, "does not map to a client address (1, 2)") {
+		t.Errorf("expected the unattributed-bucket note, got: %s", text)
+	}
+
+	full := callTool(t, historyDatabaseClientsHandler, c, map[string]any{"detail": "full"})
+	if !strings.Contains(full, "Time,127.0.0.1,bucket 1,bucket 2") {
+		t.Errorf("expected buckets under their own keys, got: %s", full)
+	}
+	if !strings.Contains(full, ",0,1,1") {
+		t.Errorf("expected the bucket counts, got: %s", full)
+	}
+}

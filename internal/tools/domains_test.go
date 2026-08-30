@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -451,4 +453,128 @@ func TestDomainsAdd_AlwaysSendsCommentAndEnabled(t *testing.T) {
 	req.AssertBodyKeys(t, "domain", "comment", "enabled")
 	req.AssertField(t, "enabled", true)
 	req.AssertField(t, "comment", "")
+}
+
+// domainRoutes builds a /domains response with n synthetic entries.
+func domainRoutes(n int) map[string]any {
+	entries := make([]any, 0, n)
+	for i := range n {
+		entries = append(entries, map[string]any{
+			"domain": fmt.Sprintf("d%03d.example.com", i), "type": "deny", "kind": "exact",
+			"enabled": true, "comment": "", "id": i + 1, "groups": []any{0},
+		})
+	}
+	return map[string]any{"/domains": map[string]any{"domains": entries}}
+}
+
+// A gravity-backed deny list runs to thousands of entries, and without paging
+// the only choice was the whole thing.
+func TestDomainsList_LimitAndOffset(t *testing.T) {
+	c := newTestClient(t, piholeHandler(domainRoutes(50)))
+
+	res := callToolResult(t, domainsListHandler, c, map[string]any{"limit": 5, "offset": 10})
+	out, ok := res.StructuredContent.(DomainsListOutput)
+	if !ok {
+		t.Fatalf("expected DomainsListOutput, got %T", res.StructuredContent)
+	}
+	if len(out.Domains) != 5 {
+		t.Errorf("returned %d domains, want the 5 asked for", len(out.Domains))
+	}
+	if out.Count != 50 {
+		t.Errorf("Count = %d, want the collection total 50", out.Count)
+	}
+	if out.Domains[0].Domain != "d010.example.com" {
+		t.Errorf("first domain = %q, want the entry at offset 10", out.Domains[0].Domain)
+	}
+
+	text := textOf(t, res)
+	if !strings.Contains(text, "5 of 50 domains") {
+		t.Errorf("expected the page and the total in the heading, got: %s", text)
+	}
+}
+
+// An offset past the end is a caller paging off the end of the list, not an
+// error, and it must not panic on the slice bounds.
+func TestDomainsList_OffsetPastEnd(t *testing.T) {
+	c := newTestClient(t, piholeHandler(domainRoutes(3)))
+
+	text := callTool(t, domainsListHandler, c, map[string]any{"offset": 99})
+	if !strings.Contains(text, "0 of 3 domains") {
+		t.Errorf("expected an empty page naming the total, got: %s", text)
+	}
+}
+
+// detail=minimal used to return a 14-character text block with every entry
+// still attached as structured content, so asking for less returned exactly as
+// many bytes. The field has to stay present and non-nil: the tool declares an
+// output schema and dropping it would break the contract.
+func TestDomainsList_MinimalShipsNoEntries(t *testing.T) {
+	c := newTestClient(t, piholeHandler(domainRoutes(40)))
+
+	res := callToolResult(t, domainsListHandler, c, map[string]any{"detail": "minimal"})
+	out, ok := res.StructuredContent.(DomainsListOutput)
+	if !ok {
+		t.Fatalf("expected DomainsListOutput, got %T", res.StructuredContent)
+	}
+	if len(out.Domains) != 0 {
+		t.Errorf("minimal shipped %d entries, want none", len(out.Domains))
+	}
+	if out.Domains == nil {
+		t.Error("Domains is nil; it must marshal as [] to match the declared schema")
+	}
+	if out.Count != 40 {
+		t.Errorf("Count = %d, want 40", out.Count)
+	}
+
+	blob, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(blob), `"domains":[]`) {
+		t.Errorf("marshalled as %s, want an empty domains array", blob)
+	}
+}
+
+func TestDomainsList_NegativeLimitIsNamedError(t *testing.T) {
+	c := newTestClient(t, piholeHandler(domainRoutes(3)))
+
+	msg := callToolExpectError(t, domainsListHandler, c, map[string]any{"limit": -5})
+	if !strings.Contains(msg, "'limit'") {
+		t.Errorf("error %q does not name the parameter", msg)
+	}
+}
+
+// A bad parameter is a bad parameter whether or not the collection turns out
+// to be empty. Validating after the empty short-circuit meant limit=-5 was
+// answered with "No domains found." on a Pi-hole with no rules.
+func TestDomainsList_NegativeLimitRejectedOnEmptyList(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/domains": map[string]any{"domains": []any{}},
+	}))
+
+	msg := callToolExpectError(t, domainsListHandler, c, map[string]any{"limit": -5})
+	if !strings.Contains(msg, "'limit'") {
+		t.Errorf("error %q does not name the parameter", msg)
+	}
+}
+
+func TestDomainsList_NegativeOffsetIsNamedError(t *testing.T) {
+	c := newTestClient(t, piholeHandler(domainRoutes(3)))
+
+	msg := callToolExpectError(t, domainsListHandler, c, map[string]any{"offset": -1})
+	if !strings.Contains(msg, "'offset'") {
+		t.Errorf("error %q does not name the parameter", msg)
+	}
+}
+
+func TestDomainsList_CSVPaged(t *testing.T) {
+	c := newTestClient(t, piholeHandler(domainRoutes(10)))
+
+	text := callTool(t, domainsListHandler, c, map[string]any{"format": "csv", "limit": 2})
+	if !strings.Contains(text, "Showing 2 of 10") {
+		t.Errorf("expected the truncation note, got: %s", text)
+	}
+	if strings.Contains(text, "d002.example.com") {
+		t.Errorf("csv page leaked an entry past the limit: %s", text)
+	}
 }

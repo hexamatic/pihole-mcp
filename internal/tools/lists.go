@@ -16,8 +16,10 @@ import (
 func RegisterLists(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_lists_list",
 		mcp.WithTitleAnnotation("List Blocklists"),
-		mcp.WithDescription("List configured blocklists and allowlists with domain counts and update status. Filter by type (allow/block)."),
+		mcp.WithDescription("List configured blocklists and allowlists with domain counts and update status. Filter by type (allow/block), page with limit/offset."),
 		mcp.WithString("type", mcp.Description("Filter: 'allow' or 'block'."), mcp.Enum("allow", "block")),
+		limitParam,
+		offsetParam,
 		detailParam,
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -66,6 +68,13 @@ func listsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		// Validate paging before the request: a bad parameter is a bad
+		// parameter whether or not the collection turns out to be empty,
+		// and an empty list is not an answer to limit=-5.
+		limit, offset, err := getPage(req, maxPageLimit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		path := "/lists"
 		if t := req.GetString("type", ""); t != "" {
 			path += "?type=" + t
@@ -82,22 +91,26 @@ func listsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		detail := getDetail(req)
 
+		total := len(result.Lists)
 		if detail == "minimal" {
-			return mcp.NewToolResultText(fmt.Sprintf("%d lists.", len(result.Lists))), nil
+			return mcp.NewToolResultText(fmt.Sprintf("%d lists.", total)), nil
 		}
+
+		start, end := pageBounds(total, limit, offset)
+		page := result.Lists[start:end]
 
 		if wantCSV(req) {
 			headers := []string{"Address", "Type", "Domains", "Enabled", "Comment"}
-			rows := make([][]string, 0, len(result.Lists))
-			for _, l := range result.Lists {
+			rows := make([][]string, 0, len(page))
+			for _, l := range page {
 				rows = append(rows, []string{l.Address, l.Type, format.Number(l.Number), format.Bool(l.Enabled), l.Comment})
 			}
-			return mcp.NewToolResultText(format.CSV(headers, rows)), nil
+			return mcp.NewToolResultText(format.CSV(headers, rows) + format.Truncate(len(page), total)), nil
 		}
 
 		var b strings.Builder
-		fmt.Fprintf(&b, "**%d lists:**\n", len(result.Lists))
-		for _, l := range result.Lists {
+		b.WriteString(pageHeading("lists", len(page), total))
+		for _, l := range page {
 			status := "enabled"
 			if !l.Enabled {
 				status = "disabled"

@@ -3,8 +3,10 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/hexamatic/pihole-mcp/internal/format"
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -14,8 +16,11 @@ import (
 func RegisterGroups(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_groups_list",
 		mcp.WithTitleAnnotation("List Groups"),
-		mcp.WithDescription("List groups used for organising domains and clients into sets with independent blocking rules."),
+		mcp.WithDescription("List groups used for organising domains and clients into sets with independent blocking rules. Page with limit/offset."),
 		mcp.WithString("name", mcp.Description("Specific group name to look up.")),
+		limitParam,
+		offsetParam,
+		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 	), groupsListHandler(r))
 
@@ -60,6 +65,13 @@ func groupsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		// Validate paging before the request: a bad parameter is a bad
+		// parameter whether or not the collection turns out to be empty,
+		// and an empty list is not an answer to limit=-5.
+		limit, offset, err := getPage(req, maxPageLimit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		path := "/groups"
 		if name := req.GetString("name", ""); name != "" {
 			path += "/" + pihole.EscapePathSegment(name)
@@ -74,9 +86,22 @@ func groupsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultText("No groups found."), nil
 		}
 
+		total := len(result.Groups)
+		start, end := pageBounds(total, limit, offset)
+		page := result.Groups[start:end]
+
+		if wantCSV(req) {
+			headers := []string{"Name", "ID", "Enabled", "Comment"}
+			rows := make([][]string, 0, len(page))
+			for _, g := range page {
+				rows = append(rows, []string{g.Name, strconv.Itoa(g.ID), format.Bool(g.Enabled), g.Comment})
+			}
+			return mcp.NewToolResultText(format.CSV(headers, rows) + format.Truncate(len(page), total)), nil
+		}
+
 		var b strings.Builder
-		fmt.Fprintf(&b, "**%d groups:**\n", len(result.Groups))
-		for _, g := range result.Groups {
+		b.WriteString(pageHeading("groups", len(page), total))
+		for _, g := range page {
 			status := "enabled"
 			if !g.Enabled {
 				status = "disabled"

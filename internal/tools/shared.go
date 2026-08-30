@@ -2,7 +2,10 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,13 +28,117 @@ func getTimeRange(req mcp.CallToolRequest, defaultWindow time.Duration) (from, u
 	return fmt.Sprintf("%.0f", f), fmt.Sprintf("%.0f", u)
 }
 
-// getCountCapped extracts an integer count parameter with a maximum cap.
-func getCountCapped(req mcp.CallToolRequest, key string, defaultVal, maxVal int) int {
+// getCountCapped extracts an integer count parameter, capping it at maxVal and
+// rejecting anything below minVal.
+//
+// The two directions are deliberately not symmetric. A count above the cap is a
+// request for as much as the tool will give, so capping answers it. A count
+// below the floor has no useful reading, and the old code passed it straight
+// through: count=-5 asked Pi-hole for -5 rows, got none, and rendered an empty
+// list with isError false. That is indistinguishable from a Pi-hole with no
+// data, which is the one answer a caller must never be given by mistake.
+func getCountCapped(req mcp.CallToolRequest, key string, defaultVal, minVal, maxVal int) (int, error) {
 	v := int(req.GetFloat(key, float64(defaultVal)))
-	if v > maxVal {
-		return maxVal
+	if v < minVal {
+		return 0, fmt.Errorf("parameter '%s' must be at least %d (got %d)", key, minVal, v)
 	}
-	return v
+	if v > maxVal {
+		return maxVal, nil
+	}
+	return v, nil
+}
+
+// getPage extracts the limit/offset pair shared by the list tools. Both are
+// optional; limit 0 means "no limit", which is the historical behaviour these
+// tools had before the parameters existed.
+func getPage(req mcp.CallToolRequest, maxLimit int) (limit, offset int, err error) {
+	limit, err = getCountCapped(req, "limit", 0, 0, maxLimit)
+	if err != nil {
+		return 0, 0, err
+	}
+	offset, err = getCountCapped(req, "offset", 0, 0, math.MaxInt32)
+	if err != nil {
+		return 0, 0, err
+	}
+	return limit, offset, nil
+}
+
+// pageBounds turns a limit/offset pair into slice bounds over total items.
+// An offset past the end yields an empty page rather than a panic, so a caller
+// paging off the end gets "0 of 247" instead of an error.
+func pageBounds(total, limit, offset int) (start, end int) {
+	start = min(offset, total)
+	end = total
+	if limit > 0 && start+limit < end {
+		end = start + limit
+	}
+	return start, end
+}
+
+// pageHeading renders the count line for a list, naming the total whenever the
+// page shown is not the whole collection.
+func pageHeading(noun string, shown, total int) string {
+	if shown == total {
+		return fmt.Sprintf("**%d %s:**\n", total, noun)
+	}
+	return fmt.Sprintf("**%d of %d %s:**\n", shown, total, noun)
+}
+
+// flattenInto walks a decoded JSON tree and appends one "dotted.path: value"
+// line per leaf, sorted by key at every level so the same data always renders
+// as the same bytes.
+//
+// This is what a config or metrics reader is actually asking for. Summarising a
+// nested map as "29 settings" is a count of the answer rather than the answer,
+// and no amount of re-reading it produces an upstream server or a cache hit
+// rate.
+func flattenInto(out *[]string, prefix string, v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		if len(t) == 0 {
+			*out = append(*out, prefix+": {}")
+			return
+		}
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			child := k
+			if prefix != "" {
+				child = prefix + "." + k
+			}
+			flattenInto(out, child, t[k])
+		}
+	default:
+		*out = append(*out, prefix+": "+renderLeaf(v))
+	}
+}
+
+// renderLeaf formats a non-map value for a flattened line. Strings go through
+// bare so an upstream reads as 8.8.8.8#53 rather than "8.8.8.8#53"; everything
+// else goes through JSON, which keeps arrays, nulls and large numbers
+// unambiguous and never emits Go's scientific notation for a plain integer.
+func renderLeaf(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	// Everything reaching here came out of a JSON decode, so it is a bool, a
+	// number, nil, or a slice or map of those. None of them can fail to
+	// marshal, which is why the error is discarded rather than handled.
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
+// flattenTree renders a whole decoded JSON object as sorted dotted lines.
+func flattenTree(m map[string]any) string {
+	if len(m) == 0 {
+		return ""
+	}
+	lines := make([]string, 0, len(m))
+	flattenInto(&lines, "", m)
+	return strings.Join(lines, "\n") + "\n"
 }
 
 // writeProcessedResult writes bulk operation results to a string builder.
