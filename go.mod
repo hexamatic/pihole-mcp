@@ -2,7 +2,7 @@ module github.com/hexamatic/pihole-mcp
 
 go 1.26
 
-toolchain go1.26.5
+toolchain go1.26.7
 
 require (
 	github.com/mark3labs/mcp-go v0.56.0

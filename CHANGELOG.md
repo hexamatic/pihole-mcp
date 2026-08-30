@@ -8,6 +8,15 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ## [Unreleased]
 
+### Security
+
+- **The published binaries were built with a Go toolchain carrying six reachable standard-library advisories.** `go.mod` pinned `toolchain go1.26.5`, and because `actions/setup-go` resolves the toolchain line rather than the `go` line, that pin is what compiled every downloadable artefact and container image. Scanning the module with that toolchain selected reports GO-2026-5026, GO-2026-5972, GO-2026-6089, GO-2026-6090, GO-2026-6091 and GO-2026-6218 as reachable from this code, all of them fixed upstream in go1.26.6. The pin has been raised to `go1.26.7`, against which the same scan reports no vulnerabilities. Present since v0.6.0 (12 July 2026) and shipped in every release from v0.6.0 through v0.8.1.
+- **The govulncheck merge gate was scanning a different Go release from the one being shipped, and reported clean throughout.** `golang/govulncheck-action` declares a `go-version-input` with a hard default of `stable` and forwards it to `actions/setup-go` unconditionally. `setup-go` returns on the first non-empty `go-version`, so that default silently outranked the `go-version-file: go.mod` this workflow was passing, and the job analysed whatever Go release was newest at the time instead of the pinned toolchain. The advisories above were therefore invisible to the only check that existed to catch them. The input is now pinned to an explicit empty string so the file wins and the gate follows `go.mod`.
+
+### Changed
+
+- **Dependabot now watches the Pi-hole image pinned in the Compose files.** `docker-compose.dev.yml` and `.github/docker-compose.ci.yml` pin a `pihole/pihole` tag, but Dependabot's `docker` ecosystem reads Dockerfiles only and rejects YAML, so that pin drifted with nothing tracking it while local development and the integration job tested against a Pi-hole release nobody had chosen. A `docker-compose` ecosystem now covers both directories. Base-image updates are grouped so the distroless digest, which appears in both `Dockerfile` and `Dockerfile.goreleaser` and must match, can no longer land in one file and not the other. Action pins move from a weekly to a monthly cadence.
+
 ## [v0.8.1] - 2026-08-30
 
 ### Highlights
