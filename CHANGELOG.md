@@ -8,6 +8,14 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ## [Unreleased]
 
+## [v0.8.1] - 2026-08-30
+
+### Highlights
+
+`pihole_config_set` has never applied a configuration change. From v0.1.0 through v0.8.0 the tool sent its payload as the bare `PATCH /api/config` body, and Pi-hole rejects that with `No "config" object in body data`, so every write failed on the wire. If you have been reading Pi-hole's configuration through this server but changing settings in the web UI, this is why. It is fixed, and the fix was found, diagnosed and contributed by [@st0aty](https://github.com/st0aty).
+
+The rest of the release closes the ground around it. A payload that already carries the `config` envelope, which was the only workaround available while the bug was live, is now recognised rather than wrapped a second time. The doubled form is the dangerous one, because FTL answers 200 to keys it does not recognise and the write silently applies nothing. Input that is not a JSON object is now rejected against the documented parameter shape instead of travelling to the API to fail there. And `config_set`, previously the only configuration tool missing from the end-to-end suite, is now covered by it, which is precisely why this went unnoticed for eight releases.
+
 ### Fixed
 
 - **`pihole_config_set` failed on every configuration write.** The handler sent the supplied object as the bare `PATCH /api/config` body, but Pi-hole requires it wrapped in a `config` key and rejects anything else with `No "config" object in body data`, so the tool has never applied a change. The payload is now wrapped before it is sent. Malformed JSON is also reported as a tool error up front rather than surfacing as an opaque API failure. Present since v0.1.0. Found and fixed by [@st0aty](https://github.com/st0aty) ([#48](https://github.com/hexamatic/pihole-mcp/pull/48)).
@@ -467,7 +475,8 @@ docker pull ghcr.io/hexamatic/pihole-mcp:0.1.0
 
 See the [README](https://github.com/hexamatic/pihole-mcp#readme) for client-specific setup guides (Claude Desktop, Cursor, Windsurf, VS Code, Cline).
 
-[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.8.1...HEAD
+[v0.8.1]: https://github.com/hexamatic/pihole-mcp/compare/v0.8.0...v0.8.1
 [v0.8.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.7.0...v0.8.0
 [v0.7.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.6.0...v0.7.0
 [v0.6.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.5.0...v0.6.0
