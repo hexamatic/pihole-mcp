@@ -1,7 +1,10 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -77,10 +80,21 @@ func TestConfigGet_WithSection(t *testing.T) {
 }
 
 func TestConfigSet_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
-		"/config": map[string]any{
-			"config": map[string]any{"dns": map[string]any{"blocking": map[string]any{"active": false}}},
-		},
+	// Capture the actual request body to assert the {"config": ...} wrapper.
+	var gotBody []byte
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/auth" {
+			writeTestJSON(w, map[string]any{"session": map[string]any{"valid": true, "sid": "test-sid"}})
+			return
+		}
+		if r.URL.Path == "/api/config" && r.Method == "PATCH" {
+			gotBody, _ = io.ReadAll(r.Body)
+			writeTestJSON(w, map[string]any{
+				"config": map[string]any{"dns": map[string]any{"blocking": map[string]any{"active": false}}},
+			})
+			return
+		}
+		http.NotFound(w, r)
 	}))
 
 	text := callTool(t, configSetHandler, c, map[string]any{
@@ -88,6 +102,40 @@ func TestConfigSet_Success(t *testing.T) {
 	})
 	if !strings.Contains(text, "Config updated") {
 		t.Errorf("expected 'Config updated' message, got: %s", text)
+	}
+
+	// The Pi-hole API requires the body wrapped in a "config" key.
+	// Regression: the handler previously sent the bare object, which the
+	// API rejects with 400 "No \"config\" object in body data".
+	if len(gotBody) == 0 {
+		t.Fatal("expected PATCH /config request body, got none")
+	}
+	var body map[string]any
+	if err := json.Unmarshal(gotBody, &body); err != nil {
+		t.Fatalf("PATCH body is not valid JSON: %v (raw: %s)", err, gotBody)
+	}
+	cfg, ok := body["config"]
+	if !ok {
+		t.Fatalf("PATCH body missing 'config' wrapper, got: %s", gotBody)
+	}
+	dns, ok := cfg.(map[string]any)["dns"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected dns section inside config wrapper, got: %s", gotBody)
+	}
+	blocking, ok := dns["blocking"].(map[string]any)
+	if !ok || blocking["active"] != false {
+		t.Fatalf("expected nested blocking.active=false in body, got: %s", gotBody)
+	}
+}
+
+func TestConfigSet_InvalidJSON(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{}))
+
+	text := callToolExpectError(t, configSetHandler, c, map[string]any{
+		"config": "{not valid json",
+	})
+	if !strings.Contains(text, "must be valid JSON") {
+		t.Errorf("expected a JSON validation error, got: %s", text)
 	}
 }
 
