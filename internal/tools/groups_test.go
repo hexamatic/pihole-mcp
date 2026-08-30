@@ -311,3 +311,17 @@ func TestGroupsList_EscapesTheNameFilter(t *testing.T) {
 
 	rec.Only(t, "GET", "/groups/"+name).AssertRawPath(t, "/groups/Kids%20%232")
 }
+
+// TestGroupsAdd_MissingNameIsNamedError pins requireStrings' wiring at the
+// handler level for the single-parameter families: a caller who forgot
+// 'name' gets told that, and nothing reaches the fake.
+func TestGroupsAdd_MissingNameIsNamedError(t *testing.T) {
+	rec := piholeHandler(map[string]any{})
+	c := newTestClient(t, rec)
+
+	msg := callToolExpectError(t, groupsAddHandler, c, map[string]any{})
+	if !strings.Contains(msg, "'name'") {
+		t.Errorf("error %q does not name the missing parameter", msg)
+	}
+	rec.AssertNone(t, "", "")
+}

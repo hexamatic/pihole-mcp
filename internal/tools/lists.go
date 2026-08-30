@@ -37,7 +37,7 @@ func RegisterLists(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_lists_update",
 		mcp.WithTitleAnnotation("Update List"),
-		mcp.WithDescription("Update a blocklist or allowlist entry's comment, enabled status, or group assignments."),
+		mcp.WithDescription("Update a blocklist or allowlist entry's comment or enabled status."),
 		mcp.WithString("address", mcp.Required(), mcp.Description("URL of the list.")),
 		mcp.WithString("type", mcp.Required(), mcp.Description("'allow' or 'block'."), mcp.Enum("allow", "block")),
 		mcp.WithString("comment", mcp.Description("Updated comment.")),
@@ -135,8 +135,11 @@ func listsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		address, _ := req.RequireString("address")
-		t, _ := req.RequireString("type")
+		vals, err := requireStrings(req, "address", "type")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		address, t := vals[0], vals[1]
 
 		if err := validateURL(address); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid address: %v", err)), nil
@@ -163,8 +166,11 @@ func listsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		address, _ := req.RequireString("address")
-		t, _ := req.RequireString("type")
+		vals, err := requireStrings(req, "address", "type")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		address, t := vals[0], vals[1]
 
 		if err := validateURL(address); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid address: %v", err)), nil
@@ -206,8 +212,11 @@ func listsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		address, _ := req.RequireString("address")
-		t, _ := req.RequireString("type")
+		vals, err := requireStrings(req, "address", "type")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		address, t := vals[0], vals[1]
 
 		if err := validateURL(address); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid address: %v", err)), nil

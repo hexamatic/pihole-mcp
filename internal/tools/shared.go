@@ -208,6 +208,24 @@ func needsCurrentEntry(req mcp.CallToolRequest) bool {
 	return !hasComment || !hasEnabled
 }
 
+// requireStrings extracts each of keys as a required string parameter,
+// returning a per-parameter error naming the one that is missing rather than
+// discarding it. `x, _ := req.RequireString(k)` silently proceeds with an
+// empty string on a missing parameter, which turns "the caller forgot
+// 'type'" into a malformed request path the API then has to reject blind.
+// Matches the message shape already used at config.go for "element"/"value".
+func requireStrings(req mcp.CallToolRequest, keys ...string) ([]string, error) {
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		v, err := req.RequireString(k)
+		if err != nil {
+			return nil, fmt.Errorf("Parameter '%s' is required", k) //nolint:staticcheck // user-facing tool error text, not a Go error convention
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
 // crudAddBody builds the create body for a CRUD add tool. comment and enabled
 // are always sent so FTL's own defaults never decide them: FTL stores an empty
 // comment as NULL, so sending one costs nothing.

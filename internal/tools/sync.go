@@ -291,6 +291,8 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 // exportSnapshot downloads a teleporter backup of the client to a temp file and
 // returns its path. Used as a rollback point before a sync applies changes.
 func exportSnapshot(ctx context.Context, c *pihole.Client) (string, error) {
+	reapStaleBackups()
+
 	resp, err := c.DoRaw(ctx, "GET", "/teleporter", nil)
 	if err != nil {
 		return "", err

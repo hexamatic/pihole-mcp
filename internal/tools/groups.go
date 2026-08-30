@@ -123,7 +123,11 @@ func groupsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		name, _ := req.RequireString("name")
+		vals, err := requireStrings(req, "name")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		name := vals[0]
 
 		if err := validateMaxLength("name", name, maxNameLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
@@ -149,7 +153,11 @@ func groupsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		name, _ := req.RequireString("name")
+		vals, err := requireStrings(req, "name")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		name := vals[0]
 
 		if err := validateMaxLength("name", name, maxNameLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
@@ -197,7 +205,11 @@ func groupsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		name, _ := req.RequireString("name")
+		vals, err := requireStrings(req, "name")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		name := vals[0]
 
 		if err := validateMaxLength("name", name, maxNameLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil

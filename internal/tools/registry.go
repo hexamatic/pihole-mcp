@@ -116,17 +116,35 @@ var (
 	aggregateSchema     json.RawMessage
 )
 
-// normaliseReadOnlyAnnotations makes a read-only tool's hints internally
-// consistent. mcp-go's NewTool defaults DestructiveHint and OpenWorldHint to
-// true; for a tool that does not modify state and only queries the configured
-// Pi-hole, both should be false. This is a no-op for tools that are not
-// annotated read-only, so deliberate openWorld/destructive hints on write
+// additiveTools are the *_add tools that only ever create a new row or append
+// a value to a config array. Nothing existing is overwritten or removed, so
+// mcp-go's destructive-by-default is the wrong hint for these specifically —
+// unlike the four *_update tools, which do overwrite an existing row and stay
+// destructive by that same default.
+var additiveTools = map[string]bool{
+	"pihole_domains_add":      true,
+	"pihole_groups_add":       true,
+	"pihole_clients_add":      true,
+	"pihole_lists_add":        true,
+	"pihole_config_add_value": true,
+}
+
+// normaliseReadOnlyAnnotations makes a tool's destructive/open-world hints
+// internally consistent with what it actually does. mcp-go's NewTool defaults
+// both to true; for a tool that does not modify state and only queries the
+// configured Pi-hole, both should be false, and for a tool that only ever
+// adds, DestructiveHint alone should be false. This is a no-op for every
+// other tool, so deliberate openWorld/destructive hints on write and delete
 // tools are preserved.
 func normaliseReadOnlyAnnotations(tool *mcp.Tool) {
-	if tool.Annotations.ReadOnlyHint == nil || !*tool.Annotations.ReadOnlyHint {
+	if tool.Annotations.ReadOnlyHint != nil && *tool.Annotations.ReadOnlyHint {
+		no := false
+		tool.Annotations.DestructiveHint = &no
+		tool.Annotations.OpenWorldHint = &no
 		return
 	}
-	no := false
-	tool.Annotations.DestructiveHint = &no
-	tool.Annotations.OpenWorldHint = &no
+	if additiveTools[tool.Name] {
+		no := false
+		tool.Annotations.DestructiveHint = &no
+	}
 }

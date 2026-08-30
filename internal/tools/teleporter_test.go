@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTeleporterExport_Success(t *testing.T) {
@@ -45,6 +46,77 @@ func TestTeleporterExport_Success(t *testing.T) {
 	}
 }
 
+func TestTeleporterExport_OutputPath(t *testing.T) {
+	h := piholeRawHandler(
+		nil,
+		map[string]string{
+			"/teleporter": "PK\x03\x04fakezipdata",
+		},
+	)
+	c := newTestClient(t, h)
+
+	out := filepath.Join(t.TempDir(), "chosen.zip")
+	text := callTool(t, teleporterExportHandler, c, map[string]any{"output_path": out})
+	if !strings.Contains(text, out) {
+		t.Errorf("expected the reply to name output_path, got: %s", text)
+	}
+	got, err := os.ReadFile(out) //nolint:gosec // out is built from t.TempDir(), not user input
+	if err != nil {
+		t.Fatalf("reading the file the handler was told to write: %v", err)
+	}
+	if string(got) != "PK\x03\x04fakezipdata" {
+		t.Errorf("output_path file contents = %q, want the exported archive bytes", got)
+	}
+}
+
+func TestTeleporterExport_OutputPathMustBeAbsolute(t *testing.T) {
+	h := piholeRawHandler(nil, map[string]string{"/teleporter": "PK\x03\x04fakezipdata"})
+	c := newTestClient(t, h)
+
+	msg := callToolExpectError(t, teleporterExportHandler, c, map[string]any{"output_path": "relative.zip"})
+	if !strings.Contains(msg, "absolute") {
+		t.Errorf("expected an absolute-path error, got: %s", msg)
+	}
+	// Rejected locally: no request against Pi-hole for a backup that has
+	// nowhere valid to land.
+	h.AssertNone(t, "", "")
+}
+
+func TestReapStaleBackups(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+
+	stale := filepath.Join(dir, "pihole-backup-stale.zip")
+	fresh := filepath.Join(dir, "pihole-backup-fresh.zip")
+	staleSnapshot := filepath.Join(dir, "pihole-myinstance-snapshot-stale.zip")
+	unrelated := filepath.Join(dir, "unrelated-file.zip")
+
+	for _, p := range []string{stale, fresh, staleSnapshot, unrelated} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil { //nolint:gosec // test fixture under t.TempDir()
+			t.Fatalf("writing fixture %s: %v", p, err)
+		}
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	for _, p := range []string{stale, staleSnapshot} {
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatalf("backdating %s: %v", p, err)
+		}
+	}
+
+	reapStaleBackups()
+
+	for _, p := range []string{stale, staleSnapshot} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be reaped, stat err = %v", p, err)
+		}
+	}
+	for _, p := range []string{fresh, unrelated} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("expected %s to survive, stat err = %v", p, err)
+		}
+	}
+}
+
 func TestTeleporterImport_MissingFile(t *testing.T) {
 	h := piholeHandler(map[string]any{})
 	c := newTestClient(t, h)
@@ -52,15 +124,15 @@ func TestTeleporterImport_MissingFile(t *testing.T) {
 	text := callToolExpectError(t, teleporterImportHandler, c, map[string]any{
 		"file_path": "/nonexistent/path/to/backup.zip",
 	})
-	if !strings.Contains(text, "Failed to import") {
-		t.Errorf("expected import failure message, got: %s", text)
+	if !strings.Contains(text, "Invalid file_path") {
+		t.Errorf("expected an invalid file_path message, got: %s", text)
 	}
 
-	// The multipart body is assembled before the client authenticates, so an
-	// unreadable file must cost nothing on the wire. Pi-hole caps concurrent
-	// API sessions (16 by default), and a login spent on a request that was
-	// always going to fail locally takes a seat from a real client. Checked
-	// against every recorded request, login included.
+	// validateBackupFilePath rejects the file before the multipart body is
+	// even assembled, so an unreadable file must cost nothing on the wire.
+	// Pi-hole caps concurrent API sessions (16 by default), and a login spent
+	// on a request that was always going to fail locally takes a seat from a
+	// real client. Checked against every recorded request, login included.
 	for _, sent := range h.AllRequests() {
 		t.Errorf("a file that cannot be opened must not reach the API, but this request was sent: %s", sent.Describe())
 	}

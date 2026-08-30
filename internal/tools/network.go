@@ -16,8 +16,8 @@ func RegisterNetwork(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_network_devices",
 		mcp.WithTitleAnnotation("Network Devices"),
 		mcp.WithDescription("Devices seen on the network: MAC, IPs, hostnames, vendor, query count, and first/last seen timestamps. Returns 20 by default."),
-		mcp.WithNumber("max_devices", mcp.Description("Max devices (default 20).")),
-		mcp.WithNumber("max_addresses", mcp.Description("Max IPs per device (default 3).")),
+		mcp.WithNumber("max_devices", mcp.Description("Max devices (default 20)."), mcp.Min(1), mcp.Max(maxPageLimit)),
+		mcp.WithNumber("max_addresses", mcp.Description("Max IPs per device (default 3)."), mcp.Min(1), mcp.Max(maxPageLimit)),
 		detailParam,
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -61,8 +61,14 @@ func networkDevicesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		maxDev := int(req.GetFloat("max_devices", 20))
-		maxAddr := int(req.GetFloat("max_addresses", 3))
+		maxDev, err := getCountCapped(req, "max_devices", 20, 1, maxPageLimit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		maxAddr, err := getCountCapped(req, "max_addresses", 3, 1, maxPageLimit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		path := fmt.Sprintf("/network/devices?max_devices=%d&max_addresses=%d", maxDev, maxAddr)
 		var result pihole.NetworkDevicesResponse
@@ -284,9 +290,12 @@ func networkDeleteDeviceHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		id := int(req.GetFloat("id", 0))
-		if id <= 0 {
-			return mcp.NewToolResultError("Parameter 'id' is required and must be a positive integer. Use pihole_network_devices to find the ID."), nil
+		id, err := req.RequireInt("id")
+		if err != nil {
+			return mcp.NewToolResultError("Parameter 'id' is required. Use pihole_network_devices to find the ID."), nil
+		}
+		if id < 0 {
+			return mcp.NewToolResultError(fmt.Sprintf("id must not be negative (got %d)", id)), nil
 		}
 
 		if err := c.Delete(ctx, fmt.Sprintf("/network/devices/%d", id)); err != nil {

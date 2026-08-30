@@ -348,7 +348,7 @@ Search for a domain across all allow/deny lists and gravity blocklists. Use befo
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `domain` | string | Yes | Domain to search for. |
-| `max_results` | number | No | Max results per category (default 20). |
+| `max_results` | number (1 to 1000) | No | Max results per category (default 20). |
 | `partial` | boolean | No | Enable partial/substring matching (default false). |
 
 ## Domains
@@ -370,8 +370,6 @@ List domains on allow/deny lists. Filter by type (allow/deny) and kind (exact/re
 
 ### `pihole_domains_add`
 
-*destructive*
-
 Add domains to an allow or deny list. Supports bulk add via comma-separated domains. Use pihole_search_domains first to avoid duplicates.
 
 | Parameter | Type | Required | Description |
@@ -386,7 +384,7 @@ Add domains to an allow or deny list. Supports bulk add via comma-separated doma
 
 *destructive*
 
-Update a domain entry's comment, enabled status, or move it between allow/deny lists.
+Update a domain entry's comment or enabled status. Changing type or kind creates a duplicate rather than moving the entry; delete the original separately if that is what you want.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -434,8 +432,6 @@ List groups used for organising domains and clients into sets with independent b
 | `offset` | number (min 0) | No | Entries to skip before returning results, for paging with limit. Default 0. |
 
 ### `pihole_groups_add`
-
-*destructive*
 
 Create a group for organising domains and clients into sets with independent blocking rules.
 
@@ -503,8 +499,6 @@ _No parameters._
 
 ### `pihole_clients_add`
 
-*destructive*
-
 Add a client by IP, MAC, hostname, CIDR subnet, or interface name (prefixed with colon, e.g. :eth0).
 
 | Parameter | Type | Required | Description |
@@ -561,8 +555,6 @@ List configured blocklists and allowlists with domain counts and update status. 
 
 ### `pihole_lists_add`
 
-*destructive*
-
 Subscribe to a new blocklist or allowlist URL. Run pihole_action_gravity_update afterwards to download it.
 
 | Parameter | Type | Required | Description |
@@ -576,7 +568,7 @@ Subscribe to a new blocklist or allowlist URL. Run pihole_action_gravity_update 
 
 *destructive*
 
-Update a blocklist or allowlist entry's comment, enabled status, or group assignments.
+Update a blocklist or allowlist entry's comment or enabled status.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -628,6 +620,7 @@ Modify Pi-hole configuration. Provide nested JSON properties to change. Changes 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `config` | string | Yes | JSON config object, e.g. {"dns":{"blocking":{"active":true}}} |
+| `restart` | boolean | No | Restart FTL after change (default true). Set false when chaining several config_set calls, so only the last one pays for the restart. |
 
 ### `pihole_config_get_value`
 
@@ -640,8 +633,6 @@ Get a specific configuration value by dotted path (e.g. dns.upstreams, webserver
 | `element` | string | Yes | Config element path, e.g. dns.upstreams or dns/upstreams. |
 
 ### `pihole_config_add_value`
-
-*destructive*
 
 Add a value to a configuration array (e.g. add an upstream DNS server). Set restart=false to defer FTL restart.
 
@@ -719,8 +710,8 @@ Devices seen on the network: MAC, IPs, hostnames, vendor, query count, and first
 |---|---|---|---|
 | `detail` | string | No | Response detail: minimal, normal (default), or full. |
 | `format` | string | No | Output format: text (default) or csv. |
-| `max_addresses` | number | No | Max IPs per device (default 3). |
-| `max_devices` | number | No | Max devices (default 20). |
+| `max_addresses` | number (1 to 1000) | No | Max IPs per device (default 3). |
+| `max_devices` | number (1 to 1000) | No | Max devices (default 20). |
 
 ### `pihole_network_gateway`
 
@@ -826,9 +817,11 @@ Web server access log — HTTP requests to the Pi-hole admin interface and API.
 
 *read-only*
 
-Export a full Pi-hole configuration backup as a zip archive. Returns the saved file path and size.
+Export a full Pi-hole configuration backup as a zip archive. Returns the saved file path and size. The file persists on disk after the call returns and is the caller's to move or delete; under Docker it is written inside the container unless output_path points at a mounted volume.
 
-_No parameters._
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `output_path` | string | No | Absolute path to save the backup to. Defaults to a system temp file. |
 
 ### `pihole_teleporter_import`
 

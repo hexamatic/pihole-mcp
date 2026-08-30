@@ -162,7 +162,11 @@ func clientsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		client, _ := req.RequireString("client")
+		vals, err := requireStrings(req, "client")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		client := vals[0]
 
 		if err := validateMaxLength("client", client, maxNameLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
@@ -191,7 +195,11 @@ func clientsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		client, _ := req.RequireString("client")
+		vals, err := requireStrings(req, "client")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		client := vals[0]
 
 		if err := validateMaxLength("client", client, maxNameLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
@@ -233,7 +241,11 @@ func clientsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		client, _ := req.RequireString("client")
+		vals, err := requireStrings(req, "client")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		client := vals[0]
 
 		if err := validateMaxLength("client", client, maxNameLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil

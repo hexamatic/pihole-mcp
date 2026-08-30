@@ -98,6 +98,33 @@ func TestAuthRevokeSession_Success(t *testing.T) {
 	req.AssertNoQueryString(t)
 }
 
+func TestAuthRevokeSession_ZeroID(t *testing.T) {
+	// RequireInt distinguishes a supplied 0 from an absent argument, so a
+	// caller revoking session 0 (a legitimate session ID) gets it revoked
+	// rather than a spurious "id is required".
+	h := piholeHandler(map[string]any{
+		"/auth/session/0": nil,
+	})
+	c := newTestClient(t, h)
+
+	text := callTool(t, authRevokeSessionHandler, c, map[string]any{"id": 0.0})
+	if !strings.Contains(text, "Session 0 revoked") {
+		t.Errorf("expected deletion confirmation, got: %s", text)
+	}
+	h.Only(t, "DELETE", "").AssertRawPath(t, "/auth/session/0")
+}
+
+func TestAuthRevokeSession_NegativeID(t *testing.T) {
+	h := piholeHandler(map[string]any{})
+	c := newTestClient(t, h)
+
+	text := callToolExpectError(t, authRevokeSessionHandler, c, map[string]any{"id": -1.0})
+	if !strings.Contains(text, "must not be negative") {
+		t.Errorf("expected negative-id error, got: %s", text)
+	}
+	h.AssertNone(t, "", "")
+}
+
 func TestAuthRevokeSession_MissingIDNeverReachesTheAPI(t *testing.T) {
 	h := piholeHandler(map[string]any{})
 	c := newTestClient(t, h)
@@ -107,9 +134,8 @@ func TestAuthRevokeSession_MissingIDNeverReachesTheAPI(t *testing.T) {
 		t.Errorf("expected required-id error, got: %s", text)
 	}
 
-	// A missing id defaults to 0 before validation. Should that guard ever be
-	// relaxed, the request that escapes is DELETE /auth/session/0, and this is
-	// the only place that would notice: the tool still returns an error either
-	// way, because the fake has no such route.
+	// RequireInt fails closed on a missing argument rather than defaulting to
+	// 0, so a caller who forgot 'id' gets this error instead of silently
+	// revoking session 0.
 	h.AssertNone(t, "", "")
 }

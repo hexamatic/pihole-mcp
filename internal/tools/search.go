@@ -18,7 +18,7 @@ func RegisterSearch(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithDescription("Search for a domain across all allow/deny lists and gravity blocklists. Use before modifying lists to check current state."),
 		mcp.WithString("domain", mcp.Required(), mcp.Description("Domain to search for.")),
 		mcp.WithBoolean("partial", mcp.Description("Enable partial/substring matching (default false).")),
-		mcp.WithNumber("max_results", mcp.Description("Max results per category (default 20).")),
+		mcp.WithNumber("max_results", mcp.Description("Max results per category (default 20)."), mcp.Min(1), mcp.Max(maxPageLimit)),
 		mcp.WithReadOnlyHintAnnotation(true),
 	), searchDomainsHandler(r))
 }
@@ -38,7 +38,10 @@ func searchDomainsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if req.GetBool("partial", false) {
 			params["partial"] = "true"
 		}
-		n := int(req.GetFloat("max_results", 20))
+		n, err := getCountCapped(req, "max_results", 20, 1, maxPageLimit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		params["N"] = fmt.Sprintf("%d", n)
 
 		path := "/search/" + pihole.EscapePathSegment(domain) + format.QueryParams(params)

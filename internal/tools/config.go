@@ -27,6 +27,7 @@ func RegisterConfig(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithTitleAnnotation("Set Configuration"),
 		mcp.WithDescription("Modify Pi-hole configuration. Provide nested JSON properties to change. Changes take effect immediately and can affect DNS behaviour system-wide."),
 		mcp.WithString("config", mcp.Required(), mcp.Description("JSON config object, e.g. {\"dns\":{\"blocking\":{\"active\":true}}}")),
+		mcp.WithBoolean("restart", mcp.Description("Restart FTL after change (default true). Set false when chaining several config_set calls, so only the last one pays for the restart.")),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(true),
 	), configSetHandler(r))
@@ -166,8 +167,13 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			payload = inner
 		}
 
+		path := "/config"
+		if !req.GetBool("restart", true) {
+			path += "?restart=false"
+		}
+
 		var result pihole.ConfigResponse
-		if err := c.Do(ctx, "PATCH", "/config", map[string]any{"config": payload}, &result); err != nil {
+		if err := c.Do(ctx, "PATCH", path, map[string]any{"config": payload}, &result); err != nil {
 			return toolError("update config", err), nil
 		}
 

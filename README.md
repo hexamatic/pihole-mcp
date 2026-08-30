@@ -322,6 +322,7 @@ For clients that support Docker-based MCP servers:
         "-e", "PIHOLE_URL=http://192.168.1.2",
         "-e", "PIHOLE_PASSWORD=your-password",
         "-e", "TZ=Australia/Adelaide",
+        "-v", "/host/path/for/backups:/backups",
         "ghcr.io/hexamatic/pihole-mcp:latest"]
     }
   }
@@ -329,6 +330,8 @@ For clients that support Docker-based MCP servers:
 ```
 
 Useful when you don't have Go installed or want to run the server on a remote host.
+
+The `-v` mount is there for `pihole_teleporter_export`. Without it, a backup is written inside the container's own filesystem and is gone as soon as `--rm` removes the container on exit. Pass `output_path` pointing inside the mount (e.g. `/backups/pihole.zip`) to keep it on the host.
 
 </details>
 

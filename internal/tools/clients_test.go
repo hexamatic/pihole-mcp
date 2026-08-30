@@ -320,3 +320,17 @@ func TestClientsUpdate_ReadFailureLeavesTheClientAlone(t *testing.T) {
 	callToolExpectError(t, clientsUpdateHandler, c, map[string]any{"client": "192.168.1.50"})
 	rec.AssertNone(t, "PUT", "/clients/192.168.1.50")
 }
+
+// TestClientsAdd_MissingClientIsNamedError pins requireStrings' wiring at the
+// handler level: a caller who forgot 'client' gets told that, and nothing
+// reaches the fake.
+func TestClientsAdd_MissingClientIsNamedError(t *testing.T) {
+	rec := piholeHandler(map[string]any{})
+	c := newTestClient(t, rec)
+
+	msg := callToolExpectError(t, clientsAddHandler, c, map[string]any{})
+	if !strings.Contains(msg, "'client'") {
+		t.Errorf("error %q does not name the missing parameter", msg)
+	}
+	rec.AssertNone(t, "", "")
+}

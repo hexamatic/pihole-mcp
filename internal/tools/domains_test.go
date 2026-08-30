@@ -578,3 +578,20 @@ func TestDomainsList_CSVPaged(t *testing.T) {
 		t.Errorf("csv page leaked an entry past the limit: %s", text)
 	}
 }
+
+// TestDomainsAdd_MissingKindIsNamedError pins requireStrings' wiring at the
+// handler level: a caller who forgot 'kind' gets told exactly that, and
+// nothing reaches the fake. The old `k, _ := req.RequireString("kind")`
+// silently proceeded with an empty string and sent /domains/deny/ to Pi-hole.
+func TestDomainsAdd_MissingKindIsNamedError(t *testing.T) {
+	rec := piholeHandler(map[string]any{})
+	c := newTestClient(t, rec)
+
+	msg := callToolExpectError(t, domainsAddHandler, c, map[string]any{
+		"type": "deny", "domain": "example.com",
+	})
+	if !strings.Contains(msg, "'kind'") {
+		t.Errorf("error %q does not name the missing parameter", msg)
+	}
+	rec.AssertNone(t, "", "")
+}

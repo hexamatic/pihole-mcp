@@ -529,6 +529,16 @@ call_tool "pihole_config_set" '{"config":"{\"config\":{\"dns\":{\"cache\":{\"siz
 # {"config":{"config":{...}}}, discards it, keeps 10001 and still returns 200.
 # Without this read-back the silent no-op passes.
 call_tool_expect "pihole_config_get_value" '{"element":"dns.cache.size"}' "config_get_value (cache size restored to 10000)" "10000"
+# restart=false chains a write onto the current FTL process without paying for
+# a restart, matching config_add_value/config_remove_value above. 10002 shares
+# no substring with 10000, 10001 or 10003, so each read-back below can only
+# pass on its own write.
+call_tool "pihole_config_set" '{"config":"{\"dns\":{\"cache\":{\"size\":10002}}}","restart":false}' "config_set (restart=false, deferred)"
+call_tool_expect "pihole_config_get_value" '{"element":"dns.cache.size"}' "config_get_value (cache size 10002 with FTL restart deferred)" "10002"
+call_tool "pihole_action_restart_dns" '{}' "action_restart_dns (applies the deferred change)"
+call_tool_expect "pihole_config_get_value" '{"element":"dns.cache.size"}' "config_get_value (cache size still 10002 after explicit restart)" "10002"
+call_tool "pihole_config_set" '{"config":"{\"dns\":{\"cache\":{\"size\":10000}}}"}' "config_set (restore default)"
+call_tool_expect "pihole_config_get_value" '{"element":"dns.cache.size"}' "config_get_value (cache size restored to 10000, take two)" "10000"
 call_tool "pihole_config_set" '{"config":"{not json"}' "config_set (rejects malformed JSON)" "expect_error"
 call_tool "pihole_config_set" '{"config":"[1,2,3]"}' "config_set (rejects non-object)" "expect_error"
 call_tool "pihole_config_properties" '{}' "config_properties (FTL v6.6.1+)"
@@ -581,6 +591,18 @@ if [ -n "$EXPORTED_BACKUP" ]; then
     rm -f "$EXPORTED_BACKUP"
 else
     record_fail "teleporter_import (round trip)" "could not read the archive path out of the export reply"
+fi
+
+# output_path steers the export to a caller-chosen location instead of a
+# system temp file, which is what the README's Docker -v mount depends on: a
+# temp file written inside a --rm container is gone at exit; a file under an
+# explicit output_path can be a mounted volume.
+OUTPUT_BACKUP="$(mktemp -u /tmp/pihole-e2e-export-XXXXXX.zip)"
+call_tool_expect "pihole_teleporter_export" "{\"output_path\":\"${OUTPUT_BACKUP}\"}" "teleporter_export (output_path)" "$OUTPUT_BACKUP"
+if [ -f "$OUTPUT_BACKUP" ]; then
+    rm -f "$OUTPUT_BACKUP"
+else
+    record_fail "teleporter_export (output_path)" "no file was written to $OUTPUT_BACKUP"
 fi
 
 echo ""

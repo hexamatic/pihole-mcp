@@ -1,9 +1,24 @@
 package tools
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
+
+// writeTestFile creates a file of exactly size bytes at path. It truncates
+// rather than writing size zero bytes, which is instant even for the
+// oversize-cap test's 512 MiB+1 fixture: the fake data never has to exist,
+// only the file's reported length.
+func writeTestFile(t *testing.T, path string, size int64) error {
+	t.Helper()
+	f, err := os.Create(path) //nolint:gosec // test fixture, path is under t.TempDir()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return f.Truncate(size)
+}
 
 func TestValidateDomainName(t *testing.T) {
 	tests := []struct {
@@ -157,5 +172,51 @@ func TestValidateDomainName_ExactStillRejectsRegexSyntax(t *testing.T) {
 		if err := validateDomainName(in, "exact"); err == nil {
 			t.Errorf("validateDomainName(%q, exact) = nil, want an error", in)
 		}
+	}
+}
+
+func TestValidateBackupFilePath(t *testing.T) {
+	dir := t.TempDir()
+	zipPath := dir + "/backup.zip"
+	if err := writeTestFile(t, zipPath, 1024); err != nil {
+		t.Fatalf("writing test fixture: %v", err)
+	}
+	dirPath := dir // a directory, not a regular file
+
+	tests := []struct {
+		name    string
+		in      string
+		wantErr bool
+	}{
+		{"valid absolute zip", zipPath, false},
+		{"empty", "", true},
+		{"relative path", "backup.zip", true},
+		{"wrong extension", dir + "/backup.tar.gz", true},
+		{"nonexistent", dir + "/missing.zip", true},
+		{"a directory, not a file", dirPath, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateBackupFilePath(tt.in)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateBackupFilePath(%q) error = %v, wantErr %v", tt.in, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateBackupFilePath_OverSizeCap(t *testing.T) {
+	dir := t.TempDir()
+	zipPath := dir + "/huge.zip"
+	if err := writeTestFile(t, zipPath, maxTeleporterFileSize+1); err != nil {
+		t.Fatalf("writing oversized fixture: %v", err)
+	}
+
+	err := validateBackupFilePath(zipPath)
+	if err == nil {
+		t.Fatal("expected an error for a file over the size cap")
+	}
+	if !strings.Contains(err.Error(), "at most") {
+		t.Errorf("expected a size-cap message, got: %v", err)
 	}
 }

@@ -361,3 +361,19 @@ func TestListsUpdate_ReadFailureLeavesTheListAlone(t *testing.T) {
 	})
 	rec.AssertNone(t, "PUT", "/lists/"+addr)
 }
+
+// TestListsAdd_MissingTypeIsNamedError pins requireStrings' wiring at the
+// handler level for the two-parameter case: a caller who forgot 'type' gets
+// told that, and nothing reaches the fake.
+func TestListsAdd_MissingTypeIsNamedError(t *testing.T) {
+	rec := piholeHandler(map[string]any{})
+	c := newTestClient(t, rec)
+
+	msg := callToolExpectError(t, listsAddHandler, c, map[string]any{
+		"address": "https://lists.example.com/ads.txt",
+	})
+	if !strings.Contains(msg, "'type'") {
+		t.Errorf("error %q does not name the missing parameter", msg)
+	}
+	rec.AssertNone(t, "", "")
+}

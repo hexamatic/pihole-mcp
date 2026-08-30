@@ -406,16 +406,33 @@ func TestNetworkDeleteDevice_MissingID(t *testing.T) {
 }
 
 func TestNetworkDeleteDevice_ZeroID(t *testing.T) {
+	// RequireInt distinguishes a supplied 0 from an absent argument, unlike
+	// the old GetFloat("id", 0) default that made the two indistinguishable
+	// and forced 0 to be treated as "missing". A caller that names device 0
+	// deliberately gets it deleted, matching the pattern already established
+	// at info.go's dismiss-message tool.
+	h := piholeHandler(map[string]any{
+		"/network/devices/0": nil,
+	})
+	c := newTestClient(t, h)
+
+	text := callTool(t, networkDeleteDeviceHandler, c, map[string]any{"id": 0.0})
+	if !strings.Contains(text, "Device 0 deleted") {
+		t.Errorf("expected deletion confirmation, got: %s", text)
+	}
+	h.Only(t, "DELETE", "").AssertRawPath(t, "/network/devices/0")
+}
+
+func TestNetworkDeleteDevice_NegativeID(t *testing.T) {
 	h := piholeHandler(map[string]any{})
 	c := newTestClient(t, h)
 
-	text := callToolExpectError(t, networkDeleteDeviceHandler, c, map[string]any{"id": 0.0})
-	if !strings.Contains(text, "must be a positive integer") {
-		t.Errorf("expected positive-integer error, got: %s", text)
+	text := callToolExpectError(t, networkDeleteDeviceHandler, c, map[string]any{"id": -1.0})
+	if !strings.Contains(text, "must not be negative") {
+		t.Errorf("expected negative-id error, got: %s", text)
 	}
 
-	// Zero is what a missing or unparseable id collapses to, so it is the value
-	// most likely to slip past a weakened guard, and DELETE /network/devices/0
-	// is a request Pi-hole would happily accept.
+	// A rejected argument must be rejected locally, not forwarded and left to
+	// the API to refuse.
 	h.AssertNone(t, "", "")
 }

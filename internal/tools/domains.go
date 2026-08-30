@@ -39,7 +39,7 @@ func RegisterDomains(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_domains_update",
 		mcp.WithTitleAnnotation("Update Domain Rule"),
-		mcp.WithDescription("Update a domain entry's comment, enabled status, or move it between allow/deny lists."),
+		mcp.WithDescription("Update a domain entry's comment or enabled status. Changing type or kind creates a duplicate rather than moving the entry; delete the original separately if that is what you want."),
 		mcp.WithString("type", mcp.Required(), mcp.Description("Current type: 'allow' or 'deny'."), mcp.Enum("allow", "deny")),
 		mcp.WithString("kind", mcp.Required(), mcp.Description("Current kind: 'exact' or 'regex'."), mcp.Enum("exact", "regex")),
 		mcp.WithString("domain", mcp.Required(), mcp.Description("Domain to update.")),
@@ -165,9 +165,11 @@ func domainsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		t, _ := req.RequireString("type")
-		k, _ := req.RequireString("kind")
-		domain, _ := req.RequireString("domain")
+		vals, err := requireStrings(req, "type", "kind", "domain")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		t, k, domain := vals[0], vals[1], vals[2]
 
 		names := splitDomains(domain, k)
 		if len(names) == 0 {
@@ -207,9 +209,11 @@ func domainsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		t, _ := req.RequireString("type")
-		k, _ := req.RequireString("kind")
-		domain, _ := req.RequireString("domain")
+		vals, err := requireStrings(req, "type", "kind", "domain")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		t, k, domain := vals[0], vals[1], vals[2]
 
 		if err := validateDomainName(domain, k); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid domain: %v", err)), nil
@@ -250,9 +254,11 @@ func domainsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		t, _ := req.RequireString("type")
-		k, _ := req.RequireString("kind")
-		domain, _ := req.RequireString("domain")
+		vals, err := requireStrings(req, "type", "kind", "domain")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		t, k, domain := vals[0], vals[1], vals[2]
 
 		if err := validateDomainName(domain, k); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid domain: %v", err)), nil
