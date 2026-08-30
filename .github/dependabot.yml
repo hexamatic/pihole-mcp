@@ -1,5 +1,12 @@
 version: 2
 
+# Every ecosystem below MUST set `labels` including "dependencies". The
+# "Enforce CHANGELOG.md update" check is a required context on main and skips
+# only on the Skip-Changelog and dependencies labels (see
+# .github/workflows/changelog.yml). Dependabot's own default label for an
+# ecosystem is its ecosystem name, which does not exist in this repository, so
+# omitting `labels` leaves the bot's PRs permanently unmergeable.
+
 updates:
   - package-ecosystem: gomod
     directory: /
@@ -14,10 +21,14 @@ updates:
     labels:
       - "dependencies"
 
+  # Monthly rather than weekly. Action pins are a supply-chain hygiene measure
+  # rather than a functional dependency, and a weekly group PR that touches
+  # every workflow costs a full CI matrix to land. Batching a month at a time
+  # keeps the pins current without spending a cycle a week on them.
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     groups:
       actions:
         patterns:
@@ -26,10 +37,37 @@ updates:
       - "dependencies"
       - "ci"
 
+  # Covers the Dockerfile and Dockerfile.goreleaser base images. The distroless
+  # digest appears in both files and must stay in step, so they are grouped to
+  # land in a single PR rather than two that leave the pair mismatched.
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    groups:
+      docker-images:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "docker"
+
+  # docker-compose is a distinct ecosystem from docker: the docker parser reads
+  # Dockerfiles only and explicitly rejects YAML, so without this block the
+  # pihole/pihole tag pinned in docker-compose.dev.yml and
+  # .github/docker-compose.ci.yml drifts with nothing watching it. Those two
+  # files are what `just dev-up` and the integration job boot, so a stale pin
+  # means local and CI test against a Pi-hole release nobody chose.
+  - package-ecosystem: docker-compose
+    directories:
+      - "/"
+      - "/.github"
+    schedule:
+      interval: weekly
+    groups:
+      compose-images:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "docker"

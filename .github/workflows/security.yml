@@ -34,8 +34,25 @@ jobs:
         with:
           persist-credentials: false
 
+      # go-version-input MUST stay an explicit empty string. The action declares
+      # it with a hard default of 'stable' and passes it to setup-go
+      # unconditionally, and setup-go returns on the first truthy go-version, so
+      # the default silently outranks go-version-file. Left unset, this job
+      # scanned whatever Go was newest while releases built the pinned
+      # toolchain, and it reported clean against a binary carrying six reachable
+      # stdlib advisories. An empty value is falsy, so go-version-file wins and
+      # the scan follows go.mod's toolchain line. A bare key with no value would
+      # restore the default: the runner applies an input's default only when the
+      # key is absent from `with:`.
+      #
+      # Consequence worth knowing: the action installs govulncheck under
+      # GOTOOLCHAIN=local, so if golang.org/x/vuln ever raises its own go
+      # directive above our pinned toolchain, this required check fails on the
+      # install step with no advisory involved. Bump the toolchain, do not
+      # reinstate 'stable'.
       - uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
         with:
+          go-version-input: ""
           go-version-file: go.mod
           repo-checkout: false
 
