@@ -312,23 +312,37 @@ func TestInfoMessages_Empty(t *testing.T) {
 }
 
 func TestInfoDismissMessage_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	rec := piholeHandler(map[string]any{
 		"/info/messages/1": map[string]any{},
-	}))
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, infoDismissMessageHandler, c, map[string]any{"id": float64(1)})
 	if !strings.Contains(text, "Dismissed diagnostic message 1") {
 		t.Errorf("expected a confirmation, got: %s", text)
 	}
+
+	// The confirmation is formatted from the tool's own id argument, so it
+	// reads the same after a request that dismissed nothing. The id is
+	// interpolated into the path with fmt.Sprintf, which is why the raw path
+	// is worth pinning as well as the verb.
+	req := rec.Only(t, "DELETE", "/info/messages/1")
+	req.AssertRawPath(t, "/info/messages/1")
+	req.AssertNoBody(t)
+	req.AssertNoQueryString(t)
 }
 
 func TestInfoDismissMessage_RequiresID(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{}))
+	rec := piholeHandler(map[string]any{})
+	c := newTestClient(t, rec)
 
 	text := callToolExpectError(t, infoDismissMessageHandler, c, nil)
 	if !strings.Contains(text, "pihole_info_messages") {
 		t.Errorf("the missing-id error should point at pihole_info_messages, got: %s", text)
 	}
+
+	// A missing id must not become DELETE /info/messages/0.
+	rec.AssertNone(t, "", "")
 }
 
 func TestInfoDatabase_RealFixture(t *testing.T) {

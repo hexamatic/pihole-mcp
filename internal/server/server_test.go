@@ -6,12 +6,20 @@ import (
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 )
 
+// instanceNames are the registry instance names every test in this package
+// uses, in registration order. It is one list so that a name asserted in a
+// dispatch test means the same instance as one built by newRegistry, and so
+// that adding an instance is a single edit. Indexing past the end panics,
+// which is the right failure for a test helper asked for an instance the
+// package has never named.
+var instanceNames = []string{"primary", "secondary", "tertiary"}
+
 func newRegistry(t *testing.T, n int) *pihole.Registry {
 	t.Helper()
 	instances := make([]pihole.InstanceConfig, n)
 	for i := range instances {
 		instances[i] = pihole.InstanceConfig{
-			Name:     map[int]string{0: "primary", 1: "secondary"}[i],
+			Name:     instanceNames[i],
 			URL:      "http://pihole.invalid",
 			Password: "x",
 		}

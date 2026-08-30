@@ -93,9 +93,10 @@ func TestListsList_Empty(t *testing.T) {
 }
 
 func TestListsAdd_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	rec := piholeHandler(map[string]any{
 		"/lists": map[string]any{"lists": []any{}},
-	}))
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, listsAddHandler, c, map[string]any{
 		"address": "https://example.com/new.txt", "type": "block",
@@ -106,12 +107,51 @@ func TestListsAdd_Success(t *testing.T) {
 	if !strings.Contains(text, "gravity") {
 		t.Errorf("expected gravity reminder, got: %s", text)
 	}
+
+	req := rec.Only(t, "POST", "/lists")
+	req.AssertRawPath(t, "/lists")
+	// type is the only parameter this endpoint takes. AssertNoQueryString would
+	// be wrong here, so pin the key set instead: a stray extra parameter is as
+	// invisible in the reply as a missing one.
+	req.AssertQueryKeys(t, "type")
+	// POST /api/lists takes type as a query parameter and rejects it in the
+	// body with a 400. This is the single most surprising thing about the
+	// endpoint and nothing but the wire shows which side of the request it
+	// went to: an allow list added as a block list looks identical in the
+	// reply, and quietly blocks everything it was meant to permit.
+	req.AssertQuery(t, "type", "block")
+	req.AssertBodyKeys(t, "address")
+	req.AssertField(t, "address", "https://example.com/new.txt")
+}
+
+// Mirror of the domains case, plus the type parameter. A list added with a
+// comment and an explicit disable is the only add whose body carries all three
+// keys, and none of them is visible in the reply text.
+func TestListsAdd_SendsCommentAndExplicitDisable(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/lists": map[string]any{"lists": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, listsAddHandler, c, map[string]any{
+		"address": "https://example.com/new.txt", "type": "block",
+		"comment": "vendor supplied", "enabled": false,
+	})
+
+	req := rec.Only(t, "POST", "/lists")
+	req.AssertBodyKeys(t, "address", "comment", "enabled")
+	req.AssertField(t, "address", "https://example.com/new.txt")
+	req.AssertField(t, "comment", "vendor supplied")
+	req.AssertField(t, "enabled", false)
+	req.AssertQueryKeys(t, "type")
+	req.AssertQuery(t, "type", "block")
 }
 
 func TestListsUpdate_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	rec := piholeHandler(map[string]any{
 		"/lists/https://example.com/list.txt": map[string]any{"lists": []any{}},
-	}))
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, listsUpdateHandler, c, map[string]any{
 		"address": "https://example.com/list.txt", "type": "block", "comment": "updated",
@@ -122,12 +162,52 @@ func TestListsUpdate_Success(t *testing.T) {
 	if !strings.Contains(text, "https://example.com/list.txt") {
 		t.Errorf("expected list address in message, got: %s", text)
 	}
+
+	// Selecting on the decoded path asserts that the address reached the API as
+	// a path segment. The raw form is deliberately not pinned: the address is
+	// concatenated into the path unescaped today, and pinning that spelling
+	// would turn the escaping fix into a test failure. The decoded path is the
+	// same either way.
+	req := rec.Only(t, "PUT", "/lists/https://example.com/list.txt")
+	req.AssertQueryKeys(t, "type")
+	// Unlike the add, the update carries type in the query and in the body.
+	// Sending only one of the two silently converts a block list to an allow
+	// list, or fails to convert one that was meant to change.
+	req.AssertQuery(t, "type", "block")
+	req.AssertField(t, "type", "block")
+	req.AssertField(t, "comment", "updated")
+	// The full key set is deliberately not pinned here. A comment-only update
+	// sends no enabled key, which FTL reads as "enable this list", so editing
+	// the comment on a disabled list silently re-enables it. Freezing that
+	// shape would make the eventual fix look like the regression.
+}
+
+// enabled only ever reaches the wire when it is false, so an explicit disable is
+// the one list update whose body is complete today. It is also the only place
+// the three-key body is visible: type is always sent, comment only when given.
+func TestListsUpdate_ExplicitDisableSendsEnabledFalse(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/lists/https://example.com/list.txt": map[string]any{"lists": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, listsUpdateHandler, c, map[string]any{
+		"address": "https://example.com/list.txt", "type": "block",
+		"comment": "paused", "enabled": false,
+	})
+
+	req := rec.Only(t, "PUT", "/lists/https://example.com/list.txt")
+	req.AssertQueryKeys(t, "type")
+	req.AssertBodyKeys(t, "comment", "enabled", "type")
+	req.AssertField(t, "enabled", false)
+	req.AssertField(t, "type", "block")
 }
 
 func TestListsDelete_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	rec := piholeHandler(map[string]any{
 		"/lists/https://example.com/list.txt": map[string]any{},
-	}))
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, listsDeleteHandler, c, map[string]any{
 		"address": "https://example.com/list.txt", "type": "block",
@@ -135,17 +215,35 @@ func TestListsDelete_Success(t *testing.T) {
 	if !strings.Contains(text, "Deleted") {
 		t.Errorf("expected 'Deleted' message, got: %s", text)
 	}
+
+	// The same address exists once per type, so dropping the type parameter
+	// deletes the wrong list or nothing at all. As with the update, only the
+	// decoded path is pinned, because the escaping of the address is a known
+	// defect that a later change will alter.
+	req := rec.Only(t, "DELETE", "/lists/https://example.com/list.txt")
+	req.AssertQuery(t, "type", "block")
+	req.AssertQueryKeys(t, "type")
+	req.AssertNoBody(t)
 }
 
 func TestListsBatchDelete_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
-		"/lists:batchDelete": map[string]any{},
-	}))
+	const items = `[{"item":"https://example.com/list.txt","type":"block"}]`
 
-	text := callTool(t, listsBatchDeleteHandler, c, map[string]any{
-		"items": `[{"item":"https://example.com/list.txt","type":"block"}]`,
+	rec := piholeHandler(map[string]any{
+		"/lists:batchDelete": map[string]any{},
 	})
+	c := newTestClient(t, rec)
+
+	text := callTool(t, listsBatchDeleteHandler, c, map[string]any{"items": items})
 	if !strings.Contains(text, "Batch delete completed") {
 		t.Errorf("expected 'Batch delete completed' message, got: %s", text)
 	}
+
+	// Every item carries its own type, so unlike the single-list writes this
+	// endpoint takes no type parameter. One copied across from listsDelete
+	// would apply to the whole batch.
+	req := rec.Only(t, "POST", "/lists:batchDelete")
+	req.AssertRawPath(t, "/lists:batchDelete")
+	req.AssertNoQueryString(t)
+	req.AssertRawBody(t, items)
 }

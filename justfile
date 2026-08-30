@@ -83,9 +83,16 @@ fuzz:
 docs-gen:
     go run ./cmd/toolsdoc
 
-# Run all quality checks (format + lint + test)
+# Fail when a registered tool is exercised by neither scripts/e2e-test.sh nor an
+# explicit skip reason in cmd/toolsdoc. A tool nobody calls end to end is a tool
+# whose wire contract is only ever checked against a fake.
 [group('quality')]
-check: fmt lint test
+e2e-coverage:
+    go run ./cmd/toolsdoc -check-e2e
+
+# Run all quality checks (format + lint + test + e2e coverage)
+[group('quality')]
+check: fmt lint test e2e-coverage
 
 # ─── Development ─────────────────────────────────────────────────────────────
 
@@ -161,7 +168,7 @@ refresh-fixtures: seed
 
 # Run full CI pipeline (mirrors GitHub Actions)
 [group('ci')]
-ci: fmt-check lint test
+ci: fmt-check lint test e2e-coverage
     go build -o /dev/null ./cmd/pihole-mcp
     @echo "\033[32m✓ CI passed\033[0m"
 

@@ -2,6 +2,11 @@
 # End-to-end test script for pihole-mcp.
 # Sends tool calls sequentially (one at a time) to avoid overwhelming Pi-hole.
 # Usage: PIHOLE_URL=http://localhost:8081 PIHOLE_PASSWORD=test ./scripts/e2e-test.sh
+#
+# Read cases assert only that the call succeeded. Write cases must not: FTL
+# answers 200 for a body it silently ignored, so a write that applied nothing
+# looks identical to one that worked. Every write below is therefore followed by
+# a read that asserts the new value, via call_tool_expect.
 set -euo pipefail
 
 BINARY="${1:-./bin/pihole-mcp}"
@@ -34,6 +39,73 @@ backoff() {
     sleep "$(awk "BEGIN{printf \"%.2f\", 0.2 * (2 ^ ($1 - 1))}")"
 }
 
+# run_tool <mode> <name> <args>
+# Spawns one server, sends initialize + tools/call, and leaves the outcome in
+# RESULT_IS_ERROR ("True"/"False") and RESULT_TEXT. <mode> selects which
+# credentials the child sees: "single" for PIHOLE_URL, "multi" for the
+# PIHOLE_1_*/PIHOLE_2_* pair.
+#
+# Every assertion helper goes through this one copy on purpose. The retry policy
+# is subtle enough (transient classification, six attempts, exponential backoff)
+# that a second copy would drift, and the copy that drifted would be the one
+# quietly swallowing failures.
+RESULT_IS_ERROR=""
+RESULT_TEXT=""
+
+run_tool() {
+    local mode="$1"
+    local name="$2"
+    local args="$3"
+
+    local request
+    request=$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"%s","arguments":%s}}\n' "$name" "$args")
+
+    local result attempt=0
+    while :; do
+        if [ "$mode" = "multi" ]; then
+            result=$(printf '%s\n' "$request" \
+                | env -u PIHOLE_URL -u PIHOLE_PASSWORD \
+                    PIHOLE_1_URL="${PIHOLE_1_URL}" PIHOLE_1_PASSWORD="${PIHOLE_1_PASSWORD}" PIHOLE_2_URL="${PIHOLE_2_URL}" PIHOLE_2_PASSWORD="${PIHOLE_2_PASSWORD}" timeout 30 "$BINARY" 2>/dev/null \
+                | tail -1)
+        else
+            result=$(printf '%s\n' "$request" \
+                | env -u PIHOLE_1_URL -u PIHOLE_1_PASSWORD -u PIHOLE_2_URL -u PIHOLE_2_PASSWORD \
+                    PIHOLE_URL="${PIHOLE_URL}" PIHOLE_PASSWORD="${PIHOLE_PASSWORD}" timeout 30 "$BINARY" 2>/dev/null \
+                | tail -1)
+        fi
+        if is_transient "$result" && [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+            attempt=$((attempt+1)); backoff "$attempt"; continue
+        fi
+        break
+    done
+
+    RESULT_IS_ERROR=$(echo "$result" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print(d.get('result',{}).get('isError',False))" 2>/dev/null)
+    RESULT_TEXT=$(echo "$result" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());[print(c.get('text','')) for c in d.get('result',{}).get('content',[])]" 2>/dev/null)
+}
+
+record_pass() {
+    echo "  PASS: $1"
+    PASS=$((PASS+1))
+}
+
+# record_fail <label> [detail]
+# The detail is the first line of whatever came back. Without it a red line in
+# CI tells you nothing you can act on. Omit it where there is nothing useful to
+# quote.
+record_fail() {
+    local label="$1"
+    local detail="${2:-}"
+    echo "  FAIL: $label"
+    FAIL=$((FAIL+1))
+    if [ -n "$detail" ]; then
+        detail=${detail%%$'\n'*}
+        echo "        ${detail:0:120}"
+        ERRORS+=("$label: ${detail:0:100}")
+    else
+        ERRORS+=("$label")
+    fi
+}
+
 # call_tool <name> [args] [label] [expect_error]
 # A non-empty 4th argument inverts the check: the call is expected to fail.
 call_tool() {
@@ -43,39 +115,71 @@ call_tool() {
     local label="${3:-$name}"
     local expect_error="${4:-}"
 
-    local result attempt=0
-    while :; do
-        result=$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"%s","arguments":%s}}\n' "$name" "$args" \
-            | env -u PIHOLE_1_URL -u PIHOLE_1_PASSWORD -u PIHOLE_2_URL -u PIHOLE_2_PASSWORD \
-                PIHOLE_URL="${PIHOLE_URL}" PIHOLE_PASSWORD="${PIHOLE_PASSWORD}" timeout 30 "$BINARY" 2>/dev/null \
-            | tail -1)
-        if is_transient "$result" && [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
-            attempt=$((attempt+1)); backoff "$attempt"; continue
-        fi
-        break
-    done
+    run_tool "single" "$name" "$args"
 
-    local is_error
-    is_error=$(echo "$result" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print(d.get('result',{}).get('isError',False))" 2>/dev/null)
-
-    local content
-    content=$(echo "$result" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());[print(c.get('text','')) for c in d.get('result',{}).get('content',[])]" 2>/dev/null)
-
-    local failed="$is_error"
+    local failed="$RESULT_IS_ERROR"
     if [ -n "$expect_error" ]; then
         # Invert: the call was supposed to fail, so success is the failure.
-        [ "$is_error" = "True" ] && failed="False" || failed="True"
+        [ "$RESULT_IS_ERROR" = "True" ] && failed="False" || failed="True"
     fi
 
     if [ "$failed" = "True" ]; then
-        echo "  FAIL: $label"
-        echo "        $(echo "$content" | head -1 | cut -c1-120)"
-        FAIL=$((FAIL+1))
-        ERRORS+=("$label: $(echo "$content" | head -1 | cut -c1-100)")
+        record_fail "$label" "$RESULT_TEXT"
     else
-        echo "  PASS: $label"
-        PASS=$((PASS+1))
+        record_pass "$label"
     fi
+}
+
+# call_tool_expect <name> <args> <label> <substring>
+# Runs the tool exactly as call_tool does, then FAILS unless <substring> appears
+# in the returned text.
+#
+# This is the difference between proving a write landed and proving only that
+# the server answered. The config_set double-wrap no-op shipped past a fully
+# green suite because every case here asked "did it error?" and none asked "did
+# anything change?". Use this for the read-back after every write.
+call_tool_expect() {
+    local name="$1"
+    local args="${2:-}"
+    [ -z "$args" ] && args='{}'
+    local label="${3:-$name}"
+    local want="$4"
+
+    run_tool "single" "$name" "$args"
+
+    if [ "$RESULT_IS_ERROR" = "True" ]; then
+        record_fail "$label" "$RESULT_TEXT"
+        return 0
+    fi
+
+    case "$RESULT_TEXT" in
+        *"$want"*) record_pass "$label" ;;
+        *) record_fail "$label" "expected \"$want\" in: $RESULT_TEXT" ;;
+    esac
+}
+
+# call_tool_expect_absent <name> <args> <label> <substring>
+# The mirror of call_tool_expect: FAILS if <substring> is still there. A delete
+# that deleted nothing returns the same 200 as one that worked, so the only
+# honest check after a removal is that the value has stopped coming back.
+call_tool_expect_absent() {
+    local name="$1"
+    local args="${2:-}"
+    [ -z "$args" ] && args='{}'
+    local label="${3:-$name}"
+    local unwanted="$4"
+
+    run_tool "single" "$name" "$args"
+
+    if [ "$RESULT_IS_ERROR" = "True" ]; then
+        record_fail "$label" "$RESULT_TEXT"
+        return 0
+    fi
+
+    case "$RESULT_TEXT" in
+        *"$unwanted"*) record_fail "$label" "expected \"$unwanted\" to be gone, found: $RESULT_TEXT" ;;
+        *) record_pass "$label" ;;
+    esac
 }
 
 # call_multi runs a tool against a multi-instance server (PIHOLE_1_*, PIHOLE_2_*).
@@ -87,35 +191,19 @@ call_multi() {
     local label="${3:-$name}"
     local expect_error="${4:-}"
 
-    local result attempt=0
-    while :; do
-        result=$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"%s","arguments":%s}}\n' "$name" "$args" \
-            | env -u PIHOLE_URL -u PIHOLE_PASSWORD \
-                PIHOLE_1_URL="${PIHOLE_1_URL}" PIHOLE_1_PASSWORD="${PIHOLE_1_PASSWORD}" PIHOLE_2_URL="${PIHOLE_2_URL}" PIHOLE_2_PASSWORD="${PIHOLE_2_PASSWORD}" timeout 30 "$BINARY" 2>/dev/null \
-            | tail -1)
-        if is_transient "$result" && [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
-            attempt=$((attempt+1)); backoff "$attempt"; continue
-        fi
-        break
-    done
-
-    local is_error
-    is_error=$(echo "$result" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print(d.get('result',{}).get('isError',False))" 2>/dev/null)
+    run_tool "multi" "$name" "$args"
 
     local ok="True"
     if [ -n "$expect_error" ]; then
-        [ "$is_error" = "True" ] && ok="True" || ok="False"
+        [ "$RESULT_IS_ERROR" = "True" ] && ok="True" || ok="False"
     else
-        [ "$is_error" = "True" ] && ok="False" || ok="True"
+        [ "$RESULT_IS_ERROR" = "True" ] && ok="False" || ok="True"
     fi
 
     if [ "$ok" = "True" ]; then
-        echo "  PASS: $label"
-        PASS=$((PASS+1))
+        record_pass "$label"
     else
-        echo "  FAIL: $label"
-        FAIL=$((FAIL+1))
-        ERRORS+=("$label")
+        record_fail "$label"
     fi
 }
 
@@ -132,9 +220,18 @@ call_tool "pihole_padd" '{"detail":"full"}' "padd (full)"
 echo ""
 echo "--- DNS Control ---"
 call_tool "pihole_dns_get_blocking"
-call_tool "pihole_dns_set_blocking" '{"blocking":false,"timer":3}' "dns_set_blocking (disable 3s)"
+# The timer is 10s rather than 3s because the verify below now reads the value
+# back instead of merely running: the window has to outlive a process spawn plus
+# a possible transient retry, or the case fails on timing rather than on
+# behaviour. FTL would revert on its own, but the explicit re-enable afterwards
+# means the rest of the suite does not run against a half-disabled instance.
+call_tool "pihole_dns_set_blocking" '{"blocking":false,"timer":10}' "dns_set_blocking (disable 10s)"
 sleep 1
-call_tool "pihole_dns_get_blocking" '{}' "dns_get_blocking (verify disabled)"
+# dns.go:58 emits fmt.Sprintf("**Blocking:** %s", status.Blocking), where
+# status.Blocking is FTL's own state string ("enabled"/"disabled").
+call_tool_expect "pihole_dns_get_blocking" '{}' "dns_get_blocking (verify disabled)" "**Blocking:** disabled"
+call_tool "pihole_dns_set_blocking" '{"blocking":true}' "dns_set_blocking (re-enable)"
+call_tool_expect "pihole_dns_get_blocking" '{}' "dns_get_blocking (verify re-enabled)" "**Blocking:** enabled"
 
 echo ""
 echo "--- Statistics ---"
@@ -193,22 +290,50 @@ call_tool "pihole_search_domains" '{"domain":"google.com"}'
 echo ""
 echo "--- Domain CRUD ---"
 call_tool "pihole_domains_add" '{"type":"deny","kind":"exact","domain":"e2e-test.example.com","comment":"e2e test"}' "domains_add"
-call_tool "pihole_domains_list" '{"type":"deny","kind":"exact"}' "domains_list"
+# domains.go:128 emits fmt.Fprintf(&b, "- %s (%s/%s, %s)", d.Domain, d.Type,
+# d.Kind, status) for every row, so an entry that really landed comes back
+# verbatim in the list body. "**Domain added.**" from the add call proves only
+# that FTL accepted the request.
+call_tool_expect "pihole_domains_list" '{"type":"deny","kind":"exact"}' "domains_list (added domain present)" "e2e-test.example.com"
 call_tool "pihole_domains_list" '{"type":"deny","kind":"exact","detail":"minimal"}' "domains_list (minimal)"
-call_tool "pihole_domains_list" '{"type":"deny","kind":"exact","format":"csv"}' "domains_list (csv)"
+# domains.go:116 builds the CSV rows from that same slice, so the domain has to
+# survive the formatter as well as the API.
+call_tool_expect "pihole_domains_list" '{"type":"deny","kind":"exact","format":"csv"}' "domains_list (csv)" "e2e-test.example.com"
+# An update edits the comment only. The comment is what domains.go:130 appends
+# after the status when detail is normal, so a comment that did not reach FTL is
+# invisible in the "**Updated**" reply but plain in the list body.
+call_tool "pihole_domains_update" '{"type":"deny","kind":"exact","domain":"e2e-test.example.com","comment":"e2e amended"}' "domains_update"
+call_tool_expect "pihole_domains_list" '{"type":"deny","kind":"exact"}' "domains_list (update reached FTL)" "e2e amended"
 call_tool "pihole_domains_delete" '{"type":"deny","kind":"exact","domain":"e2e-test.example.com"}' "domains_delete"
+# An empty list renders as "No domains found." (domains.go:87), which satisfies
+# the absence check just as a populated list without this entry would.
+call_tool_expect_absent "pihole_domains_list" '{"type":"deny","kind":"exact"}' "domains_list (deleted domain gone)" "e2e-test.example.com"
 
 echo ""
 echo "--- Group CRUD ---"
 call_tool "pihole_groups_add" '{"name":"e2e-test-group","comment":"e2e test"}' "groups_add"
-call_tool "pihole_groups_list"
+# groups.go:84 emits fmt.Fprintf(&b, "- %s (id=%d, %s)", g.Name, g.ID, status).
+call_tool_expect "pihole_groups_list" '{}' "groups_list (added group present)" "e2e-test-group"
+call_tool "pihole_groups_update" '{"name":"e2e-test-group","comment":"e2e amended"}' "groups_update"
+call_tool_expect "pihole_groups_list" '{}' "groups_list (update reached FTL)" "e2e amended"
 call_tool "pihole_groups_delete" '{"name":"e2e-test-group"}' "groups_delete"
+call_tool_expect_absent "pihole_groups_list" '{}' "groups_list (deleted group gone)" "e2e-test-group"
 
 echo ""
 echo "--- Clients ---"
 call_tool "pihole_clients_list"
 call_tool "pihole_clients_list" '{"format":"csv"}' "clients_list (csv)"
 call_tool "pihole_clients_suggestions"
+# Full CRUD against a documentation-range address (RFC 5737 TEST-NET-3), so the
+# row can never collide with a real device on the machine running this.
+call_tool "pihole_clients_add" '{"client":"203.0.113.7","comment":"e2e test"}' "clients_add"
+# clients.go:96 emits fmt.Fprintf(&b, "- %s", c.Client) and appends the comment
+# after an em-space separator, so both fields come back in the list body.
+call_tool_expect "pihole_clients_list" '{}' "clients_list (added client present)" "203.0.113.7"
+call_tool "pihole_clients_update" '{"client":"203.0.113.7","comment":"e2e amended"}' "clients_update"
+call_tool_expect "pihole_clients_list" '{}' "clients_list (update reached FTL)" "e2e amended"
+call_tool "pihole_clients_delete" '{"client":"203.0.113.7"}' "clients_delete"
+call_tool_expect_absent "pihole_clients_list" '{}' "clients_list (deleted client gone)" "203.0.113.7"
 
 echo ""
 echo "--- Lists ---"
@@ -216,16 +341,59 @@ call_tool "pihole_lists_list"
 call_tool "pihole_lists_list" '{"detail":"minimal"}' "lists_list (minimal)"
 call_tool "pihole_lists_list" '{"detail":"full"}' "lists_list (full)"
 call_tool "pihole_lists_list" '{"format":"csv"}' "lists_list (csv)"
+# Full CRUD against an example.com address, which is reserved by RFC 2606 and
+# will never resolve, so gravity never fetches anything from it. The address
+# carries slashes on purpose: FTL takes the whole remainder after /api/lists as
+# one item, so a handler that split the path would address the wrong row.
+call_tool "pihole_lists_add" '{"address":"https://e2e.example.com/blocklist.txt","type":"block","comment":"e2e test"}' "lists_add"
+# lists.go:105 emits fmt.Fprintf(&b, "- %s (%s, %d domains, %s)", ...) followed
+# by the comment, so the address and the comment both appear in the list body.
+call_tool_expect "pihole_lists_list" '{}' "lists_list (added list present)" "https://e2e.example.com/blocklist.txt"
+call_tool "pihole_lists_update" '{"address":"https://e2e.example.com/blocklist.txt","type":"block","comment":"e2e amended"}' "lists_update"
+call_tool_expect "pihole_lists_list" '{}' "lists_list (update reached FTL)" "e2e amended"
+call_tool "pihole_lists_delete" '{"address":"https://e2e.example.com/blocklist.txt","type":"block"}' "lists_delete"
+call_tool_expect_absent "pihole_lists_list" '{}' "lists_list (deleted list gone)" "e2e.example.com/blocklist.txt"
 
 echo ""
 echo "--- Configuration ---"
 call_tool "pihole_config_get" '{"section":"dns"}' "config_get (dns)"
 call_tool "pihole_config_get" '{"detail":"minimal"}' "config_get (minimal)"
 call_tool "pihole_config_get_value" '{"element":"dns.upstreams"}' "config_get_value (dns.upstreams)"
-call_tool "pihole_config_add_value" '{"element":"dns.upstreams","value":"127.0.0.99#53","restart":false}' "config_add_value (round-trip add)"
-call_tool "pihole_config_remove_value" '{"element":"dns.upstreams","value":"127.0.0.99#53","restart":false}' "config_remove_value (round-trip remove)"
+# The probe value deliberately carries NO '#'. config.go:245 splices the value
+# into the path unescaped, so http.NewRequestWithContext reads everything from a
+# '#' onwards as a URL fragment and discards it: "127.0.0.99#53" reaches FTL as
+# "127.0.0.99", and restart=false is swallowed with it. A read-back anchored on
+# "127.0.0.99#53" could therefore never pass, and its absence check would be a
+# tautology that passes just as happily against a remove that did nothing.
+# Anchoring on a value the add genuinely lands and the remove genuinely clears
+# is what lets both assertions fail when the round trip regresses.
+#
+# A host#port upstream cannot be exercised end to end until config.go:245 and
+# :281 escape the value. The unit-level acceptance test for that fix is already
+# written: TestConfigAddRemoveValue_ReservedCharactersAreEscaped in
+# internal/tools/config_test.go, currently skipped. Add a '#'-bearing case here
+# once it lands.
+call_tool "pihole_config_add_value" '{"element":"dns.upstreams","value":"127.0.0.99","restart":false}' "config_add_value (round-trip add)"
+# config.go:219 emits fmt.Sprintf("**%s:** %s", element, formatted). Whether
+# `formatted` is the bare array or the enclosing object depends on how FTL
+# frames a reply for a path element, so anchor on the value itself rather than
+# on prose that could legitimately change shape.
+call_tool_expect "pihole_config_get_value" '{"element":"dns.upstreams"}' "config_get_value (upstream present after add)" "127.0.0.99"
+call_tool "pihole_config_remove_value" '{"element":"dns.upstreams","value":"127.0.0.99","restart":false}' "config_remove_value (round-trip remove)"
+call_tool_expect_absent "pihole_config_get_value" '{"element":"dns.upstreams"}' "config_get_value (upstream gone after remove)" "127.0.0.99"
 call_tool "pihole_config_set" '{"config":"{\"dns\":{\"cache\":{\"size\":10001}}}"}' "config_set (round-trip write)"
+# The echo in the config_set reply (config.go:172) comes from FTL's own
+# response, and FTL answers 200 for a body whose keys it ignored, so the echo is
+# not evidence. Asserting the value on a separate read is. 10001 and 10000 are
+# not substrings of one another, so each assertion below can only pass on its
+# own write.
+call_tool_expect "pihole_config_get_value" '{"element":"dns.cache.size"}' "config_get_value (cache size now 10001)" "10001"
 call_tool "pihole_config_set" '{"config":"{\"config\":{\"dns\":{\"cache\":{\"size\":10000}}}}"}' "config_set (already-wrapped payload, restores default)"
+# This is the case the double-wrap bug hid behind. config.go:156 unwraps a lone
+# "config" key before sending; if that unwrap regresses, FTL is handed
+# {"config":{"config":{...}}}, discards it, keeps 10001 and still returns 200.
+# Without this read-back the silent no-op passes.
+call_tool_expect "pihole_config_get_value" '{"element":"dns.cache.size"}' "config_get_value (cache size restored to 10000)" "10000"
 call_tool "pihole_config_set" '{"config":"{not json"}' "config_set (rejects malformed JSON)" "expect_error"
 call_tool "pihole_config_set" '{"config":"[1,2,3]"}' "config_set (rejects non-object)" "expect_error"
 call_tool "pihole_config_properties" '{}' "config_properties (FTL v6.6.1+)"
@@ -246,6 +414,13 @@ call_tool "pihole_network_interfaces"
 echo ""
 echo "--- DHCP ---"
 call_tool "pihole_dhcp_leases"
+# The dev Pi-hole runs with DHCP disabled, so there is no real lease to remove
+# and removing one would change state later runs depend on. Deleting an address
+# that cannot hold a lease still exercises the route, the auth path and the
+# error surfacing, and must fail cleanly rather than report success. Verified
+# against Pi-hole v6 2026.07.2: "Failed to delete DHCP lease (DHCP is not
+# enabled)".
+call_tool "pihole_dhcp_delete_lease" '{"ip":"203.0.113.250"}' "dhcp_delete_lease (no such lease, should fail)" expect_error
 
 echo ""
 echo "--- Logs ---"
@@ -260,6 +435,18 @@ call_tool "pihole_auth_sessions"
 echo ""
 echo "--- Teleporter ---"
 call_tool "pihole_teleporter_export"
+# call_tool leaves the reply in RESULT_TEXT, and teleporter.go:61 renders the
+# path as "File: <path> (<size> bytes, <when>)", so the archive this run just
+# wrote can be fed straight back in. Importing an instance's own backup is a
+# round trip rather than a state change, and gravity-only keeps it away from the
+# config the Configuration section above asserts on.
+EXPORTED_BACKUP=$(printf '%s' "$RESULT_TEXT" | grep -oE '/[^ ]+\.zip' | head -1)
+if [ -n "$EXPORTED_BACKUP" ]; then
+    call_tool_expect "pihole_teleporter_import" "{\"file_path\":\"${EXPORTED_BACKUP}\",\"config\":false,\"gravity\":true,\"dhcp_leases\":false}" "teleporter_import (round trip of this run's export)" "Import complete"
+    rm -f "$EXPORTED_BACKUP"
+else
+    record_fail "teleporter_import (round trip)" "could not read the archive path out of the export reply"
+fi
 
 echo ""
 echo "--- Actions ---"

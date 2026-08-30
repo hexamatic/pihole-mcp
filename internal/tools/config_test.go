@@ -1,12 +1,12 @@
 package tools
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/hexamatic/pihole-mcp/internal/pihole"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 func TestConfigGet_Minimal(t *testing.T) {
@@ -80,22 +80,12 @@ func TestConfigGet_WithSection(t *testing.T) {
 }
 
 func TestConfigSet_Success(t *testing.T) {
-	// Capture the actual request body to assert the {"config": ...} wrapper.
-	var gotBody []byte
-	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/auth" {
-			writeTestJSON(w, map[string]any{"session": map[string]any{"valid": true, "sid": "test-sid"}})
-			return
-		}
-		if r.URL.Path == "/api/config" && r.Method == "PATCH" {
-			gotBody, _ = io.ReadAll(r.Body)
-			writeTestJSON(w, map[string]any{
-				"config": map[string]any{"dns": map[string]any{"blocking": map[string]any{"active": false}}},
-			})
-			return
-		}
-		http.NotFound(w, r)
-	}))
+	rec := piholeHandler(map[string]any{
+		"PATCH /config": map[string]any{
+			"config": map[string]any{"dns": map[string]any{"blocking": map[string]any{"active": false}}},
+		},
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, configSetHandler, c, map[string]any{
 		"config": `{"dns":{"blocking":{"active":false}}}`,
@@ -106,26 +96,29 @@ func TestConfigSet_Success(t *testing.T) {
 
 	// The Pi-hole API requires the body wrapped in a "config" key.
 	// Regression: the handler previously sent the bare object, which the
-	// API rejects with 400 "No \"config\" object in body data".
-	if len(gotBody) == 0 {
-		t.Fatal("expected PATCH /config request body, got none")
-	}
-	var body map[string]any
-	if err := json.Unmarshal(gotBody, &body); err != nil {
-		t.Fatalf("PATCH body is not valid JSON: %v (raw: %s)", err, gotBody)
-	}
-	cfg, ok := body["config"]
-	if !ok {
-		t.Fatalf("PATCH body missing 'config' wrapper, got: %s", gotBody)
-	}
-	dns, ok := cfg.(map[string]any)["dns"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected dns section inside config wrapper, got: %s", gotBody)
-	}
-	blocking, ok := dns["blocking"].(map[string]any)
-	if !ok || blocking["active"] != false {
-		t.Fatalf("expected nested blocking.active=false in body, got: %s", gotBody)
-	}
+	// API rejects with 400 "No \"config\" object in body data". The selector
+	// pins the verb as well: the fake routes on path alone, so a handler that
+	// switched to PUT would still be answered and the reply would look right.
+	req := rec.Only(t, "PATCH", "/config")
+	req.AssertBodyKeys(t, "config")
+	req.AssertHeader(t, "Content-Type", "application/json")
+	// The selector matches on the decoded path, which net/url has already
+	// stripped the query from, so PATCH /config?restart=false satisfies it just
+	// as happily. This tool rewrites the whole config; a stray restart=false
+	// would defer the FTL reload the caller is expecting with no symptom in the
+	// reply text.
+	req.AssertNoQueryString(t)
+
+	// Compare the whole wrapped object rather than the one leaf. FTL applies
+	// what it is sent and answers 200 either way, so a handler that kept the
+	// key under test while dropping its siblings would look successful and
+	// write half the change.
+	req.AssertField(t, "config", map[string]any{
+		"dns": map[string]any{"blocking": map[string]any{"active": false}},
+	})
+	// Double-wrapping is the other way this write silently applies nothing, so
+	// the happy path pins its absence too, not only the already-wrapped case.
+	req.AssertNoField(t, "config.config")
 }
 
 func TestConfigSet_InvalidJSON(t *testing.T) {
@@ -139,69 +132,44 @@ func TestConfigSet_InvalidJSON(t *testing.T) {
 	}
 }
 
-// captureConfigPatch returns a handler that records the PATCH /config body.
-func captureConfigPatch(got *[]byte) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/auth" {
-			writeTestJSON(w, map[string]any{"session": map[string]any{"valid": true, "sid": "test-sid"}})
-			return
-		}
-		if r.URL.Path == "/api/config" && r.Method == "PATCH" {
-			*got, _ = io.ReadAll(r.Body)
-			writeTestJSON(w, map[string]any{"config": map[string]any{}})
-			return
-		}
-		http.NotFound(w, r)
-	}
+// configSetRecorder answers the one PATCH the tool makes and keeps the request,
+// so the assertions below read the wire rather than the canned reply.
+func configSetRecorder() *recorder {
+	return piholeHandler(map[string]any{
+		"PATCH /config": map[string]any{"config": map[string]any{}},
+	})
 }
 
 // A caller who worked around the missing wrapper sends {"config": {...}} already.
 // Wrapping that again yields {"config":{"config":{...}}}, which FTL answers 200 to
 // while applying nothing, so the envelope must be detected rather than nested.
 func TestConfigSet_AlreadyWrappedPayloadIsNotDoubleWrapped(t *testing.T) {
-	var gotBody []byte
-	c := newTestClient(t, captureConfigPatch(&gotBody))
+	rec := configSetRecorder()
+	c := newTestClient(t, rec)
 
 	callTool(t, configSetHandler, c, map[string]any{
 		"config": `{"config":{"dns":{"blocking":{"active":false}}}}`,
 	})
 
-	var body map[string]any
-	if err := json.Unmarshal(gotBody, &body); err != nil {
-		t.Fatalf("PATCH body is not valid JSON: %v (raw: %s)", err, gotBody)
-	}
-	cfg, ok := body["config"].(map[string]any)
-	if !ok {
-		t.Fatalf("PATCH body missing 'config' wrapper, got: %s", gotBody)
-	}
-	if _, doubled := cfg["config"]; doubled {
-		t.Fatalf("payload was wrapped twice, got: %s", gotBody)
-	}
-	if _, ok := cfg["dns"].(map[string]any); !ok {
-		t.Fatalf("expected dns section directly under the wrapper, got: %s", gotBody)
-	}
+	req := rec.Only(t, "PATCH", "/config")
+	req.AssertBodyKeys(t, "config")
+	req.AssertNoField(t, "config.config")
+	req.AssertField(t, "config.dns.blocking.active", false)
 }
 
 // A bare object with a single "dns" key must still be wrapped normally.
 func TestConfigSet_SingleKeyBarePayloadIsWrapped(t *testing.T) {
-	var gotBody []byte
-	c := newTestClient(t, captureConfigPatch(&gotBody))
+	rec := configSetRecorder()
+	c := newTestClient(t, rec)
 
 	callTool(t, configSetHandler, c, map[string]any{
 		"config": `{"dns":{"blocking":{"active":false}}}`,
 	})
 
-	var body map[string]any
-	if err := json.Unmarshal(gotBody, &body); err != nil {
-		t.Fatalf("PATCH body is not valid JSON: %v (raw: %s)", err, gotBody)
-	}
-	cfg, ok := body["config"].(map[string]any)
-	if !ok {
-		t.Fatalf("PATCH body missing 'config' wrapper, got: %s", gotBody)
-	}
-	if _, ok := cfg["dns"].(map[string]any); !ok {
-		t.Fatalf("expected dns section inside the wrapper, got: %s", gotBody)
-	}
+	req := rec.Only(t, "PATCH", "/config")
+	req.AssertBodyKeys(t, "config")
+	req.AssertNoField(t, "config.config")
+	req.AssertField(t, "config.dns.blocking.active", false)
 }
 
 func TestConfigSet_NonObjectJSON(t *testing.T) {
@@ -243,13 +211,14 @@ func TestConfigSet_Error(t *testing.T) {
 }
 
 func TestConfigGetValue_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	rec := piholeHandler(map[string]any{
 		"/config/dns/upstreams": map[string]any{
 			"config": map[string]any{
 				"upstreams": []any{"1.1.1.1#53", "8.8.8.8#53"},
 			},
 		},
-	}))
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, configGetValueHandler, c, map[string]any{"element": "dns.upstreams"})
 	if !strings.Contains(text, "dns/upstreams") {
@@ -258,16 +227,111 @@ func TestConfigGetValue_Success(t *testing.T) {
 	if !strings.Contains(text, "1.1.1.1#53") {
 		t.Errorf("expected upstream value, got: %s", text)
 	}
+
+	// Everything asserted above is built from the caller's own argument and the
+	// canned reply, so none of it can see the request. This tool is the
+	// read-back half of every write-then-read verification in
+	// scripts/e2e-test.sh: if it ever addressed the wrong path or verb, those
+	// verifications would stop verifying anything and stay green. Pin the verb,
+	// the dotted-element-to-segment translation, and the absence of a body.
+	req := rec.Only(t, "GET", "/config/dns/upstreams")
+	req.AssertNoBody(t)
+	req.AssertNoQueryString(t)
+}
+
+// A value carrying a '#' is truncated before the request leaves the client,
+// because the handler concatenates it into the path unescaped and
+// http.NewRequestWithContext then reads everything from the '#' onwards as a
+// URL fragment. Pi-hole upstreams are routinely written host#port
+// (127.0.0.1#5335 is the standard Unbound configuration), FTL answers 200 to
+// the truncated path, and the tool reports the full value as added. A
+// different value is written from the one the caller asked for.
+//
+// This test pins the broken behaviour deliberately, so that it goes RED the
+// moment internal/tools/config.go:245 and :281 escape the value. That is the
+// point of it: the fix must not be able to land unnoticed. When it does land,
+// delete this test and remove the t.Skip from the pair below, which already
+// carries the assertions the fixed code has to satisfy.
+//
+// Note the restart flag is swallowed by the same fragment: it is appended
+// after the unescaped value, so "?restart=false" ends up inside the discarded
+// fragment and never reaches the wire either.
+func TestConfigAddRemoveValue_UnescapedHashTruncatesThePath_KNOWNBUG(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		handler func(*pihole.Registry) server.ToolHandlerFunc
+		method  string
+	}{
+		{"add", configAddValueHandler, "PUT"},
+		{"remove", configRemoveValueHandler, "DELETE"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := piholeHandler(map[string]any{
+				"/config/dns/upstreams/127.0.0.1": map[string]any{},
+			})
+			c := newTestClient(t, rec)
+
+			callTool(t, tc.handler, c, map[string]any{
+				"element": "dns.upstreams",
+				"value":   "127.0.0.1#5335",
+				"restart": false,
+			})
+
+			req := rec.Only(t, tc.method, "/config/dns/upstreams/127.0.0.1")
+			req.AssertRawPath(t, "/config/dns/upstreams/127.0.0.1")
+			req.AssertNoQuery(t, "restart")
+		})
+	}
+}
+
+// The acceptance test for the escaping fix. Remove the Skip once
+// internal/tools/config.go escapes the value with url.PathEscape; the restart
+// parameter must stay appended after the escaped value so the four restart
+// cases above keep passing.
+func TestConfigAddRemoveValue_ReservedCharactersAreEscaped(t *testing.T) {
+	t.Skip("pending the production fix at internal/tools/config.go:245 and :281 " +
+		"(the value is spliced into the path unescaped); see " +
+		"TestConfigAddRemoveValue_UnescapedHashTruncatesThePath_KNOWNBUG")
+
+	for _, tc := range []struct {
+		name    string
+		handler func(*pihole.Registry) server.ToolHandlerFunc
+		method  string
+	}{
+		{"add", configAddValueHandler, "PUT"},
+		{"remove", configRemoveValueHandler, "DELETE"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Route-table keys are matched against the DECODED path, so the
+			// key carries the literal '#'. The selector and AssertRawPath
+			// below use the escaped spelling, which is what went on the wire.
+			rec := piholeHandler(map[string]any{
+				"/config/dns/upstreams/127.0.0.1#5335": map[string]any{},
+			})
+			c := newTestClient(t, rec)
+
+			callTool(t, tc.handler, c, map[string]any{
+				"element": "dns.upstreams",
+				"value":   "127.0.0.1#5335",
+				"restart": false,
+			})
+
+			req := rec.Only(t, tc.method, "/config/dns/upstreams/127.0.0.1%235335")
+			req.AssertRawPath(t, "/config/dns/upstreams/127.0.0.1%235335")
+			req.AssertQuery(t, "restart", "false")
+		})
+	}
 }
 
 func TestConfigAddValue_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	rec := piholeHandler(map[string]any{
 		"/config/dns/upstreams/1.1.1.1": map[string]any{
 			"config": map[string]any{
 				"upstreams": []any{"1.1.1.1"},
 			},
 		},
-	}))
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, configAddValueHandler, c, map[string]any{
 		"element": "dns.upstreams",
@@ -279,12 +343,51 @@ func TestConfigAddValue_Success(t *testing.T) {
 	if !strings.Contains(text, "1.1.1.1") {
 		t.Errorf("expected value in output, got: %s", text)
 	}
+
+	// This endpoint carries both the element and the new value in the path, so
+	// the path is the whole request: the dotted element becomes segments and
+	// the value is appended. PUT is what extends the array, and the reply text
+	// is built from the tool's own arguments rather than the response, so
+	// nothing above would notice a wrong verb or a mangled element.
+	req := rec.Only(t, "PUT", "/config/dns/upstreams/1.1.1.1")
+	// restart defaults to true and so does the API, so the flag belongs off the
+	// wire. Sending restart=false here would quietly defer the FTL restart that
+	// a caller who never mentioned it still expects.
+	req.AssertNoQuery(t, "restart")
+	req.AssertNoQueryString(t)
+}
+
+// restart=false has to reach the wire as a query parameter. The tool's reply is
+// identical either way, so a dropped flag restarts FTL and interrupts DNS for
+// every client on the network with no symptom a caller could see.
+func TestConfigAddValue_RestartFalseIsSentAsQuery(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/config/dns/upstreams/1.1.1.1": map[string]any{
+			"config": map[string]any{
+				"upstreams": []any{"1.1.1.1"},
+			},
+		},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, configAddValueHandler, c, map[string]any{
+		"element": "dns.upstreams",
+		"value":   "1.1.1.1",
+		"restart": false,
+	})
+
+	req := rec.Only(t, "PUT", "/config/dns/upstreams/1.1.1.1")
+	req.AssertQuery(t, "restart", "false")
+	// restart is the only parameter this endpoint takes, and a stray extra one
+	// would be as invisible in the reply as a missing one.
+	req.AssertQueryKeys(t, "restart")
 }
 
 func TestConfigRemoveValue_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	rec := piholeHandler(map[string]any{
 		"/config/dns/upstreams/1.1.1.1": map[string]any{},
-	}))
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, configRemoveValueHandler, c, map[string]any{
 		"element": "dns.upstreams",
@@ -296,6 +399,32 @@ func TestConfigRemoveValue_Success(t *testing.T) {
 	if !strings.Contains(text, "1.1.1.1") {
 		t.Errorf("expected value in output, got: %s", text)
 	}
+
+	// Add and remove differ only by verb: both address the same path and
+	// neither sends a body. A DELETE that went out as a PUT would add the
+	// value the caller asked to remove, and the reply would still say Removed.
+	req := rec.Only(t, "DELETE", "/config/dns/upstreams/1.1.1.1")
+	req.AssertNoQuery(t, "restart")
+	req.AssertNoQueryString(t)
+}
+
+// The mirror of the add case: a silently dropped restart=false costs a
+// network-wide DNS interruption that nothing in the reply hints at.
+func TestConfigRemoveValue_RestartFalseIsSentAsQuery(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/config/dns/upstreams/1.1.1.1": map[string]any{},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, configRemoveValueHandler, c, map[string]any{
+		"element": "dns.upstreams",
+		"value":   "1.1.1.1",
+		"restart": false,
+	})
+
+	req := rec.Only(t, "DELETE", "/config/dns/upstreams/1.1.1.1")
+	req.AssertQuery(t, "restart", "false")
+	req.AssertQueryKeys(t, "restart")
 }
 
 func TestConfigProperties_Fixture(t *testing.T) {

@@ -90,12 +90,13 @@ func TestDomainsList_Empty(t *testing.T) {
 }
 
 func TestDomainsAdd_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	rec := piholeHandler(map[string]any{
 		"/domains/deny/exact": map[string]any{
 			"domains":   []any{},
 			"processed": map[string]any{"success": []any{map[string]any{"item": "example.com"}}, "errors": []any{}},
 		},
-	}))
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, domainsAddHandler, c, map[string]any{
 		"type": "deny", "kind": "exact", "domain": "example.com",
@@ -106,12 +107,60 @@ func TestDomainsAdd_Success(t *testing.T) {
 	if !strings.Contains(text, "example.com") {
 		t.Errorf("expected processed domain in output, got: %s", text)
 	}
+
+	// The list an entry lands on is chosen entirely by the path. A POST to
+	// /domains/allow/exact blocks nothing and reports exactly the same
+	// "Domain added" text, so the reply is no evidence at all.
+	req := rec.Only(t, "POST", "/domains/deny/exact")
+	req.AssertRawPath(t, "/domains/deny/exact")
+	req.AssertNoQueryString(t)
+	// An add with no explicit enabled leaves the key out so the API applies its
+	// own default, which for a new entry is enabled. Anything else in the body
+	// would be a key FTL did not ask for.
+	req.AssertBodyKeys(t, "domain")
+	req.AssertField(t, "domain", "example.com")
+	// Without Content-Type the body is an unlabelled blob. pihole.Client sets
+	// the header for every request that carries one.
+	req.AssertHeader(t, "Content-Type", "application/json")
+}
+
+// The optional arguments have never reached a handler in any test, so the
+// branches that build them are dead code under test: renaming body["comment"]
+// to body["note"], or deleting it, survives the whole suite. A user who types
+// a comment loses it silently, and an add that was meant to be disabled goes
+// out enabled. AssertField pins the JSON type as well as the value, so sending
+// the string "false" where the bool belongs is caught too.
+//
+// This is not the known comment-only-PUT defect: that one is on the update
+// handlers. An add that sends an explicit enabled=false is correct today and
+// stays correct after that fix.
+func TestDomainsAdd_SendsCommentAndExplicitDisable(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/domains/deny/exact": map[string]any{
+			"domains":   []any{},
+			"processed": map[string]any{"success": []any{map[string]any{"item": "example.com"}}, "errors": []any{}},
+		},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, domainsAddHandler, c, map[string]any{
+		"type": "deny", "kind": "exact", "domain": "example.com",
+		"comment": "blocked by policy", "enabled": false,
+	})
+
+	req := rec.Only(t, "POST", "/domains/deny/exact")
+	req.AssertBodyKeys(t, "domain", "comment", "enabled")
+	req.AssertField(t, "domain", "example.com")
+	req.AssertField(t, "comment", "blocked by policy")
+	req.AssertField(t, "enabled", false)
+	req.AssertNoQueryString(t)
 }
 
 func TestDomainsUpdate_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	rec := piholeHandler(map[string]any{
 		"/domains/deny/exact/example.com": map[string]any{"domains": []any{}},
-	}))
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, domainsUpdateHandler, c, map[string]any{
 		"type": "deny", "kind": "exact", "domain": "example.com", "comment": "updated",
@@ -119,12 +168,48 @@ func TestDomainsUpdate_Success(t *testing.T) {
 	if !strings.Contains(text, "Updated") {
 		t.Errorf("expected 'Updated' message, got: %s", text)
 	}
+
+	// Type, kind and domain are all path segments. Dropping or reordering any
+	// one of them updates a different entry, or none, and the reply text is
+	// identical either way.
+	req := rec.Only(t, "PUT", "/domains/deny/exact/example.com")
+	req.AssertRawPath(t, "/domains/deny/exact/example.com")
+	req.AssertNoQueryString(t)
+	req.AssertField(t, "comment", "updated")
+	// The full key set is deliberately not pinned here. A comment-only update
+	// sends no enabled key, which FTL reads as "enable this entry", so editing
+	// the comment on a disabled domain silently re-enables it. Freezing that
+	// shape would make the eventual fix look like the regression.
+	// TestDomainsUpdate_ExplicitDisableSendsEnabledFalse pins the body that is
+	// correct whichever way it is fixed.
+}
+
+// enabled only ever reaches the wire when it is false, so an explicit disable is
+// the one update whose body is complete today. Pinning it guards the value going
+// out as a JSON boolean rather than the string "false", which FTL accepts and
+// then treats as truthy.
+func TestDomainsUpdate_ExplicitDisableSendsEnabledFalse(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/domains/deny/exact/example.com": map[string]any{"domains": []any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, domainsUpdateHandler, c, map[string]any{
+		"type": "deny", "kind": "exact", "domain": "example.com",
+		"comment": "paused", "enabled": false,
+	})
+
+	req := rec.Only(t, "PUT", "/domains/deny/exact/example.com")
+	req.AssertBodyKeys(t, "comment", "enabled")
+	req.AssertField(t, "enabled", false)
+	req.AssertField(t, "comment", "paused")
 }
 
 func TestDomainsDelete_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	rec := piholeHandler(map[string]any{
 		"/domains/deny/exact/example.com": map[string]any{},
-	}))
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, domainsDeleteHandler, c, map[string]any{
 		"type": "deny", "kind": "exact", "domain": "example.com",
@@ -132,19 +217,36 @@ func TestDomainsDelete_Success(t *testing.T) {
 	if !strings.Contains(text, "Deleted") {
 		t.Errorf("expected 'Deleted' message, got: %s", text)
 	}
+
+	// A delete that reached the API as anything but DELETE would leave the
+	// entry in place while still reporting success.
+	req := rec.Only(t, "DELETE", "/domains/deny/exact/example.com")
+	req.AssertRawPath(t, "/domains/deny/exact/example.com")
+	req.AssertNoQueryString(t)
+	req.AssertNoBody(t)
 }
 
 func TestDomainsBatchDelete_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
-		"/domains:batchDelete": map[string]any{},
-	}))
+	const items = `[{"item":"example.com","type":"deny","kind":"exact"}]`
 
-	text := callTool(t, domainsBatchDeleteHandler, c, map[string]any{
-		"items": `[{"item":"example.com","type":"deny","kind":"exact"}]`,
+	rec := piholeHandler(map[string]any{
+		"/domains:batchDelete": map[string]any{},
 	})
+	c := newTestClient(t, rec)
+
+	text := callTool(t, domainsBatchDeleteHandler, c, map[string]any{"items": items})
 	if !strings.Contains(text, "Batch delete completed") {
 		t.Errorf("expected 'Batch delete completed' message, got: %s", text)
 	}
+
+	// The items string is handed to the client as pre-encoded JSON. If rawJSON
+	// ever stopped implementing json.Marshaler the array would go out as a
+	// quoted string, which FTL rejects, and the batch endpoint is one POST that
+	// deletes an unbounded number of entries, so the body is the whole request.
+	req := rec.Only(t, "POST", "/domains:batchDelete")
+	req.AssertRawPath(t, "/domains:batchDelete")
+	req.AssertNoQueryString(t)
+	req.AssertRawBody(t, items)
 }
 
 func TestDomainsList_Error(t *testing.T) {

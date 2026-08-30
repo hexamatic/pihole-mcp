@@ -35,6 +35,9 @@ jobs:
           go run ./cmd/toolsdoc
           git diff --exit-code docs/TOOLS.md
 
+      - name: Check every tool has end-to-end coverage or a stated reason
+        run: go run ./cmd/toolsdoc -check-e2e
+
       - name: Vet
         run: go vet ./...
 
