@@ -83,10 +83,11 @@ fmt-check:
     fi
     echo "Formatting OK"
 
-# Fuzz the tool-parameter validators (30s; raise -fuzztime for deeper runs)
+# Fuzz the tool-parameter validators (30s each; raise -fuzztime for deeper runs)
 [group('quality')]
 fuzz:
     go test -run=^$ -fuzz=FuzzValidateDomainName -fuzztime=30s ./internal/tools/
+    go test -run=^$ -fuzz=FuzzValidateURL -fuzztime=30s ./internal/tools/
 
 # Regenerate docs/TOOLS.md from the registered tool definitions
 [group('quality')]
@@ -180,18 +181,33 @@ refresh-fixtures: seed
 [group('ci')]
 ci: fmt-check lint test e2e-coverage
     go vet ./...
+    go vet -tags slim ./...
     go mod tidy
     git diff --exit-code go.mod go.sum
     go run ./cmd/toolsdoc
     git diff --exit-code docs/TOOLS.md
+    scripts/release-notes.sh "$(grep -m1 -oE '^## \[v[0-9]+\.[0-9]+\.[0-9]+\]' CHANGELOG.md | tr -d '#[] ')" > /dev/null
+    scripts/release-notes.sh Unreleased > /dev/null
     go build -o /dev/null ./cmd/pihole-mcp
+    go build -tags slim -o /dev/null ./cmd/pihole-mcp
+    goreleaser check
     @echo "\033[32m✓ CI passed\033[0m"
 
 # ─── Release ─────────────────────────────────────────────────────────────────
 
-# Dry-run release build (local snapshot). Signing and SBOMs are skipped:
-# keyless cosign needs the CI OIDC identity (locally it would open a
-# browser) and syft may not be installed.
+# Validate .goreleaser.yaml without building anything. Cheap, and the first
+# thing to run after editing release config.
+[group('release')]
+release-check:
+    goreleaser check
+
+# Dry-run release build (local snapshot). `--skip=sign,sbom` is a *local*
+# workaround, not a property of snapshot mode: keyless cosign wants the CI OIDC
+# identity and would open a browser here, and syft may not be installed. Both
+# pipes do run under a bare `--snapshot`, which is what
+# .github/workflows/release-rehearsal.yml exercises on CI. If you are changing
+# the signing or SBOM blocks, this recipe will not tell you whether they work;
+# open a pull request touching .goreleaser.yaml and read the rehearsal.
 [group('release')]
 release-dry:
     goreleaser release --snapshot --clean --skip=sign,sbom

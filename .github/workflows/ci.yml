@@ -16,6 +16,11 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    # Observed p95 is under two minutes. The timeouts throughout this repo sit
+    # at roughly 4x that, which is generous enough to absorb a slow runner but
+    # tight enough that a hung step fails in minutes rather than burning the
+    # default six hours.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -38,8 +43,32 @@ jobs:
       - name: Check every tool has end-to-end coverage or a stated reason
         run: go run ./cmd/toolsdoc -check-e2e
 
+      # A malformed CHANGELOG.md is only discovered on a tag otherwise, because
+      # release.yml feeds scripts/release-notes.sh straight into goreleaser's
+      # --release-notes. This runs the same extraction against the newest
+      # versioned heading and against [Unreleased], which is the section the
+      # next release promotes. Costs about a second; release-rehearsal.yml runs
+      # the same check as part of the full release path.
+      - name: Check CHANGELOG.md still yields a release body
+        run: |
+          version="$(grep -m1 -oE '^## \[v[0-9]+\.[0-9]+\.[0-9]+\]' CHANGELOG.md | tr -d '#[] ')"
+          if [ -z "$version" ]; then
+            echo "::error file=CHANGELOG.md::no versioned '## [vX.Y.Z]' heading found"
+            exit 1
+          fi
+          scripts/release-notes.sh "$version" > /dev/null
+          scripts/release-notes.sh Unreleased > /dev/null
+          echo "release body extracts cleanly for ${version} and [Unreleased]"
+
       - name: Vet
         run: go vet ./...
+
+      # The slim flavour is half of every release and nothing here compiled it.
+      # `-tags slim` swaps the OpenTelemetry implementation for a set of no-ops,
+      # so an unused import or a signature drift in the tracing seam breaks only
+      # this build — and used to break it for the first time on the tag.
+      - name: Vet (slim)
+        run: go vet -tags slim ./...
 
       - name: Lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
@@ -60,12 +89,30 @@ jobs:
       - name: Build
         run: go build -o /dev/null ./cmd/pihole-mcp
 
-  build-matrix:
+      - name: Build (slim)
+        run: go build -tags slim -o /dev/null ./cmd/pihole-mcp
+
+      # The goreleaser action's `version: "~> v2"` resolves at run time and
+      # Dependabot cannot maintain an action input, so the release path picks
+      # up a new goreleaser minor without warning. Pinning it is the wrong fix
+      # — it would just move the surprise to whenever someone bumps the pin.
+      # Running `check` on every pull request means a deprecation or a schema
+      # change surfaces here, days before a tag, which is exactly how the
+      # `brews:` deprecation was caught. release-rehearsal.yml runs the same
+      # command, but only when release config changes; this one always runs.
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: "~> v2"
+          args: check
+
+  # Was a six-leg matrix. Cross-compiling costs about five seconds a target, so
+  # six jobs spent roughly thirty seconds each on runner start-up and Go setup
+  # to do three seconds of work. One job doing all six is faster in wall-clock
+  # and gives the branch ruleset a single stable check name to require.
+  build:
+    name: build (6 platforms)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        goos: [linux, darwin, windows]
-        goarch: [amd64, arm64]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -75,16 +122,53 @@ jobs:
         with:
           go-version-file: "go.mod"
 
-      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+      - name: Cross-compile every release target
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-        run: go build -o /dev/null ./cmd/pihole-mcp
+        run: |
+          fail=0
+          for goos in linux darwin windows; do
+            for goarch in amd64 arm64; do
+              printf '==> %s/%s\n' "$goos" "$goarch"
+              GOOS="$goos" GOARCH="$goarch" go build -o /dev/null ./cmd/pihole-mcp || fail=1
+            done
+          done
+          exit "$fail"
 
-  integration:
-    needs: validate
+  # The root Dockerfile is what a contributor gets from `docker build .` and
+  # what Dependabot's `docker` ecosystem keeps digest-pinned, but nothing built
+  # it: releases use Dockerfile.goreleaser, which copies a pre-built binary and
+  # therefore exercises none of the builder stage. A bad base-image bump or a
+  # broken COPY would have reached main unnoticed.
+  docker:
+    name: docker build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      # --load is required, not optional. setup-buildx-action makes the
+      # docker-container driver the default, and that driver writes to the
+      # build cache rather than the daemon unless an output is named, so
+      # without it the tag resolves to nothing and the run step below fails
+      # with "image not found" on a build that actually succeeded.
+      - name: Build the root Dockerfile
+        run: docker build --build-arg VERSION=ci --load -t pihole-mcp:ci .
+
+      - name: Check the binary in the image runs
+        run: docker run --rm pihole-mcp:ci -version
+
+  # No `needs:` on purpose. This job shares no artefact with validate and was
+  # only ever sequenced behind it to avoid spending a runner on a build that
+  # would not compile — which cost every green run the full length of validate,
+  # roughly 45% of CI wall-clock, to save a runner-minute on the rare red one.
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

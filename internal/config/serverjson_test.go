@@ -70,21 +70,47 @@ func loadServerManifest(t *testing.T) serverManifest {
 
 // TestServerJSONNameMatchesImageLabel guards the ownership-verification link
 // between server.json and the image the registry inspects.
+//
+// Both Dockerfiles are checked, not just the one that ships. Dockerfile.goreleaser
+// builds the published image and is the file the registry actually reads the
+// label off; the root Dockerfile is what a contributor gets from `docker build .`
+// and carries a comment promising it is kept in step. Until this test read it,
+// that comment was an assertion nothing enforced, and the two could drift apart
+// with every check still green.
 func TestServerJSONNameMatchesImageLabel(t *testing.T) {
 	m := loadServerManifest(t)
 
-	dockerfile, err := os.ReadFile("../../Dockerfile.goreleaser")
+	label := regexp.MustCompile(`(?m)^LABEL\s+io\.modelcontextprotocol\.server\.name="([^"]+)"`)
+
+	// Read with literal paths rather than building them in the loop: gosec's
+	// G304 fires on any non-constant argument to os.ReadFile, and a suppression
+	// comment is a worse trade than two explicit reads.
+	releaseDockerfile, err := os.ReadFile("../../Dockerfile.goreleaser")
 	if err != nil {
 		t.Fatalf("read Dockerfile.goreleaser: %v", err)
 	}
-
-	label := regexp.MustCompile(`(?m)^LABEL\s+io\.modelcontextprotocol\.server\.name="([^"]+)"`)
-	match := label.FindSubmatch(dockerfile)
-	if match == nil {
-		t.Fatal("Dockerfile.goreleaser has no io.modelcontextprotocol.server.name label — MCP Registry publishing will fail ownership verification")
+	rootDockerfile, err := os.ReadFile("../../Dockerfile")
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
 	}
-	if got := string(match[1]); got != m.Name {
-		t.Errorf("image label = %q, server.json name = %q — these must be identical", got, m.Name)
+
+	for _, df := range []struct {
+		name    string
+		content []byte
+	}{
+		{"Dockerfile.goreleaser", releaseDockerfile},
+		{"Dockerfile", rootDockerfile},
+	} {
+		name := df.name
+		t.Run(name, func(t *testing.T) {
+			match := label.FindSubmatch(df.content)
+			if match == nil {
+				t.Fatalf("%s has no io.modelcontextprotocol.server.name label — MCP Registry publishing will fail ownership verification", name)
+			}
+			if got := string(match[1]); got != m.Name {
+				t.Errorf("%s label = %q, server.json name = %q — these must be identical", name, got, m.Name)
+			}
+		})
 	}
 
 	// GitHub-based namespaces are the only ones we can prove ownership of.

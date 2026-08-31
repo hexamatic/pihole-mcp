@@ -1,0 +1,82 @@
+name: MCP Manifest
+
+# Validates server.json against the live MCP Registry, before a tag rather
+# than after one.
+#
+# Two of the four follow-ups the v0.8.0 release needed were registry-side
+# rejections of a manifest that was locally valid: a `description` over the
+# documented 100-character cap, and a `version` field on an OCI package. The
+# published JSON Schema encodes neither rule, so nothing in the repository
+# could have caught them by reading the schema.
+#
+# `mcp-publisher validate` checks against the registry itself. It needs no
+# authentication, mints no OIDC token and publishes nothing, which is what
+# makes it safe to run on an ordinary pull request. internal/config's drift
+# tests encode the two rules that already bit us; this catches the next one.
+#
+# It is a workflow of its own rather than a job in ci.yml because ci.yml has a
+# workflow-level `on:` and jobs cannot carry their own `paths:` filter — the
+# manifest changes rarely and there is no reason to hit the registry on every
+# Go change.
+
+on:
+  pull_request:
+    paths:
+      - "server.json"
+      - ".github/workflows/mcp-validate.yml"
+  push:
+    branches: [main]
+    paths:
+      - "server.json"
+      - ".github/workflows/mcp-validate.yml"
+  # The registry is in preview and tightens rules without notice. A weekly run
+  # means a newly enforced constraint surfaces on a quiet Monday rather than
+  # against a tag that has already published its artefacts.
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate server.json
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: "v3.1.2"
+
+      # Same verified download as publish-mcp.yml — see the longer note there.
+      # Keep the version and the certificate identity in step between the two.
+      - name: Install mcp-publisher
+        env:
+          MCP_PUBLISHER_VERSION: "1.8.0"
+        run: |
+          base="https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}"
+          curl -fsSL -o mcp-publisher.tar.gz "${base}/mcp-publisher_linux_amd64.tar.gz"
+          curl -fsSL -o mcp-publisher.tar.gz.sigstore.json "${base}/mcp-publisher_linux_amd64.tar.gz.sigstore.json"
+          cosign verify-blob \
+            --bundle mcp-publisher.tar.gz.sigstore.json \
+            --certificate-identity="https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/v${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            mcp-publisher.tar.gz
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+          ./mcp-publisher --version
+
+      # server.json is committed carrying the *previous* release's version, and
+      # publish-mcp.yml rewrites the version fields at publish time. Validation
+      # does not care which version is in the file, so the committed manifest is
+      # validated exactly as it sits.
+      - name: Validate manifest against the registry
+        run: ./mcp-publisher validate

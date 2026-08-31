@@ -30,6 +30,7 @@ jobs:
   analyse:
     name: Analyse ${{ matrix.language }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       # Publish results to the code-scanning dashboard.

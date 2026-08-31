@@ -87,6 +87,15 @@ cosign verify \
 gh attestation verify pihole-mcp_X.Y.Z_linux_amd64.tar.gz --repo hexamatic/pihole-mcp
 ```
 
+From v0.9.0 the container images carry build provenance as well, pushed to the registry alongside the image so it resolves without a download:
+
+```bash
+gh attestation verify oci://ghcr.io/hexamatic/pihole-mcp:X.Y.Z --repo hexamatic/pihole-mcp
+gh attestation verify oci://ghcr.io/hexamatic/pihole-mcp:X.Y.Z-slim --repo hexamatic/pihole-mcp
+```
+
+This is a different guarantee from the `cosign verify` above and worth running as well as, not instead of. The cosign signature proves the image was signed by this repository's release workflow; the attestation is a signed SLSA statement of *how* it was built, naming the workflow, the commit and the runner.
+
 **SBOMs** — each archive has a matching `.sbom.json` (SPDX) release asset listing the exact dependency versions compiled into that binary.
 
 ## Scope

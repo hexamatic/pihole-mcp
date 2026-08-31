@@ -27,6 +27,14 @@ Releases are tag-driven and fully automated. CI validates every push, so by the 
    - Generates SHA256 checksums.
    - Publishes the GitHub release directly — no manual draft step (see `.goreleaser.yaml` `release.draft: false`).
 
+   The workflow then attests build provenance for the archives and for both container images, and
+   uploads the attestation bundle a second time as `pihole-mcp_X.Y.Z_SHA256SUMS.intoto.jsonl`. That
+   duplicate asset is purely for OpenSSF Scorecard, whose Signed-Releases probe suffix-matches that
+   extension and nothing else; the provenance that actually verifies is the one
+   `gh attestation verify` resolves. Those steps run on `always()` and gate themselves on the
+   artefacts existing, so a late failure in the Homebrew or Scoop publisher cannot leave a published
+   release without provenance.
+
 ### Drafting from git log
 
 If `[Unreleased]` is empty or you want a starting point, scaffold a draft entry from the commits since the last tag:
@@ -55,6 +63,13 @@ After the workflow completes:
 - The release appears on https://github.com/hexamatic/pihole-mcp/releases as published (not draft).
 - `docker pull ghcr.io/hexamatic/pihole-mcp:X.Y.Z` succeeds.
 - The binary downloaded from the release archive prints the right version: `./pihole-mcp -version`.
+- Provenance resolves for both the archives and the images:
+  ```sh
+  gh attestation verify pihole-mcp_X.Y.Z_linux_amd64.tar.gz --repo hexamatic/pihole-mcp
+  gh attestation verify oci://ghcr.io/hexamatic/pihole-mcp:X.Y.Z --repo hexamatic/pihole-mcp
+  ```
+- The release carries a `pihole-mcp_X.Y.Z_SHA256SUMS.intoto.jsonl` asset (Scorecard's Signed-Releases
+  probe looks for that suffix and nothing else).
 - The MCP Registry listing reflects the new version. The search endpoint returns every version ever
   published, oldest first, so take the entry the registry itself marks current rather than
   `.servers[0]`, which grabbed v0.8.0 out of a response that also contained v0.8.1:
@@ -78,8 +93,13 @@ How it works:
   tag with `jq` and deletes `.packages[0].version` outright rather than setting it; there is
   nothing to bump by hand before tagging.
 - Ownership is proved by the `io.modelcontextprotocol.server.name` label on the published GHCR
-  image, which the registry reads and matches against `name` in `server.json`. Both live in
-  `Dockerfile.goreleaser`, and the drift test fails the build if they diverge.
+  image, which the registry reads and matches against `name` in `server.json`. The published image
+  is built from `Dockerfile.goreleaser`; the root `Dockerfile` carries the same label, and
+  `TestServerJSONNameMatchesImageLabel` now reads **both** and fails the build if either diverges.
+- `.github/workflows/mcp-validate.yml` runs `mcp-publisher validate` against the live registry on
+  every pull request touching `server.json`, and weekly. It needs no authentication and publishes
+  nothing. It exists because the registry enforces rules the published JSON Schema does not, and two
+  of v0.8.0's four follow-ups were registry-side rejections found only after a tag had gone out.
 - Authentication is GitHub Actions OIDC (`mcp-publisher login github-oidc`), which grants the
   `io.github.hexamatic/*` namespace. No token or secret is required.
 - The image must be public for the registry to inspect it anonymously — verify with
@@ -101,13 +121,53 @@ gh workflow run publish-mcp.yml -f version=X.Y.Z
 Publishing the same version again is an update, not an error. A failed publish never affects the
 release, which is already complete, signed and attested by the time this runs.
 
+## Rehearsing the release path
+
+`.github/workflows/release-rehearsal.yml` runs the release pipeline short of publishing. It fires on
+every pull request touching `.goreleaser.yaml`, `release.yml`, `Dockerfile.goreleaser`,
+`scripts/release-notes.sh` or `CHANGELOG.md`, monthly on a schedule, and on demand:
+
+```sh
+gh workflow run release-rehearsal.yml --repo hexamatic/pihole-mcp
+```
+
+It exists because v0.8.0's first tag failed on a cosign v3 breaking change in a signing block that
+no run had ever executed. `--snapshot` suppresses only the Publish, Announce and Validate stages, so
+everything below them runs for real: both builds, all twelve archives, nfpm's deb and rpm packages,
+syft's SBOMs, and cosign's keyless signature over the checksum file. The workflow then asserts each
+of those artefacts is present rather than trusting goreleaser's exit code, because several of these
+pipes skip quietly when a precondition is unmet.
+
+**What the rehearsal still cannot cover.** Everything inside goreleaser's `publish` stage runs only
+on a tag, and this is the honest list:
+
+| Tag-only | What could still break there |
+|---|---|
+| `dockerv2.Publish` | The multi-arch push to GHCR. A snapshot loads one image per platform locally instead. |
+| `sign.DockerPipe` (`docker_signs`) | Image signatures, which need a pushed digest to sign. |
+| Homebrew cask and Scoop publishing | The commit into `hexamatic/homebrew-tap` and `hexamatic/scoop-bucket`. The manifests are *generated* in the rehearsal; only the push is untested. |
+| `release.Pipe` | Creating the GitHub release and uploading assets to it. |
+
+The image digest count is the one number that differs between the two: a real release publishes two
+multi-arch manifests and therefore two distinct digests, which is what `release.yml`'s attestation
+steps expect, while a snapshot yields one per platform. The rehearsal reports the count rather than
+asserting it, and `release.yml` annotates rather than fails if it is not two, so an unattested image
+never costs a release.
+
 ## Local dry-run
 
-Before tagging, verify the release pipeline parses cleanly:
+For a fast local check that the config parses and builds:
 ```sh
-just release-dry
+just release-check   # goreleaser check, no build
+just release-dry     # snapshot into dist/, uploads nothing
 ```
-This produces a snapshot under `dist/` without uploading anything. Inspect the manifest if anything has changed in `.goreleaser.yaml`. The dry run skips signing and SBOM generation (`--skip=sign,sbom`): keyless cosign needs the CI OIDC identity and would open a browser locally. Those steps only run — and can only be verified — in the tag-triggered workflow; after the release publishes, run the verification commands in [SECURITY.md](SECURITY.md#verifying-release-artefacts) against the live artefacts.
+`release-dry` passes `--skip=sign,sbom`. That is a *local* workaround, not a property of snapshot
+mode: keyless cosign wants the CI OIDC identity and would open a browser here, and syft may not be
+installed. Both pipes do run under a bare `--snapshot`, which is exactly what the rehearsal workflow
+exercises. **If you are changing the signing or SBOM blocks, `just release-dry` will not tell you
+whether they work** — open a pull request and read the rehearsal. After the release publishes, run
+the verification commands in [SECURITY.md](SECURITY.md#verifying-release-artefacts) against the live
+artefacts.
 
 ## Homebrew tap
 

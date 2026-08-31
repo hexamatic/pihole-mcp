@@ -29,6 +29,7 @@ jobs:
   govulncheck:
     name: govulncheck
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,12 +57,50 @@ jobs:
           go-version-file: go.mod
           repo-checkout: false
 
+  # The complement to govulncheck, and deliberately not a merge gate.
+  #
+  # govulncheck answers "can this be reached from our code", which is the right
+  # question to block on but a narrow one: it consults the Go vulnerability
+  # database only. Dependabot's alerts consult GitHub's advisory database, which
+  # by default surfaces only *reviewed* advisories — an advisory sitting in the
+  # `unreviewed` tier raises nothing at all. OSV ingests the Go vuln DB whole,
+  # review status included, so this job sees the tier that neither of the other
+  # two does. It reports rather than blocks, because most of what it finds will
+  # be unreachable and turning that into a merge gate is how a security signal
+  # gets ignored.
+  osv-scanner:
+    name: osv-scanner (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Downloaded and checksum-verified rather than run through
+      # google/osv-scanner-action, which is a Docker action pulling a
+      # tag-pinned (not digest-pinned) image and whose own README recommends
+      # against direct use. Same pattern as gitleaks below.
+      - name: Scan dependencies against the OSV database
+        env:
+          OSV_SCANNER_VERSION: "2.5.1"
+          # sha256 of osv-scanner_linux_amd64 from the v2.5.1 release.
+          OSV_SCANNER_SHA256: "f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be"
+        run: |
+          curl -fsSL -o osv-scanner \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  osv-scanner" | sha256sum -c -
+          chmod +x osv-scanner
+          ./osv-scanner scan source --recursive ./
+
   # Full-history secret scan. Runs the gitleaks CLI directly rather than
   # gitleaks-action, which requires a paid licence key for organisation
   # repositories. Allowlisted dev/test values live in .gitleaks.toml.
   gitleaks:
     name: gitleaks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,17 +108,30 @@ jobs:
           fetch-depth: 0
 
       - name: Scan history for secrets
+        env:
+          GITLEAKS_VERSION: "8.30.1"
+          # Transcribed here on purpose rather than fetched from the release's
+          # own checksums file. That file lives in the same mutable GitHub
+          # release as the tarball, so anyone able to replace one can replace
+          # the other and the check verifies nothing. A digest committed to
+          # this repository is the part an attacker on that path cannot reach.
+          # Re-derive on every version bump:
+          #   curl -fsSL .../gitleaks_X.Y.Z_linux_x64.tar.gz | sha256sum
+          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
         run: |
-          curl -fsSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
-            | tar -xz gitleaks
+          curl -fsSL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
           ./gitleaks git --redact --no-banner
 
-  # A short fuzz smoke over the tool-parameter validators. 60 seconds is not
-  # exhaustive fuzzing — it exists to catch regressions in the validator's
+  # A short fuzz smoke over the tool-parameter validators. 60 seconds each is
+  # not exhaustive fuzzing — it exists to catch regressions in the validators'
   # invariants cheaply on every run; deeper runs happen locally via `just fuzz`.
   fuzz:
     name: fuzz validators
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -89,5 +141,23 @@ jobs:
         with:
           go-version-file: "go.mod"
 
-      - name: Fuzz smoke (60s)
+      # -fuzz takes one target at a time, hence one step per target.
+      - name: Fuzz validateDomainName (60s)
         run: go test -run=^$ -fuzz=FuzzValidateDomainName -fuzztime=60s ./internal/tools/
+
+      - name: Fuzz validateURL (60s)
+        run: go test -run=^$ -fuzz=FuzzValidateURL -fuzztime=60s ./internal/tools/
+
+      # A fuzz failure writes the input that caused it to
+      # internal/tools/testdata/fuzz/<Target>/, and that file is the entire
+      # value of the run — without it the log says an invariant broke and gives
+      # you a shell-quoted blob to retype. Uploading it means the reproducer is
+      # `go test -run=FuzzX/<name>` against a file you can commit as a seed.
+      - name: Upload the failing corpus
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-corpus-${{ github.run_id }}
+          path: internal/tools/testdata/fuzz/
+          if-no-files-found: ignore
+          retention-days: 14

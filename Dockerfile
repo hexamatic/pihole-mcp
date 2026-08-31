@@ -30,6 +30,11 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 # Kept in step with Dockerfile.goreleaser, where it is load-bearing for MCP
 # Registry ownership verification. See the note there.
+#
+# "Kept in step" is enforced, not hoped for: TestServerJSONNameMatchesImageLabel
+# in internal/config reads both Dockerfiles and fails if either label diverges
+# from `name` in server.json. It read only Dockerfile.goreleaser until v0.9.0,
+# so this line was a promise nothing checked.
 LABEL io.modelcontextprotocol.server.name="io.github.hexamatic/pihole-mcp"
 
 COPY --from=builder /bin/pihole-mcp /pihole-mcp

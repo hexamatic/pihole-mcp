@@ -1,10 +1,11 @@
 // commitlint configuration for pihole-mcp.
 //
 // Enforces Conventional Commits (https://www.conventionalcommits.org/).
-// Read by `wagoid/commitlint-github-action` in CI — see
-// `.github/workflows/commitlint.yml`. Local enforcement is handled by
-// commitsar (Go binary, mise-managed) wired into `lefthook.yml`'s
-// pre-push hook, which keeps Node out of the local toolchain.
+// Read in CI by `.github/workflows/commitlint.yml`, which runs the commitlint
+// CLI directly via npx — pinned, because 19.x cannot resolve the shared config
+// through npx and 21.x can. Local enforcement is a shell regex in the
+// `commit-msg` hook in `lefthook.yml`, which keeps Node out of the local
+// toolchain entirely and rejects a bad subject before the commit exists.
 //
 // The standard Angular type set is allowed: feat, fix, docs, test, ci,
 // chore, refactor, perf, build, style, revert. Scopes are unrestricted, so
