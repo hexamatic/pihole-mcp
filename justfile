@@ -179,6 +179,11 @@ refresh-fixtures: seed
 # Run full CI pipeline (mirrors GitHub Actions)
 [group('ci')]
 ci: fmt-check lint test e2e-coverage
+    go vet ./...
+    go mod tidy
+    git diff --exit-code go.mod go.sum
+    go run ./cmd/toolsdoc
+    git diff --exit-code docs/TOOLS.md
     go build -o /dev/null ./cmd/pihole-mcp
     @echo "\033[32m✓ CI passed\033[0m"
 

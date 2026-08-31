@@ -6,7 +6,7 @@
 
 A production-grade [MCP](https://modelcontextprotocol.io/) server for [Pi-hole](https://pi-hole.net/) v6.
 
-**76+ tools** | **9 prompts** | **5 resources** | Multi-instance + sync | Single Go binary | 6.4 MB download (slim: 3.8 MB)
+**82 tools** (84 with a second instance) | **9 prompts** | **5 resources** | Multi-instance + sync | Read-only mode + toolsets | Single Go binary
 
 [![CI](https://github.com/hexamatic/pihole-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/hexamatic/pihole-mcp/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/hexamatic/pihole-mcp/graph/badge.svg)](https://codecov.io/gh/hexamatic/pihole-mcp)
@@ -17,6 +17,15 @@ A production-grade [MCP](https://modelcontextprotocol.io/) server for [Pi-hole](
 </div>
 
 Gives AI assistants full control over your Pi-hole instance — DNS blocking, domain management, query analysis, statistics, network devices, DHCP, and system administration. Compatible with the Pi-hole v6 REST API.
+
+## Why this one
+
+- **Run it locked down.** `PIHOLE_READ_ONLY=true` exposes only the tools that cannot change anything, enforced on every call, not just the tool list a client happens to cache. `PIHOLE_TOOLSETS` narrows further to just the families you need, so a client asking "what can I use" gets a smaller, cheaper answer.
+- **82 tools** (84 once a second Pi-hole is configured) covering roughly 95% of the Pi-hole v6 REST API, including domains, lists, groups, clients, DHCP, network, the query log, configuration, local DNS records, teleporter backup and restore, and session management.
+- **Multi-instance diff and sync.** Compare two Pi-holes and see exactly what differs, or reconcile one onto the other with a dry-run plan and a confirm token before anything is written.
+- **Releases are signed and attested, not just built.** Every archive and container image carries a keyless cosign signature, an SPDX SBOM and SLSA build provenance, and [SECURITY.md](SECURITY.md) has the one-line command to check each.
+- **Listed in the official [MCP Registry](https://registry.modelcontextprotocol.io/)** as `io.github.hexamatic/pihole-mcp`, installable by name from any client that supports registry install.
+- **Shipped nine releases in five months** since launch, each with real release notes describing what changed and why, not a commit-hash dump.
 
 ## Quick Start
 
@@ -37,6 +46,26 @@ Most MCP clients use the same configuration format. Add this to your client's co
 ```
 
 Then install the binary via one of the methods below.
+
+## What you can ask
+
+The whole point is natural language, not tool names. A few examples of what to actually type:
+
+| You ask | What runs |
+|---|---|
+| "Is Pi-hole blocking right now, and for how long?" | `pihole_dns_get_blocking` |
+| "Pause blocking for 10 minutes, I need to test something." | `pihole_dns_set_blocking` |
+| "Why is reddit.com blocked? Check every list it could be on." | `pihole_search_domains` |
+| "What are the top blocked domains today, and does anything look like a false positive?" | `pihole_stats_recent_blocked`, the `review_top_blocked` prompt |
+| "Point nas.home at 192.168.1.50." | `pihole_local_dns_add` |
+| "Which of my blocklists haven't updated in 30+ days?" | `pihole_lists_list` |
+| "Show me devices on the network Pi-hole doesn't recognise." | `pihole_network_devices`, the `audit_network` prompt |
+| "Compare my two Pi-holes and tell me what's different." | `pihole_instance_diff` |
+| "Back up my configuration before I change anything." | `pihole_teleporter_export` |
+| "Which upstream resolver is slowest, and is it worth switching?" | `pihole_stats_upstreams`, the `upstream_health` prompt |
+
+Set `PIHOLE_READ_ONLY=true` first if you want to ask questions without any risk of something being
+changed. See [Scoping the tool surface](#scoping-the-tool-surface).
 
 ## Installation
 
@@ -142,7 +171,7 @@ Application passwords are recommended for automation — they bypass TOTP 2FA an
 
 ### Scoping the tool surface
 
-By default the server offers every tool, including 33 that change Pi-hole and 27 that are
+By default the server offers every tool, including 34 that change Pi-hole and 27 that are
 destructive. Two variables narrow that.
 
 `PIHOLE_READ_ONLY=true` exposes only tools that cannot change anything. Write tools are absent from
@@ -454,6 +483,7 @@ The tables below are a summary; the full generated reference with every paramete
 | `pihole_stats_query_types` | Query type distribution (A, AAAA, MX, etc.) |
 | `pihole_stats_recent_blocked` | Recently blocked domains |
 | `pihole_stats_database` | Long-term database statistics |
+| `pihole_stats_database_top_domains/top_clients/upstreams/query_types` | Long-term database equivalents of the four tools above, for an arbitrary date range |
 
 ### Domain Management
 | Tool | Description |
@@ -468,7 +498,7 @@ The tables below are a summary; the full generated reference with every paramete
 | Tool | Description |
 |------|-------------|
 | `pihole_groups_list/add/update/delete/batch_delete` | Manage groups |
-| `pihole_clients_list/suggestions/add/update/delete` | Manage clients |
+| `pihole_clients_list/suggestions/add/update/delete/batch_delete` | Manage clients |
 | `pihole_lists_list/add/update/delete/batch_delete` | Manage blocklists/allowlists |
 
 ### Query Log
@@ -485,7 +515,12 @@ The tables below are a summary; the full generated reference with every paramete
 | `pihole_info_database` | Database size and query count |
 | `pihole_info_messages` | FTL diagnostic messages |
 | `pihole_info_dismiss_message` | Dismiss a diagnostic message by ID |
+| `pihole_info_client` | The requesting client's own IP and connection info |
+| `pihole_info_ftl` | FTL process info: PID, privacy level, client/domain counts |
+| `pihole_info_metrics` | Live DNS and DHCP operational metrics (cache, inserts, evictions, leases) |
+| `pihole_info_sensors` | Hardware temperature sensors |
 | `pihole_search_domains` | Cross-list domain search |
+| `pihole_auth_sessions/revoke_session` | List and revoke active API sessions |
 | `pihole_config_get/set` | Read/modify Pi-hole configuration |
 | `pihole_config_get_value/add_value/remove_value` | Granular dotted-path config access |
 | `pihole_config_properties` | List read-only config keys (Pi-hole v6.6.1+) |
@@ -495,12 +530,15 @@ The tables below are a summary; the full generated reference with every paramete
 |------|-------------|
 | `pihole_action_gravity_update` | Re-download blocklists |
 | `pihole_action_restart_dns` | Restart FTL DNS resolver |
-| `pihole_action_flush_logs/network` | Flush logs or network table |
-| `pihole_network_devices/gateway/info` | Network device discovery |
+| `pihole_action_flush_logs` | Flush the query log |
+| `pihole_action_flush_network` | Flush the network table (Pi-hole v6.3+) |
+| `pihole_network_devices/gateway/info/routes/interfaces` | Network device and interface discovery |
+| `pihole_network_delete_device` | Remove a stale network device record |
 | `pihole_dhcp_leases/delete_lease` | DHCP lease management |
 | `pihole_logs_dns/ftl/webserver` | Log retrieval |
 | `pihole_teleporter_export/import` | Configuration backup and restore |
-| `pihole_history_graph/clients` | Activity history |
+| `pihole_history_graph/clients` | Activity history (in-memory) |
+| `pihole_history_database/database_clients` | Activity history (long-term database, arbitrary date range) |
 
 ### Multi-instance (only with more than one Pi-hole configured)
 | Tool | Description |
@@ -510,10 +548,10 @@ The tables below are a summary; the full generated reference with every paramete
 
 ### Response Options
 
-Most tools accept optional parameters for controlling output:
+Some tools accept optional parameters for controlling output:
 
-- **`detail`** (`minimal` | `normal` | `full`) — Controls response depth. Default: `normal`. Use `minimal` for one-line summaries, `full` for complete API data.
-- **`format`** (`text` | `csv`) — Output format for tabular data. Default: `text`. CSV saves ~29% tokens. Available on `pihole_domains_list`, `pihole_lists_list`, `pihole_clients_list`, `pihole_queries_search`, `pihole_network_devices`, `pihole_stats_top_domains`, `pihole_stats_top_clients`, `pihole_stats_upstreams`, `pihole_stats_query_types`, `pihole_stats_recent_blocked`, `pihole_stats_database_top_domains`, `pihole_stats_database_top_clients`, `pihole_stats_database_upstreams`, `pihole_dhcp_leases`, and `pihole_config_properties`.
+- **`detail`** (`minimal` | `normal` | `full`) — Controls response depth. Default: `normal`. Use `minimal` for one-line summaries, `full` for complete API data. Available on 15 tools.
+- **`format`** (`text` | `csv`) — Output format for tabular data. Default: `text`. CSV saves roughly 8–23% tokens over the default text rendering, depending on the tool and row count. Available on 22 tools: `pihole_domains_list`, `pihole_groups_list`, `pihole_lists_list`, `pihole_clients_list`, `pihole_queries_search`, `pihole_network_devices`, `pihole_dhcp_leases`, `pihole_config_properties`, `pihole_local_dns_list`, `pihole_local_cname_list`, `pihole_stats_top_domains`, `pihole_stats_top_clients`, `pihole_stats_upstreams`, `pihole_stats_query_types`, `pihole_stats_recent_blocked`, `pihole_stats_database_top_domains`, `pihole_stats_database_top_clients`, `pihole_stats_database_upstreams`, `pihole_history_graph`, `pihole_history_clients`, `pihole_history_database`, and `pihole_history_database_clients`.
 
 ## Prompts
 
@@ -566,7 +604,15 @@ Both examples bind loopback, so only this machine can reach them. Before changin
 [Security](#security-http-and-sse-transports) below: neither transport authenticates anything until
 you configure a token.
 
-> **SSE is deprecated.** The MCP specification superseded the HTTP+SSE transport with Streamable HTTP in the 2025-03-26 revision. `-transport sse` is kept for older clients and still receives security fixes, but new deployments should use `-transport http`. It will be removed once the clients that need it have moved on.
+pihole-mcp implements MCP protocol revision **2025-11-25** and negotiates down for older clients
+(2025-06-18, 2025-03-26 and 2024-11-05 are all accepted).
+
+> **SSE is deprecated.** The HTTP+SSE transport was superseded by Streamable HTTP in the 2025-03-26
+> revision, and formally reclassified as **Deprecated** under the specification's feature lifecycle
+> policy ([SEP-2596](https://modelcontextprotocol.io/specification/2026-07-28/changelog)), meaning
+> it stays part of the spec, fully supported, for a minimum of twelve months before removal could
+> even be proposed. `-transport sse` is kept for older clients and still receives security fixes,
+> but new deployments should use `-transport http`.
 
 ### Security (HTTP and SSE transports)
 
@@ -672,10 +718,12 @@ All tool calls are automatically traced with tool name, duration, and error stat
 
 If you don't need tracing, the slim build strips the OpenTelemetry SDK, gRPC, protobuf and grpc-gateway dependencies entirely — a little over 40% smaller:
 
-| linux/amd64, v0.6.0 | Binary | Download (`.tar.gz`) | Docker image |
-|---|---|---|---|
-| Default | 16.4 MB | 6.1 MB | 18.2 MB |
-| Slim | 9.2 MB | 3.6 MB | 11.8 MB |
+| linux/amd64 binary | Size |
+|---|---|
+| Default | 18.0 MB |
+| Slim | 10.3 MB (42% smaller) |
+
+Measured from a local build; see the [Releases](https://github.com/hexamatic/pihole-mcp/releases) page for the exact archive and Docker image sizes of a given tag.
 
 ```bash
 just build-slim
@@ -731,6 +779,14 @@ Your Pi-hole is serving HTTPS with a self-signed certificate, which fails standa
 ### Occasional dropped connections
 
 Pi-hole's embedded web server closes connections under load. pihole-mcp retries these automatically with backoff; if you see failures anyway, raise `PIHOLE_MAX_RETRIES` (default `3`).
+
+## Getting help
+
+- **Usage question?** Ask in [Q&A Discussions](https://github.com/hexamatic/pihole-mcp/discussions/categories/q-a); someone with the same question later will find the answer there.
+- **Found a bug, or want a feature?** Open an [issue](https://github.com/hexamatic/pihole-mcp/issues/new/choose).
+- **Security vulnerability?** See [SECURITY.md](SECURITY.md). Please don't open a public issue.
+
+See [SUPPORT.md](SUPPORT.md) for the full picture, including where to start contributing.
 
 ## Development
 

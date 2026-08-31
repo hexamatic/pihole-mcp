@@ -26,8 +26,10 @@ builds:
       - -s -w
       - -X github.com/hexamatic/pihole-mcp/internal/server.Version={{.Version}}
 
-  # Slim build — strips OpenTelemetry deps via the `slim` build tag. ~45%
-  # smaller binary (17 MB → 9 MB on linux/amd64, 6 MB → 3.5 MB compressed).
+  # Slim build — strips OpenTelemetry deps via the `slim` build tag. ~42%
+  # smaller binary (18 MB → 10.3 MB on linux/amd64; measured from a local
+  # build — re-measure from a tagged release's assets for the compressed
+  # archive figure).
   # Functionally identical aside from OTEL_EXPORTER_OTLP_ENDPOINT being a
   # no-op. Distributed alongside the default build for users who want a
   # leaner footprint (resource-constrained homelabs, no-tracing setups).

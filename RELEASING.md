@@ -23,7 +23,7 @@ Releases are tag-driven and fully automated. CI validates every push, so by the 
 5. The `release.yml` workflow runs goreleaser, which:
    - Extracts the release body from `CHANGELOG.md` via `scripts/release-notes.sh`.
    - Builds 6 binary archives (linux/darwin/windows × amd64/arm64).
-   - Builds and pushes the `ghcr.io/hexamatic/pihole-mcp:vX.Y.Z` and `:latest` Docker images (linux/amd64 + linux/arm64).
+   - Builds and pushes the `ghcr.io/hexamatic/pihole-mcp:X.Y.Z` and `:latest` Docker images (linux/amd64 + linux/arm64).
    - Generates SHA256 checksums.
    - Publishes the GitHub release directly — no manual draft step (see `.goreleaser.yaml` `release.draft: false`).
 
@@ -53,11 +53,14 @@ This only updates the release body — the tag, binaries, Docker images, and SHA
 After the workflow completes:
 
 - The release appears on https://github.com/hexamatic/pihole-mcp/releases as published (not draft).
-- `docker pull ghcr.io/hexamatic/pihole-mcp:vX.Y.Z` succeeds.
+- `docker pull ghcr.io/hexamatic/pihole-mcp:X.Y.Z` succeeds.
 - The binary downloaded from the release archive prints the right version: `./pihole-mcp -version`.
-- The MCP Registry listing reflects the new version:
+- The MCP Registry listing reflects the new version. The search endpoint returns every version ever
+  published, oldest first, so take the entry the registry itself marks current rather than
+  `.servers[0]`, which grabbed v0.8.0 out of a response that also contained v0.8.1:
   ```sh
-  curl -s 'https://registry.modelcontextprotocol.io/v0/servers?search=io.github.hexamatic/pihole-mcp' | jq '.servers[0].server.version'
+  curl -s 'https://registry.modelcontextprotocol.io/v0/servers?search=io.github.hexamatic/pihole-mcp' \
+    | jq '.servers[] | select(._meta["io.modelcontextprotocol.registry/official"].isLatest) | .server.version'
   ```
 
 ## MCP Registry publishing
@@ -69,8 +72,10 @@ successful tag-driven `Release` run, and can also be dispatched by hand.
 How it works:
 
 - `server.json` is committed carrying the **previous** release's version, so the drift tests in
-  `internal/config/serverjson_test.go` can assert `.version`, `.packages[0].version` and the tag
-  in `.packages[0].identifier` all agree. The workflow rewrites all three with `jq`; there is
+  `internal/config/serverjson_test.go` can assert `.version` and the tag inside
+  `.packages[0].identifier` agree, and that `.packages[0].version` is **absent**: the registry
+  rejects a `version` field on an OCI package. The workflow rewrites `.version` and the identifier
+  tag with `jq` and deletes `.packages[0].version` outright rather than setting it; there is
   nothing to bump by hand before tagging.
 - Ownership is proved by the `io.modelcontextprotocol.server.name` label on the published GHCR
   image, which the registry reads and matches against `name` in `server.json`. Both live in

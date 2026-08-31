@@ -6,7 +6,7 @@ Thanks for your interest in contributing. This document covers how to get starte
 
 - [Go 1.26+](https://go.dev/dl/)
 - [Docker](https://docs.docker.com/get-docker/) (for local Pi-hole testing)
-- [mise](https://mise.jdx.dev/) (recommended — manages tool versions)
+- [mise](https://mise.jdx.dev/) (required — manages tool versions)
 - [just](https://just.systems/) (task runner)
 
 ## Quick Start
@@ -94,8 +94,10 @@ Reference: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
    change anything must not carry it, and a tool that only reads should
 7. Add unit tests with mocked API responses, and a case in `scripts/e2e-test.sh`. Every write case
    needs a read-back that asserts the new value: Pi-hole answers 200 for a body it ignored
-8. Run `just check` to verify everything passes
-9. Test against live Pi-hole with `just integration`
+8. Run `just docs-gen` to regenerate `docs/TOOLS.md`. CI fails the build if it drifts from the
+   registered tool definitions
+9. Run `just check` to verify everything passes
+10. Test against live Pi-hole with `just integration`
 
 ## Toolset stability
 
