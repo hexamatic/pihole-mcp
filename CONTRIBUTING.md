@@ -88,9 +88,44 @@ Reference: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
 2. Create the tool handler in the appropriate file under `internal/tools/`
 3. Register it in the category's `Register*()` function
 4. Add the `Register*()` call to `internal/tools/registry.go` if it's a new category
-5. Add unit tests with mocked API responses
-6. Run `just check` to verify everything passes
-7. Test against live Pi-hole with `just integration`
+5. If the tool introduces a new family token, add it to the table in `internal/toolsets` so the tool
+   belongs to a toolset. See [Toolset stability](#toolset-stability)
+6. Annotate it accurately. `ReadOnlyHint` is what `PIHOLE_READ_ONLY` filters on, so a tool that can
+   change anything must not carry it, and a tool that only reads should
+7. Add unit tests with mocked API responses, and a case in `scripts/e2e-test.sh`. Every write case
+   needs a read-back that asserts the new value: Pi-hole answers 200 for a body it ignored
+8. Run `just check` to verify everything passes
+9. Test against live Pi-hole with `just integration`
+
+## Toolset stability
+
+The names in `PIHOLE_TOOLSETS` are a compatibility contract. Users pin them in client configuration
+files that we never see and cannot migrate, so:
+
+**A published toolset name is never removed, never renamed, and never narrowed.**
+
+What that permits and forbids:
+
+- **Adding a tool to an existing toolset is always fine**, and usually automatic. Membership is
+  derived from the tool name's family token, so a new `pihole_stats_*` tool reaches every
+  configuration that pinned `stats` with no change to the table in `internal/toolsets`.
+- **A new family token needs one row or one token added** to that table.
+  `TestEveryRegisteredToolHasAToolset` fails the moment a tool belongs to no toolset, so this cannot
+  be forgotten.
+- **A toolset that outgrows its name gets a new, narrower name published alongside it.** The wide
+  name keeps meaning the union forever. Deprecation is by documentation only.
+- **Merging two toolsets is permanent**, because the merged name can never be split back apart
+  without narrowing one of them. Splitting is the reversible direction, so when the choice is
+  genuinely close, split.
+
+Tool names carry a weaker promise, because nothing pins them in configuration today: a released tool
+name is not renamed in place. A rename ships the new name alongside the old, with the old deprecated
+in the documentation for at least one minor release.
+
+There is deliberately no alias mechanism. No tool has been renamed in nine releases and no toolset
+name has existed long enough to need one, so building the resolution layer now would be guessing at
+the shape of a problem nobody has had. The first real rename ships its alias in the same pull
+request, designed around the actual case.
 
 ## Releasing
 

@@ -92,6 +92,29 @@ func newRegistry(cfg *config.Config) *pihole.Registry {
 // configuration or reachability problem, and the client that launched the
 // server usually swallows its stderr, so the user sees a tool that is simply
 // absent. Running the binary directly with this flag turns that into a sentence.
+// scopeSummary describes the tool surface a configuration exposes.
+func scopeSummary(cfg *config.Config, registry *pihole.Registry) string {
+	selection := "all"
+	if len(cfg.Toolsets) > 0 {
+		selection = strings.Join(cfg.Toolsets, ",")
+	}
+
+	// Build a throwaway server rather than reasoning about the counts, so the
+	// number reported is the number a client would actually be offered.
+	srv := piholeserver.New(registry,
+		piholeserver.WithReadOnly(cfg.ReadOnly),
+		piholeserver.WithToolsets(cfg.Toolsets),
+	)
+	exposed := len(piholeserver.ExposedTools(srv,
+		piholeserver.WithReadOnly(cfg.ReadOnly),
+		piholeserver.WithToolsets(cfg.Toolsets),
+	))
+	total := len(srv.ListTools())
+
+	return fmt.Sprintf("scope: read-only=%v, toolsets=%s  %d of %d tools exposed",
+		cfg.ReadOnly, selection, exposed, total)
+}
+
 func runCheck(out io.Writer) bool {
 	say := func(format string, a ...any) { _, _ = fmt.Fprintf(out, format, a...) }
 	say("pihole-mcp %s\n\n", piholeserver.Version)
@@ -104,6 +127,12 @@ func runCheck(out io.Writer) bool {
 
 	registry := newRegistry(cfg)
 	defer registry.Close()
+
+	// Printed before the per-instance results, so it is visible even when every
+	// instance fails. "The tool I expected is missing" is exactly the class of
+	// problem -check exists to turn into a sentence, and a scoping typo is now
+	// one of the ways to produce it.
+	say("%s\n\n", scopeSummary(cfg, registry))
 
 	ok := true
 	for _, ic := range cfg.Instances {
@@ -159,7 +188,10 @@ func run(transport, address string) error {
 	registry := newRegistry(cfg)
 	defer registry.Close()
 
-	srv := piholeserver.New(registry)
+	srv := piholeserver.New(registry,
+		piholeserver.WithReadOnly(cfg.ReadOnly),
+		piholeserver.WithToolsets(cfg.Toolsets),
+	)
 
 	tp, err := telemetry.Init("pihole-mcp", piholeserver.Version)
 	if err != nil {

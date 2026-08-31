@@ -397,3 +397,47 @@ func waitForListener(t *testing.T, address string) {
 	}
 	t.Fatalf("nothing listening on %s", address)
 }
+
+// TestRunCheckReportsScope covers the scoping half of -check. A user whose
+// PIHOLE_TOOLSETS hides the tool they were reaching for sees a server that
+// started cleanly and simply lacks it, so the self-test has to say what the
+// scoping resolved to and how many tools survived it.
+func TestRunCheckReportsScope(t *testing.T) {
+	address := freeAddress(t)
+	t.Setenv("PIHOLE_URL", "http://"+address)
+	t.Setenv("PIHOLE_PASSWORD", "test")
+	t.Setenv("PIHOLE_MAX_RETRIES", "0")
+	t.Setenv("PIHOLE_READ_ONLY", "true")
+	t.Setenv("PIHOLE_TOOLSETS", "domains,stats")
+
+	var out strings.Builder
+	runCheck(&out)
+
+	got := out.String()
+	// 2 read-only domains tools plus 11 read-only stats tools.
+	for _, want := range []string{"scope:", "read-only=true", "domains,stats", "13 of 82 tools exposed"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("scope line is missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestRunCheckReportsUnknownToolset pins the failure path a typo takes. A stdio
+// server that exits at startup often shows the user nothing at all, so -check is
+// where the typo and the way out of it have to appear.
+func TestRunCheckReportsUnknownToolset(t *testing.T) {
+	t.Setenv("PIHOLE_URL", "http://127.0.0.1:1")
+	t.Setenv("PIHOLE_PASSWORD", "test")
+	t.Setenv("PIHOLE_TOOLSETS", "doamins")
+
+	var out strings.Builder
+	if runCheck(&out) {
+		t.Error("runCheck reported success with an unknown toolset name")
+	}
+	got := out.String()
+	for _, want := range []string{"FAIL", "PIHOLE_TOOLSETS", "doamins", "domains"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output is missing %q:\n%s", want, got)
+		}
+	}
+}

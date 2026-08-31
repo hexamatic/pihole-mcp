@@ -35,14 +35,14 @@ func RegisterConfig(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_config_get_value",
 		mcp.WithTitleAnnotation("Get Config Value"),
 		mcp.WithDescription("Get a specific configuration value by dotted path (e.g. dns.upstreams, webserver.port, dhcp.active)."),
-		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams or dns/upstreams.")),
+		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams, dns.hosts (local DNS records) or dns.cnameRecords.")),
 		mcp.WithReadOnlyHintAnnotation(true),
 	), configGetValueHandler(r))
 
 	addTool(s, r, mcp.NewTool("pihole_config_add_value",
 		mcp.WithTitleAnnotation("Add Config Array Value"),
-		mcp.WithDescription("Add a value to a configuration array (e.g. add an upstream DNS server). Set restart=false to defer FTL restart."),
-		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams.")),
+		mcp.WithDescription("Add a value to a configuration array such as dns.upstreams. For dns.hosts and dns.cnameRecords prefer pihole_local_dns_add and pihole_local_cname_add, which take structured arguments."),
+		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams, dns.hosts or dns.cnameRecords.")),
 		mcp.WithString("value", mcp.Required(), mcp.Description("Value to add.")),
 		mcp.WithBoolean("restart", mcp.Description("Restart FTL after change (default true).")),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -50,8 +50,8 @@ func RegisterConfig(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_config_remove_value",
 		mcp.WithTitleAnnotation("Remove Config Array Value"),
-		mcp.WithDescription("Remove a value from a configuration array (e.g. remove an upstream DNS server). Set restart=false to defer FTL restart."),
-		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams.")),
+		mcp.WithDescription("Remove a value from a configuration array such as dns.upstreams. For dns.hosts and dns.cnameRecords prefer pihole_local_dns_delete and pihole_local_cname_delete, which take structured arguments."),
+		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams, dns.hosts or dns.cnameRecords.")),
 		mcp.WithString("value", mcp.Required(), mcp.Description("Value to remove.")),
 		mcp.WithBoolean("restart", mcp.Description("Restart FTL after change (default true).")),
 		mcp.WithDestructiveHintAnnotation(true),

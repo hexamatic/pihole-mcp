@@ -253,3 +253,60 @@ func TestServerIconAssetsExist(t *testing.T) {
 		}
 	}
 }
+
+// TestConfigVarsReachServerJSON is the reverse of TestServerJSONEnvVarsAreReal.
+// That one catches an advertised variable the code never reads; this one
+// catches a variable the code reads that the registry listing never mentions,
+// which is how PIHOLE_RATE_LIMIT and four others came to be absent without
+// anyone deciding they should be.
+//
+// Honest about what this is: with the allowlist seeded as it ships, it passes
+// both before and after the change that introduced it. It is a drift guard in
+// the same category as e2eSkips in cmd/toolsdoc, not a bug guard. Omission is
+// fine, but only when it is named and reasoned.
+func TestConfigVarsReachServerJSON(t *testing.T) {
+	// Deliberately not advertised, with the reason. A registry client renders
+	// this block as a first-run form, so every entry is a question asked of
+	// every person who installs from the listing.
+	//nolint:gosec // G101: these are environment variable NAMES and their reasons for being absent from a public manifest, not values
+	deliberatelyAbsent := map[string]string{
+		"PIHOLE_RATE_LIMIT":           "HTTP and SSE only; the sole listed package declares a stdio transport",
+		"PIHOLE_ALLOWED_ORIGINS":      "HTTP and SSE only",
+		"PIHOLE_HTTP_AUTH_TOKEN":      "HTTP and SSE only",
+		"PIHOLE_HTTP_AUTH_TOKEN_FILE": "HTTP and SSE only",
+		"PIHOLE_TRUSTED_PROXIES":      "HTTP and SSE only",
+		"PIHOLE_TOOLSETS":             "free text with no choices key available, so a form would show a box whose valid values are invisible and a typo fails startup; documented in the README instead",
+		"PIHOLE_1_URL":                "the numbered multi-instance form is documented in the README; a registry form cannot express a repeating group",
+	}
+
+	source, err := os.ReadFile("config.go")
+	if err != nil {
+		t.Fatalf("reading config.go: %v", err)
+	}
+
+	advertised := map[string]bool{}
+	for _, env := range loadServerManifest(t).Packages[0].EnvironmentVariables {
+		advertised[env.Name] = true
+	}
+
+	seen := map[string]bool{}
+	for _, m := range regexp.MustCompile(`"(PIHOLE_[A-Z0-9_]+)"`).FindAllStringSubmatch(string(source), -1) {
+		name := m[1]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		if advertised[name] || deliberatelyAbsent[name] != "" {
+			continue
+		}
+		t.Errorf("internal/config reads %s but server.json never advertises it. Add it to the "+
+			"environmentVariables block, or to deliberatelyAbsent in this test with the reason.", name)
+	}
+
+	// A stale reason is as misleading as a missing one.
+	for name := range deliberatelyAbsent {
+		if !seen[name] {
+			t.Errorf("deliberatelyAbsent names %s, which internal/config no longer reads", name)
+		}
+	}
+}

@@ -122,6 +122,8 @@ It exits non-zero if any instance fails, and prints what to change. Worth runnin
 |----------|----------|---------|-------------|
 | `PIHOLE_URL` | Yes | — | Pi-hole base URL (e.g. `http://192.168.1.2`) |
 | `PIHOLE_PASSWORD` | Yes | — | Admin password or [application password](https://docs.pi-hole.net/api/auth/) |
+| `PIHOLE_READ_ONLY` | No | `false` | Expose only tools that cannot change Pi-hole. See [Scoping the tool surface](#scoping-the-tool-surface). |
+| `PIHOLE_TOOLSETS` | No | all | Comma-separated toolset names to expose, e.g. `dashboard,domains`. Unset or `all` exposes everything. |
 | `PIHOLE_REQUEST_TIMEOUT` | No | `30s` | HTTP request timeout |
 | `PIHOLE_MAX_RETRIES` | No | `3` | Retries after a failed Pi-hole API call. `0` disables. |
 | `PIHOLE_RETRY_MAX_DELAY` | No | `8s` | Upper bound on a single backoff wait. |
@@ -137,6 +139,42 @@ It exits non-zero if any instance fails, and prints what to change. Worth runnin
 Application passwords are recommended for automation — they bypass TOTP 2FA and can be revoked independently.
 
 `PIHOLE_HTTP_AUTH_TOKEN`, `PIHOLE_HTTP_AUTH_TOKEN_FILE`, `PIHOLE_RATE_LIMIT`, `PIHOLE_ALLOWED_ORIGINS` and `PIHOLE_TRUSTED_PROXIES` only apply to the `http` and `sse` transports; stdio is a single-process, single-user channel by definition and isn't gated. See [Security](#security-http-and-sse-transports) before exposing either transport beyond loopback.
+
+### Scoping the tool surface
+
+By default the server offers every tool, including 33 that change Pi-hole and 27 that are
+destructive. Two variables narrow that.
+
+`PIHOLE_READ_ONLY=true` exposes only tools that cannot change anything. Write tools are absent from
+`tools/list` **and** rejected if called anyway, so a client working from a cached listing cannot
+reach one either.
+
+```bash
+PIHOLE_READ_ONLY=true    # 49 tools instead of 82
+```
+
+`PIHOLE_TOOLSETS` selects which families of tools exist at all, which is worth doing on its own
+because `tools/list` is a cost paid in every conversation:
+
+```bash
+PIHOLE_TOOLSETS=dashboard,domains,lists    # blocklist curation, and nothing else
+PIHOLE_TOOLSETS=all                        # the default, stated explicitly
+```
+
+The two intersect, and read-only always wins. `PIHOLE_READ_ONLY=true` with
+`PIHOLE_TOOLSETS=dns,stats` gives the 14 tools that are in those toolsets *and* read-only.
+
+The toolset names, what each contains and how many tools it holds are in
+[docs/TOOLS.md](docs/TOOLS.md#toolsets), generated from the same table the server filters with. An
+unknown name fails at startup and lists every valid one; run `pihole-mcp -check` to see it, along
+with how many tools your configuration actually exposes:
+
+```
+scope: read-only=true, toolsets=dns,stats  14 of 82 tools exposed
+```
+
+A published toolset name is never removed, renamed or narrowed. See
+[CONTRIBUTING.md](CONTRIBUTING.md#toolset-stability) for the full promise.
 
 ### Multiple instances
 
@@ -379,7 +417,9 @@ docker run --rm \
 
 ## Tools
 
-A single Pi-hole exposes 76 tools. Configuring more than one adds `pihole_instance_diff` and `pihole_instance_sync`, for 78 — they are registered only when there is a second instance to compare against, so a single-Pi-hole setup isn't shown tools it cannot use.
+A single Pi-hole exposes 82 tools. Configuring more than one adds `pihole_instance_diff` and `pihole_instance_sync`, for 84. Those two are registered only when there is a second instance to compare against, so a single-Pi-hole setup isn't shown tools it cannot use.
+
+To expose fewer, see [Scoping the tool surface](#scoping-the-tool-surface).
 
 The tables below are a summary; the full generated reference with every parameter is in [docs/TOOLS.md](docs/TOOLS.md).
 
@@ -393,6 +433,16 @@ The tables below are a summary; the full generated reference with every paramete
 |------|-------------|
 | `pihole_dns_get_blocking` | Get current DNS blocking status and timer |
 | `pihole_dns_set_blocking` | Enable/disable blocking with optional timer |
+
+### Local DNS
+| Tool | Description |
+|------|-------------|
+| `pihole_local_dns_list` | List local A and AAAA records (`dns.hosts`) |
+| `pihole_local_dns_add` | Point a hostname at an IP address; the record type follows the address family |
+| `pihole_local_dns_delete` | Remove a local A or AAAA record by IP address and hostname |
+| `pihole_local_cname_list` | List local CNAME records (`dns.cnameRecords`) |
+| `pihole_local_cname_add` | Point an alias at another name, with an optional TTL |
+| `pihole_local_cname_delete` | Remove a local CNAME record by its alias |
 
 ### Statistics
 | Tool | Description |

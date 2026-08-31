@@ -19,31 +19,9 @@ import (
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	piholeserver "github.com/hexamatic/pihole-mcp/internal/server"
 	"github.com/hexamatic/pihole-mcp/internal/tools"
+	"github.com/hexamatic/pihole-mcp/internal/toolsets"
 	"github.com/mark3labs/mcp-go/mcp"
 )
-
-// categoryNames maps the second token of a tool name to a display heading.
-var categoryNames = map[string]string{
-	"padd":       "Dashboard",
-	"dns":        "DNS Blocking",
-	"stats":      "Statistics",
-	"info":       "System Info",
-	"queries":    "Query Log",
-	"history":    "History",
-	"search":     "Search",
-	"domains":    "Domains",
-	"groups":     "Groups",
-	"clients":    "Clients",
-	"lists":      "Lists",
-	"config":     "Configuration",
-	"action":     "Actions",
-	"network":    "Network",
-	"dhcp":       "DHCP",
-	"logs":       "Logs",
-	"teleporter": "Teleporter",
-	"auth":       "Sessions",
-	"instance":   "Multi-Instance",
-}
 
 func main() {
 	out := flag.String("out", "docs/TOOLS.md", "Output path for the generated reference")
@@ -250,6 +228,8 @@ func render(single, multiOnly []mcp.Tool) string {
 		"`instance` parameter (an instance name, or `all` to aggregate across instances), " +
 		"and the tools under [Multi-Instance](#multi-instance) become available.\n\n")
 
+	writeToolsets(&b, append(append([]mcp.Tool{}, single...), multiOnly...))
+
 	// Group in registration order.
 	var order []string
 	grouped := map[string][]mcp.Tool{}
@@ -267,6 +247,11 @@ func render(single, multiOnly []mcp.Tool) string {
 
 	for _, cat := range order {
 		fmt.Fprintf(&b, "## %s\n\n", cat)
+		if len(grouped[cat]) > 0 {
+			if ts, ok := toolsets.Of(grouped[cat][0].Name); ok {
+				fmt.Fprintf(&b, "Toolset: `%s`\n\n", ts)
+			}
+		}
 		for _, t := range grouped[cat] {
 			writeTool(&b, t)
 		}
@@ -274,12 +259,42 @@ func render(single, multiOnly []mcp.Tool) string {
 	return b.String()
 }
 
-func category(name string) string {
-	parts := strings.SplitN(name, "_", 3)
-	if len(parts) < 2 {
-		return "Other"
+// writeToolsets renders the PIHOLE_TOOLSETS reference from the same table the
+// runtime filter reads, so the published names and their contents cannot drift
+// from what the server actually does.
+func writeToolsets(b *strings.Builder, all []mcp.Tool) {
+	total := map[string]int{}
+	readOnly := map[string]int{}
+	for _, t := range all {
+		name, ok := toolsets.Of(t.Name)
+		if !ok {
+			continue
+		}
+		total[name]++
+		if tools.IsReadOnly(t) {
+			readOnly[name]++
+		}
 	}
-	if display, ok := categoryNames[parts[1]]; ok {
+
+	b.WriteString("## Toolsets\n\n")
+	b.WriteString("Set `PIHOLE_TOOLSETS` to a comma-separated selection of these names to expose " +
+		"only those tools, for example `PIHOLE_TOOLSETS=dashboard,domains`. Leaving it unset, or " +
+		"setting it to `all`, exposes everything. Set `PIHOLE_READ_ONLY=true` to drop every tool " +
+		"that changes Pi-hole; the two intersect, and read-only always wins.\n\n")
+	b.WriteString("| Toolset | Tools | Read-only | Covers |\n|---|---:|---:|---|\n")
+	for _, ts := range toolsets.List() {
+		fmt.Fprintf(b, "| `%s` | %d | %d | %s |\n", ts.Name, total[ts.Name], readOnly[ts.Name], ts.Summary)
+	}
+	b.WriteString("\nCounts are for a multi-instance deployment. The `instance` toolset is empty " +
+		"with a single Pi-hole configured, which is expected and is not an error.\n\n")
+}
+
+// category is the display heading a tool is filed under. Headings come from
+// internal/toolsets, the same table the runtime PIHOLE_TOOLSETS filter reads,
+// so the generated reference and the scoping feature cannot disagree about
+// which family a tool belongs to.
+func category(name string) string {
+	if display, ok := toolsets.Heading(toolsets.Token(name)); ok {
 		return display
 	}
 	return "Other"
@@ -289,7 +304,7 @@ func writeTool(b *strings.Builder, t mcp.Tool) {
 	fmt.Fprintf(b, "### `%s`\n\n", t.Name)
 
 	var badges []string
-	if t.Annotations.ReadOnlyHint != nil && *t.Annotations.ReadOnlyHint {
+	if tools.IsReadOnly(t) {
 		badges = append(badges, "read-only")
 	}
 	if t.Annotations.DestructiveHint != nil && *t.Annotations.DestructiveHint {

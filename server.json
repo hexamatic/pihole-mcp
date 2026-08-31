@@ -56,6 +56,13 @@
           "format": "string"
         },
         {
+          "name": "PIHOLE_READ_ONLY",
+          "description": "Expose only inspection tools. Every tool that can change Pi-hole is hidden and rejected if called.",
+          "isRequired": false,
+          "default": "false",
+          "format": "boolean"
+        },
+        {
           "name": "PIHOLE_TLS_SKIP_VERIFY",
           "description": "Set to true only for a Pi-hole serving a self-signed HTTPS certificate. A trusted certificate is the better fix.",
           "isRequired": false,

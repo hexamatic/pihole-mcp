@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hexamatic/pihole-mcp/internal/toolsets"
 )
 
 const (
@@ -115,6 +117,17 @@ type Config struct {
 	// RetryMaxDelay caps how long a single backoff wait may last.
 	RetryMaxDelay time.Duration
 
+	// ReadOnly restricts the server to tools annotated read-only. Every tool
+	// that can change Pi-hole is then absent from tools/list and rejected if
+	// called anyway, so this is an access control boundary rather than a hint.
+	ReadOnly bool
+
+	// Toolsets is the selection of published toolset names to expose. Nil, the
+	// default, places no restriction, and so does a selection containing
+	// "all". Read-only and toolsets intersect: neither can restore a tool the
+	// other removed.
+	Toolsets []string
+
 	// TLSSkipVerify disables TLS certificate verification for Pi-hole API
 	// connections. Off by default; intended only for instances serving
 	// self-signed certificates.
@@ -165,7 +178,7 @@ func Load() (*Config, error) {
 	}
 
 	if v, ok := os.LookupEnv("PIHOLE_ALLOWED_ORIGINS"); ok {
-		cfg.AllowedOrigins = parseOrigins(v)
+		cfg.AllowedOrigins = parseList(v)
 		if len(cfg.AllowedOrigins) == 0 {
 			return nil, fmt.Errorf("PIHOLE_ALLOWED_ORIGINS must contain at least one entry (or '*' to disable enforcement)")
 		}
@@ -202,6 +215,28 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("PIHOLE_TLS_SKIP_VERIFY is not a valid boolean (use true or false): %w", err)
 		}
 		cfg.TLSSkipVerify = b
+	}
+
+	if v := os.Getenv("PIHOLE_READ_ONLY"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("PIHOLE_READ_ONLY is not a valid boolean (use true or false): %w", err)
+		}
+		cfg.ReadOnly = b
+	}
+
+	// An empty value is treated as unset, deliberately, and not as "expose
+	// nothing". This is the one place the PIHOLE_ALLOWED_ORIGINS precedent does
+	// not transfer: there an empty list means "block everything" and failing
+	// loud is the safe answer, whereas here an empty string is simply what a
+	// client's first-run form, a compose file or a ConfigMap emits for an
+	// optional field somebody left blank. Failing on it would break installs
+	// that are asking for the default.
+	if v := os.Getenv("PIHOLE_TOOLSETS"); v != "" {
+		cfg.Toolsets = parseList(v)
+		if err := toolsets.Validate(cfg.Toolsets); err != nil {
+			return nil, fmt.Errorf("PIHOLE_TOOLSETS %w", err)
+		}
 	}
 
 	if v := os.Getenv("PIHOLE_RETRY_MAX_DELAY"); v != "" {
@@ -321,7 +356,9 @@ func loadInstance(prefix, name string) (InstanceConfig, error) {
 	return InstanceConfig{Name: name, URL: rawURL, Password: pw}, nil
 }
 
-func parseOrigins(raw string) []string {
+// parseList splits a comma-separated environment value, trimming each entry and
+// dropping empties.
+func parseList(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {

@@ -16,6 +16,7 @@ import (
 func RegisterAll(s *server.MCPServer, r *pihole.Registry) {
 	RegisterPADD(s, r)
 	RegisterDNS(s, r)
+	RegisterLocalDNS(s, r)
 	RegisterStats(s, r)
 	RegisterInfo(s, r)
 	RegisterQueries(s, r)
@@ -99,13 +100,50 @@ func widenOutputSchema(tool *mcp.Tool) {
 // aggregateOutputSchema returns the JSON Schema for AggregateOutput, generated
 // once from the Go type by the same code path as every other output schema so
 // it cannot drift from the struct.
+// The generated AggregateOutput schema runs to about 1,100 bytes, and
+// widenOutputSchema copies it into every tool that has an output schema. That
+// is the same paragraph of JSON repeated seven times in one tools/list. What a
+// client needs from this branch is the shape (an envelope of per-instance
+// records) and the discriminator that tells it apart from the single-instance
+// branch, so the descriptions and the inner result shape are dropped and the
+// two required keys are kept. AggregateOutput itself is unchanged: this trims
+// what is advertised, not what is returned.
 func aggregateOutputSchema() json.RawMessage {
 	aggregateSchemaOnce.Do(func() {
-		probe := mcp.NewTool("aggregate", mcp.WithOutputSchema[AggregateOutput]())
-		if probe.OutputSchema.Type == "" {
-			return
-		}
-		if b, err := json.Marshal(probe.OutputSchema); err == nil {
+		b, err := json.Marshal(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"summary": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"total":  map[string]any{"type": "integer"},
+						"ok":     map[string]any{"type": "integer"},
+						"failed": map[string]any{"type": "integer"},
+					},
+					"required": []string{"total", "ok", "failed"},
+				},
+				"instances": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"instance": map[string]any{"type": "string"},
+							"ok":       map[string]any{"type": "boolean"},
+						},
+						"required": []string{"instance", "ok"},
+					},
+				},
+			},
+			"required": []string{"summary", "instances"},
+			// Closed on purpose. This branch is one half of a oneOf, so it has
+			// to reject a payload carrying the single-instance fields as well
+			// as its own; an open branch would match both and oneOf would then
+			// reject a correct payload. The generated schema got this from
+			// jsonschema-go's additionalProperties, and dropping it was what
+			// TestWidenOutputSchema_BranchesAreDisjoint caught.
+			"additionalProperties": false,
+		})
+		if err == nil {
 			aggregateSchema = b
 		}
 	})
@@ -128,6 +166,8 @@ var additiveTools = map[string]bool{
 	"pihole_clients_add":      true,
 	"pihole_lists_add":        true,
 	"pihole_config_add_value": true,
+	"pihole_local_dns_add":    true,
+	"pihole_local_cname_add":  true,
 }
 
 // normaliseReadOnlyAnnotations makes a tool's destructive/open-world hints
@@ -152,7 +192,7 @@ func applyToolTitle(tool *mcp.Tool) {
 }
 
 func normaliseReadOnlyAnnotations(tool *mcp.Tool) {
-	if tool.Annotations.ReadOnlyHint != nil && *tool.Annotations.ReadOnlyHint {
+	if IsReadOnly(*tool) {
 		no := false
 		tool.Annotations.DestructiveHint = &no
 		tool.Annotations.OpenWorldHint = &no

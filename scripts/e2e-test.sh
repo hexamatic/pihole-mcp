@@ -544,6 +544,33 @@ call_tool "pihole_config_set" '{"config":"[1,2,3]"}' "config_set (rejects non-ob
 call_tool "pihole_config_properties" '{}' "config_properties (FTL v6.6.1+)"
 
 echo ""
+echo "--- Local DNS records ---"
+# A host record is "<ip> <hostname>", so the value carries a space and goes into
+# the URL path. This is the shape the old path concatenation mishandled, and
+# nothing exercised it end to end until now. 192.168.198.0/24 is reserved for
+# benchmarking and reaches nothing on a normal network.
+call_tool "pihole_local_dns_list" '{}' "local_dns_list (before)"
+call_tool "pihole_local_dns_add" '{"ip":"192.168.198.50","hostname":"nas.home","restart":false}' "local_dns_add (A record with a space in the stored value)"
+call_tool_expect "pihole_local_dns_list" '{}' "local_dns_list (record present after add)" "192.168.198.50 nas.home"
+call_tool "pihole_local_dns_add" '{"ip":"fd00:198::50","hostname":"nas6.home","restart":false}' "local_dns_add (AAAA record)"
+call_tool_expect "pihole_local_dns_list" '{}' "local_dns_list (AAAA record present)" "fd00:198::50 nas6.home"
+call_tool "pihole_local_dns_add" '{"ip":"not-an-ip","hostname":"nas.home"}' "local_dns_add (rejects a bad address)" "expect_error"
+call_tool "pihole_local_dns_delete" '{"ip":"192.168.198.99","hostname":"absent.home"}' "local_dns_delete (reports a record that is not there)" "expect_error"
+
+call_tool "pihole_local_cname_list" '{}' "local_cname_list (before)"
+call_tool "pihole_local_cname_add" '{"alias":"files.home","target":"nas.home","ttl":300,"restart":false}' "local_cname_add (with ttl)"
+call_tool_expect "pihole_local_cname_list" '{}' "local_cname_list (record present after add)" "files.home,nas.home,300"
+# The delete knows only the alias, so this also proves the handler resolves the
+# stored value rather than reconstructing one it never saw.
+call_tool "pihole_local_cname_delete" '{"alias":"files.home","restart":false}' "local_cname_delete (by alias alone)"
+call_tool_expect_absent "pihole_local_cname_list" '{}' "local_cname_list (record gone after delete)" "files.home"
+
+call_tool "pihole_local_dns_delete" '{"ip":"192.168.198.50","hostname":"nas.home","restart":false}' "local_dns_delete (A record)"
+call_tool_expect_absent "pihole_local_dns_list" '{}' "local_dns_list (A record gone after delete)" "192.168.198.50"
+call_tool "pihole_local_dns_delete" '{"ip":"fd00:198::50","hostname":"nas6.home"}' "local_dns_delete (AAAA record)"
+call_tool_expect_absent "pihole_local_dns_list" '{}' "local_dns_list (AAAA record gone after delete)" "fd00:198::50"
+
+echo ""
 echo "--- Network ---"
 call_tool "pihole_network_devices" '{"max_devices":3}'
 call_tool "pihole_network_devices" '{"max_devices":3,"detail":"minimal"}' "network_devices (minimal)"

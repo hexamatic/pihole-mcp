@@ -54,7 +54,7 @@ func getInstance(req mcp.CallToolRequest, r *pihole.Registry) (*pihole.Client, e
 // In a single-instance setup the wrapper is a passthrough.
 func instanceAware(r *pihole.Registry, tool mcp.Tool, h server.ToolHandlerFunc) server.ToolHandlerFunc {
 	multi := r.Len() > 1
-	readOnly := isReadOnly(tool)
+	readOnly := IsReadOnly(tool)
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		isAll := req.GetString(instanceArg, "") == "all"
 
@@ -188,8 +188,14 @@ func withInstance(req mcp.CallToolRequest, name string) mcp.CallToolRequest {
 	return out
 }
 
-// isReadOnly reports whether a tool is annotated read-only.
-func isReadOnly(tool mcp.Tool) bool {
+// IsReadOnly reports whether a tool is annotated read-only.
+//
+// mcp-go's NewTool defaults ReadOnlyHint to a non-nil false, and no write tool
+// anywhere sets it, so this predicate is total: there is no tool whose hint is
+// absent and which could therefore slip through a read-only filter. That is
+// what lets PIHOLE_READ_ONLY rest on the annotation rather than on a
+// hand-maintained list of write tools.
+func IsReadOnly(tool mcp.Tool) bool {
 	return tool.Annotations.ReadOnlyHint != nil && *tool.Annotations.ReadOnlyHint
 }
 
@@ -211,10 +217,21 @@ func addInstanceParam(tool *mcp.Tool, r *pihole.Registry) {
 	if tool.InputSchema.Properties == nil {
 		tool.InputSchema.Properties = map[string]any{}
 	}
-	desc := fmt.Sprintf("Target Pi-hole instance: one of %s. Read-only tools also accept 'all' to aggregate. Default: %s.",
-		strings.Join(r.Names(), ", "), r.Names()[0])
+	// The instance names go in an enum rather than in the prose. The prose was
+	// repeated verbatim on every tool, so a two-instance deployment restated
+	// the same list 76 times in one tools/list, and tools/list is a fixed cost
+	// paid in every conversation. An enum says the same thing structurally, is
+	// what a client needs to offer a valid choice, and the readable
+	// enumeration now lives once each in the server instructions and the
+	// pihole://instances resource.
+	names := r.Names()
+	values := make([]any, len(names))
+	for i, n := range names {
+		values[i] = n
+	}
 	tool.InputSchema.Properties[instanceArg] = map[string]any{
 		"type":        "string",
-		"description": desc,
+		"description": "Pi-hole to target. Read-only tools also accept 'all'.",
+		"enum":        append(values, "all"),
 	}
 }

@@ -233,12 +233,26 @@ func (rt routeTable[T]) lookup(method, path string) (T, bool) {
 	return v, ok
 }
 
+// routeKeyMethods are the method names a route key may be qualified with.
+//
+// The discriminator has to be the method, not the absence of a space in the
+// path. Pi-hole addresses a config array entry by putting the whole value in
+// the path, and a local DNS host record is "<ip> <hostname>", so every route
+// covering one contains a space. Keying off the space made those routes
+// unqualifiable, which is a gap only local DNS was ever going to find.
+var routeKeyMethods = map[string]bool{
+	"GET": true, "PUT": true, "POST": true, "PATCH": true, "DELETE": true, "HEAD": true,
+}
+
 // splitRouteKey splits "PUT /dns/blocking" into its method and path. A key that
-// is a bare path is left alone, including the unlikely one containing a space.
+// is a bare path is left alone, including one containing a space.
 func splitRouteKey(key string) (method, path string, ok bool) {
 	m, p, found := strings.Cut(key, " ")
-	if !found || m == "" || !strings.HasPrefix(p, "/") || strings.Contains(p, " ") {
+	if !found || !strings.HasPrefix(p, "/") {
 		return "", "", false
 	}
-	return strings.ToUpper(m), p, true
+	if m = strings.ToUpper(m); !routeKeyMethods[m] {
+		return "", "", false
+	}
+	return m, p, true
 }
