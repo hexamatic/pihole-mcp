@@ -181,6 +181,21 @@ jobs:
       - name: Start Pi-hole instances
         run: docker compose -f .github/docker-compose.ci.yml up -d --wait
 
+      # A Pi-hole nobody has sent a query to answers the stats, history and
+      # suggestion endpoints with nothing, and an assertion against an empty
+      # response proves nothing. This is the seed the dev Pi-hole gets locally,
+      # through the container's own dig, minus the minute-long gravity rebuild
+      # that only exists to provoke a diagnostic message. Without it the query
+      # suggestion cases failed here while passing against every seeded local
+      # Pi-hole.
+      - name: Seed the Pi-holes with DNS traffic
+        env:
+          SEED_SKIP_MESSAGES: "1"
+        run: |
+          for svc in pihole pihole-secondary; do
+            scripts/seed-dev.sh "$(docker compose -f .github/docker-compose.ci.yml ps -q "$svc")"
+          done
+
       - name: Integration tests
         env:
           PIHOLE_URL: http://localhost:8081
