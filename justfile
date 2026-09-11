@@ -88,6 +88,7 @@ fmt-check:
 fuzz:
     go test -run=^$ -fuzz=FuzzValidateDomainName -fuzztime=30s ./internal/tools/
     go test -run=^$ -fuzz=FuzzValidateURL -fuzztime=30s ./internal/tools/
+    go test -run=^$ -fuzz=FuzzValidateIPAddress -fuzztime=30s ./internal/tools/
 
 # Regenerate docs/TOOLS.md from the registered tool definitions
 [group('quality')]

@@ -335,10 +335,23 @@ func resolveOne(records []string, description string, match func(string) bool) (
 
 // validateIPAddress parses an IP address argument, returning the parsed form so
 // callers get FTL a canonical spelling rather than whatever the model typed.
+//
+// A zoned IPv6 address is refused outright. A DNS answer carries an address,
+// never an interface, so a zone has no meaning in a host record. It is also the
+// one gap in netip.ParseAddr worth closing here: the zone may contain anything,
+// spaces and newlines included, so "fe80::1%x evil.example.com" parses cleanly
+// and the handler would store it verbatim as `addr.String() + " " + hostname`,
+// carrying an unvalidated second hostname past validateExactDomain. FTL v6.7
+// rejects every zoned address with a 400 (measured, 1 Sep 2026), so that record
+// never landed there, but these tools have only been verified against v6.7 and
+// this server claims v6.2 and later. The check keeps the guarantee on our side.
 func validateIPAddress(name, s string) (netip.Addr, error) {
 	addr, err := netip.ParseAddr(strings.TrimSpace(s))
 	if err != nil {
 		return netip.Addr{}, fmt.Errorf("%s: %q is not an IP address (expected something like 192.168.1.50 or fd00::1)", name, s)
+	}
+	if addr.Zone() != "" {
+		return netip.Addr{}, fmt.Errorf("%s: %q carries an interface zone (%%%s), which a DNS record cannot hold; pass the address without it", name, s, addr.Zone())
 	}
 	return addr.Unmap(), nil
 }

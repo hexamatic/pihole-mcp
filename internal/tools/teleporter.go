@@ -89,9 +89,15 @@ func teleporterExportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 		defer func() { _ = resp.Body.Close() }()
 
+		// 0600, matching what os.CreateTemp gives the default path. The archive
+		// holds the admin password's hash in pihole.toml, every DHCP lease and
+		// the long-term query database; os.Create would have made it 0644 under
+		// the usual umask, readable by every account on the host. The mode only
+		// applies when the file is created, so a path the caller prepared with
+		// its own permissions keeps them.
 		var out *os.File
 		if outputPath != "" {
-			out, err = os.Create(outputPath) //nolint:gosec // output_path is a user-provided MCP tool parameter, validated absolute above
+			out, err = os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // output_path is a user-provided MCP tool parameter, validated absolute above
 		} else {
 			out, err = os.CreateTemp("", "pihole-backup-*.zip")
 		}

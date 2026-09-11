@@ -23,11 +23,11 @@ Please include:
 
 This MCP server handles Pi-hole API credentials. Users should:
 
-- **Use environment variables** for `PIHOLE_URL` and `PIHOLE_PASSWORD` — never hardcode credentials
+- **Use environment variables** for `PIHOLE_URL` and `PIHOLE_PASSWORD`. Never hardcode credentials.
 - **Use application passwords** instead of the main admin password where possible (can be revoked independently)
 - **Use HTTPS** when connecting to Pi-hole over untrusted networks
 - **Restrict network access** to the Pi-hole instance using firewall rules
-- **Keep dependencies updated** — enable Dependabot or run `go get -u` regularly
+- **Keep dependencies updated.** Enable Dependabot or run `go get -u` regularly.
 
 ### HTTP and SSE transports
 
@@ -49,6 +49,44 @@ until one is configured**:
   line is readable via `ps` by every user on the host.
 - **Set `PIHOLE_TRUSTED_PROXIES` only for proxies you control.** It is what makes the rate limiter
   believe `X-Forwarded-For`, and that header is client-supplied.
+
+## Data Handling
+
+pihole-mcp talks to two parties only: the Pi-hole instances you configure, and the MCP client that started it. It has no telemetry, update check or crash reporting. The one optional third destination is an OpenTelemetry collector, used only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and its spans carry the tool name, timing and any error message. They never carry tool arguments or results, although an error message can quote the value that caused it. The slim build contains no OpenTelemetry code at all.
+
+### What the MCP client receives
+
+Tool results go to the MCP client, and so to whatever model that client is using. If that model is hosted, its provider's data handling terms apply to everything below. Several tools return personal information about the people and devices on your network:
+
+- **DNS query history tied to the device that asked**, meaning the domain, the client's address and hostname, and the time: `pihole_queries_search`, and the raw resolver log from `pihole_logs_dnsmasq`.
+- **An inventory of your network**: MAC addresses, hostnames, addresses and hardware vendors from `pihole_network_devices`, and DHCP leases from `pihole_dhcp_leases`.
+- **Activity per client**, including top clients by address, from the history and stats tools and from `pihole_padd`.
+- **Other people's Pi-hole sessions**, including the address and browser user agent of anyone logged in to the web interface or another integration, from `pihole_auth_sessions`.
+- **The admin password's hash.** Pi-hole's configuration API masks the password itself but returns `webserver.api.pwhash` in full, and `pihole_config_get` and `pihole_config_get_value` pass it through unchanged. It is a memory-hard BALLOON-SHA256 hash rather than the password, but a weak password can still be guessed against it offline.
+
+### Limiting it
+
+`PIHOLE_READ_ONLY` removes the tools that change Pi-hole. It does not hide any of the information above, because every tool listed is a read.
+
+To keep a category away from the client, leave its toolset out of `PIHOLE_TOOLSETS`:
+
+| To withhold | Leave out |
+|---|---|
+| Query history | `queries`, `history`, `logs` |
+| Device inventory and DHCP leases | `network`, `dhcp`, `clients` |
+| Other users' sessions | `sessions` |
+| The password hash | `config` |
+| Backup archives (see below) | `teleporter`, `instance` |
+
+`stats` and `dashboard` also name top clients by address, so leave those out as well if no client address should reach the model.
+
+### Backups written to disk
+
+`pihole_teleporter_export` saves a Pi-hole backup archive to disk, and so does `pihole_instance_sync` just before it applies a change, unless it is called with `snapshot` set to false. Only the file's path and size reach the MCP client, but the archive holds the password hash, every DHCP lease and the long-term query database. Archives are created readable by their owner only, whether in the temp directory or at an `output_path` you choose. They are not deleted when written: files in the temp directory older than 24 hours are removed the next time either tool runs, and anything written to an `output_path` is yours to delete.
+
+### Logs
+
+The server's own log output never contains the Pi-hole password, the session ID, or tool arguments and results. It records its settings at startup and, when the rate limiter throttles a client, that client's address at most once a minute.
 
 ## Verifying Release Artefacts
 
@@ -96,7 +134,7 @@ gh attestation verify oci://ghcr.io/hexamatic/pihole-mcp:X.Y.Z-slim --repo hexam
 
 This is a different guarantee from the `cosign verify` above and worth running as well as, not instead of. The cosign signature proves the image was signed by this repository's release workflow; the attestation is a signed SLSA statement of *how* it was built, naming the workflow, the commit and the runner.
 
-**SBOMs** — each archive has a matching `.sbom.json` (SPDX) release asset listing the exact dependency versions compiled into that binary.
+**SBOMs.** Each archive has a matching `.sbom.json` (SPDX) release asset listing the exact dependency versions compiled into that binary.
 
 ## Scope
 

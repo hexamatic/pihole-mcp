@@ -148,6 +148,9 @@ jobs:
       - name: Fuzz validateURL (60s)
         run: go test -run=^$ -fuzz=FuzzValidateURL -fuzztime=60s ./internal/tools/
 
+      - name: Fuzz validateIPAddress (60s)
+        run: go test -run=^$ -fuzz=FuzzValidateIPAddress -fuzztime=60s ./internal/tools/
+
       # A fuzz failure writes the input that caused it to
       # internal/tools/testdata/fuzz/<Target>/, and that file is the entire
       # value of the run — without it the log says an invariant broke and gives

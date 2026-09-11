@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -66,6 +67,31 @@ func TestTeleporterExport_OutputPath(t *testing.T) {
 	}
 	if string(got) != "PK\x03\x04fakezipdata" {
 		t.Errorf("output_path file contents = %q, want the exported archive bytes", got)
+	}
+}
+
+// TestTeleporterExport_OutputPathIsOwnerOnly pins the permissions of a backup
+// written to a caller-chosen path. The archive FTL returns carries the admin
+// password's hash in pihole.toml, every DHCP lease and the long-term query
+// database, so it must be no more readable than the temp-file default, which
+// os.CreateTemp creates 0600. os.Create would have used 0666 before the umask,
+// which is 0644 under the usual 022: readable by every account on the host.
+func TestTeleporterExport_OutputPathIsOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits do not apply on Windows")
+	}
+	h := piholeRawHandler(nil, map[string]string{"/teleporter": "PK\x03\x04fakezipdata"})
+	c := newTestClient(t, h)
+
+	out := filepath.Join(t.TempDir(), "chosen.zip")
+	callTool(t, teleporterExportHandler, c, map[string]any{"output_path": out})
+
+	info, err := os.Stat(out)
+	if err != nil {
+		t.Fatalf("stat the file the handler was told to write: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		t.Errorf("backup written with mode %#o, want no group or other access (0600)", perm)
 	}
 }
 

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"net/netip"
 	"net/url"
 	"strings"
 	"testing"
@@ -133,6 +134,66 @@ func FuzzValidateURL(f *testing.F) {
 			}
 		default:
 			t.Errorf("accepted unsupported scheme %q: %q", scheme, s)
+		}
+	})
+}
+
+// FuzzValidateIPAddress asserts what the local DNS tools rely on: whatever the
+// validator accepts is a single, bare IP address and nothing else. The handler
+// stores `addr.String() + " " + hostname` as one dns.hosts entry, so any
+// character the canonical form carries beyond the address itself becomes part
+// of the record Pi-hole writes.
+//
+// That is not hypothetical. netip.ParseAddr accepts an IPv6 zone and places no
+// restriction on what the zone contains, spaces and newlines included, so
+// "fe80::1%x evil.example.com" parsed cleanly and smuggled a second hostname
+// past validateExactDomain into the stored record. The seeds below run as
+// ordinary test cases under `go test`, so that input is a deterministic
+// regression check and not only something the fuzzer might rediscover.
+func FuzzValidateIPAddress(f *testing.F) {
+	seeds := []string{
+		"",
+		"192.168.1.50",
+		" 192.168.1.50 ",
+		"fd00::1",
+		"::ffff:192.168.1.50",
+		"::1",
+		"fe80::1%eth0",
+		"fe80::1%x evil.example.com",
+		"fe80::1%a\n10.0.0.1 bank.example.com",
+		"fe80::1%a\tb",
+		"192.168.1.50 evil.example.com",
+		"192.168.1.256",
+		"not-an-address",
+	}
+	for _, s := range seeds {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, s string) {
+		addr, err := validateIPAddress("ip", s)
+		if err != nil {
+			return
+		}
+		canonical := addr.String()
+		if !addr.IsValid() {
+			t.Fatalf("accepted %q but returned an invalid address", s)
+		}
+		// A DNS record answers with an address, not an interface. A zone has
+		// no meaning in dns.hosts and is the only route by which anything
+		// other than the address reaches the stored record.
+		if addr.Zone() != "" {
+			t.Errorf("accepted a zoned address %q (zone %q); it would be stored verbatim in dns.hosts", s, addr.Zone())
+		}
+		if strings.ContainsAny(canonical, " \t\r\n\x00") {
+			t.Errorf("accepted %q whose canonical form %q carries whitespace into the stored record", s, canonical)
+		}
+		if addr.Is4In6() {
+			t.Errorf("accepted %q and returned the mapped form %q; FTL should get the plain IPv4 spelling", s, canonical)
+		}
+		back, err := netip.ParseAddr(canonical)
+		if err != nil || back != addr {
+			t.Errorf("canonical form %q of %q does not round-trip (got %v, %v)", canonical, s, back, err)
 		}
 	})
 }
