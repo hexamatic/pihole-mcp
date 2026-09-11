@@ -118,9 +118,14 @@ jobs:
             echo "::error::release-notes.sh produced an empty body for ${version}"
             exit 1
           fi
-          # [Unreleased] is what the next release-prep run promotes, so a
-          # malformed section there is a problem worth catching now too.
-          scripts/release-notes.sh Unreleased > /dev/null
+          # [Unreleased] is what the next release-prep run promotes, so its
+          # heading must exist. Only the heading: the section is legitimately
+          # empty straight after a release, and release-notes.sh cannot tell an
+          # empty section from a missing one.
+          if ! grep -q '^## \[Unreleased\]$' CHANGELOG.md; then
+            echo "::error::no '## [Unreleased]' heading in CHANGELOG.md"
+            exit 1
+          fi
           echo "--- first 20 lines of the rehearsed release body ---"
           head -20 "${RUNNER_TEMP}/NOTES.md"
 
