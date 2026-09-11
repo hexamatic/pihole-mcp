@@ -607,3 +607,211 @@ func TestConfigGet_NormalEmptyConfig(t *testing.T) {
 		t.Errorf("got %q, want a named empty result", text)
 	}
 }
+
+// leakSentinel stands in for the value of webserver.api.pwhash. It is not a
+// real hash, and it is distinctive enough that any appearance in tool output is
+// unambiguous. (Named for what it detects rather than what it replaces: gosec's
+// G101 reads any identifier containing "pw" as a hardcoded credential.)
+const leakSentinel = "SENTINEL-ADMIN-HASH-MUST-NOT-REACH-THE-CLIENT"
+
+// appLeakSentinel stands in for the value of webserver.api.app_pwhash.
+const appLeakSentinel = "SENTINEL-APP-HASH-MUST-NOT-REACH-THE-CLIENT"
+
+// webserverAPIConfig is the shape FTL v6.7 returns for the webserver.api
+// section, trimmed to the keys that matter here. FTL masks password and
+// totp_secret itself; pwhash and app_pwhash come back in full, which is what
+// the handlers must withhold.
+func webserverAPIConfig() map[string]any {
+	return map[string]any{
+		"config": map[string]any{
+			"webserver": map[string]any{
+				"api": map[string]any{
+					"max_sessions": float64(16),
+					"password":     "********",
+					"totp_secret":  "********",
+					"pwhash":       leakSentinel,
+					"app_pwhash":   appLeakSentinel,
+				},
+			},
+		},
+	}
+}
+
+func assertNoPasswordHash(t *testing.T, text string) {
+	t.Helper()
+	for _, secret := range []string{leakSentinel, appLeakSentinel} {
+		if strings.Contains(text, secret) {
+			t.Errorf("tool output carries a password hash (%s):\n%s", secret, text)
+		}
+	}
+}
+
+// TestConfigGet_WithholdsPasswordHashes pins the fix for the admin password's
+// hash reaching the model. Pi-hole's configuration API masks the password
+// itself but returns webserver.api.pwhash unmasked, and every detail level of
+// pihole_config_get passed it straight through from v0.1.0 onwards. The
+// sibling keys must survive: dropping the whole section would hide the leak by
+// breaking the tool.
+func TestConfigGet_WithholdsPasswordHashes(t *testing.T) {
+	for _, tc := range []struct{ name, section, detail, sibling string }{
+		{"section, normal", "webserver", "normal", "webserver.api.max_sessions"},
+		{"section, full", "webserver", "full", `"max_sessions"`},
+		{"whole config, normal", "", "normal", "webserver.api.max_sessions"},
+		{"whole config, full", "", "full", `"max_sessions"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			route := "/config"
+			if tc.section != "" {
+				route += "/" + tc.section
+			}
+			c := newTestClient(t, piholeHandler(map[string]any{route: webserverAPIConfig()}))
+
+			args := map[string]any{"detail": tc.detail}
+			if tc.section != "" {
+				args["section"] = tc.section
+			}
+			text := callTool(t, configGetHandler, c, args)
+
+			assertNoPasswordHash(t, text)
+			if !strings.Contains(text, tc.sibling) {
+				t.Errorf("expected the rest of webserver.api to survive (%s), got:\n%s", tc.sibling, text)
+			}
+			if !strings.Contains(text, "webserver.api.pwhash") || !strings.Contains(text, "withheld") {
+				t.Errorf("expected a note naming what was withheld, got:\n%s", text)
+			}
+		})
+	}
+}
+
+// TestConfigGetValue_RefusesCredentialPathsWithoutAsking checks the direct
+// request for a hash. Refusing after fetching it would still move the hash
+// across the wire into this process for nothing, so no request is sent at all.
+// The spellings cover the ways a path can be written that still reach the same
+// key: case, stray whitespace and dots, and slash separators.
+func TestConfigGetValue_RefusesCredentialPathsWithoutAsking(t *testing.T) {
+	for _, element := range []string{
+		"webserver.api.pwhash",
+		"webserver.api.app_pwhash",
+		"WebServer.API.PWHash",
+		" webserver.api.pwhash ",
+		"webserver..api.pwhash",
+		".webserver.api.pwhash.",
+		"webserver/api/pwhash",
+	} {
+		t.Run(element, func(t *testing.T) {
+			rec := piholeHandler(map[string]any{
+				"/config/webserver/api/pwhash":     webserverAPIConfig(),
+				"/config/webserver/api/app_pwhash": webserverAPIConfig(),
+			})
+			c := newTestClient(t, rec)
+
+			text := callTool(t, configGetValueHandler, c, map[string]any{"element": element})
+
+			assertNoPasswordHash(t, text)
+			if !strings.Contains(text, "withheld") {
+				t.Errorf("expected the reply to say the value is withheld, got: %s", text)
+			}
+			if n := len(rec.AllRequests()); n != 0 {
+				t.Errorf("sent %d request(s) for a credential path; want none:\n%s", n, rec.Dump())
+			}
+		})
+	}
+}
+
+// TestConfigGetValue_SectionAboveACredentialIsFiltered covers asking for the
+// section that contains the hash rather than the hash itself.
+func TestConfigGetValue_SectionAboveACredentialIsFiltered(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{"/config/webserver/api": webserverAPIConfig()}))
+
+	text := callTool(t, configGetValueHandler, c, map[string]any{"element": "webserver.api"})
+
+	assertNoPasswordHash(t, text)
+	if !strings.Contains(text, "max_sessions") {
+		t.Errorf("expected the rest of webserver.api to survive, got: %s", text)
+	}
+}
+
+// TestConfigSet_ResponseWithholdsPasswordHashes covers the path that was
+// easiest to miss. FTL answers a PATCH with the entire configuration, and the
+// handler echoes it, so every successful write of any setting returned the
+// admin password's hash as a side effect.
+func TestConfigSet_ResponseWithholdsPasswordHashes(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{"PATCH /config": webserverAPIConfig()}))
+
+	text := callTool(t, configSetHandler, c, map[string]any{"config": `{"dns":{"cache":{"size":10001}}}`})
+
+	assertNoPasswordHash(t, text)
+	if !strings.Contains(text, "Config updated") || !strings.Contains(text, "max_sessions") {
+		t.Errorf("expected a normal success reply with the rest of the config, got:\n%s", text)
+	}
+}
+
+// TestConfigSet_RefusesPasswordHashWrites checks the other half. FTL accepts a
+// write to webserver.api.pwhash through PATCH /api/config (measured against
+// v6.7), and whatever is written replaces the admin password outright. No
+// caller of this tool can know a valid hash, so there is no legitimate write
+// to make, and the request never leaves the process. Every payload shape the
+// handler accepts is covered, including both envelope forms and a dotted key.
+func TestConfigSet_RefusesPasswordHashWrites(t *testing.T) {
+	for _, tc := range []struct{ name, payload, want string }{
+		{"nested", `{"webserver":{"api":{"pwhash":"x"}}}`, "webserver.api.pwhash"},
+		{"empty value", `{"webserver":{"api":{"pwhash":""}}}`, "webserver.api.pwhash"},
+		{"app password", `{"webserver":{"api":{"app_pwhash":"x"}}}`, "webserver.api.app_pwhash"},
+		{"alongside a legitimate key", `{"webserver":{"api":{"max_sessions":20,"pwhash":"x"}}}`, "webserver.api.pwhash"},
+		{"already wrapped", `{"config":{"webserver":{"api":{"pwhash":"x"}}}}`, "webserver.api.pwhash"},
+		{"doubly wrapped", `{"config":{"config":{"webserver":{"api":{"pwhash":"x"}}}}}`, "webserver.api.pwhash"},
+		{"dotted key", `{"webserver.api.pwhash":"x"}`, "webserver.api.pwhash"},
+		{"partly dotted key", `{"webserver":{"api.pwhash":"x"}}`, "webserver.api.pwhash"},
+		{"case variant", `{"WebServer":{"API":{"PWHash":"x"}}}`, "webserver.api.pwhash"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := piholeHandler(map[string]any{"PATCH /config": webserverAPIConfig()})
+			c := newTestClient(t, rec)
+
+			msg := callToolExpectError(t, configSetHandler, c, map[string]any{"config": tc.payload})
+
+			if !strings.Contains(msg, tc.want) {
+				t.Errorf("expected the refusal to name %s, got: %s", tc.want, msg)
+			}
+			rec.AssertNone(t, "PATCH", "/config")
+		})
+	}
+}
+
+// TestConfigSet_PasswordChangeIsStillAllowed guards against the refusal
+// growing to cover the supported way to change the password, which is to send
+// the plain password and let Pi-hole hash it.
+func TestConfigSet_PasswordChangeIsStillAllowed(t *testing.T) {
+	rec := piholeHandler(map[string]any{"PATCH /config": webserverAPIConfig()})
+	c := newTestClient(t, rec)
+
+	callTool(t, configSetHandler, c, map[string]any{"config": `{"webserver":{"api":{"password":"new-password"}}}`})
+
+	rec.Only(t, "PATCH", "/config").AssertField(t, "config.webserver.api.password", "new-password")
+}
+
+// TestConfigAddRemoveValue_RefuseCredentialPaths closes the two remaining
+// write routes, which take a dotted element rather than an object.
+func TestConfigAddRemoveValue_RefuseCredentialPaths(t *testing.T) {
+	for _, h := range []struct {
+		name    string
+		handler func(*pihole.Registry) server.ToolHandlerFunc
+	}{
+		{"add", configAddValueHandler},
+		{"remove", configRemoveValueHandler},
+	} {
+		t.Run(h.name, func(t *testing.T) {
+			rec := piholeHandler(map[string]any{})
+			c := newTestClient(t, rec)
+
+			msg := callToolExpectError(t, h.handler, c, map[string]any{"element": "webserver.api.pwhash", "value": "x"})
+
+			if !strings.Contains(msg, "webserver.api.pwhash") {
+				t.Errorf("expected the refusal to name the key, got: %s", msg)
+			}
+			if n := len(rec.AllRequests()); n != 0 {
+				t.Errorf("sent %d request(s) for a credential path; want none:\n%s", n, rec.Dump())
+			}
+		})
+	}
+}

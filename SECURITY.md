@@ -62,7 +62,8 @@ Tool results go to the MCP client, and so to whatever model that client is using
 - **An inventory of your network**: MAC addresses, hostnames, addresses and hardware vendors from `pihole_network_devices`, and DHCP leases from `pihole_dhcp_leases`.
 - **Activity per client**, including top clients by address, from the history and stats tools and from `pihole_padd`.
 - **Other people's Pi-hole sessions**, including the address and browser user agent of anyone logged in to the web interface or another integration, from `pihole_auth_sessions`.
-- **The admin password's hash.** Pi-hole's configuration API masks the password itself but returns `webserver.api.pwhash` in full, and `pihole_config_get` and `pihole_config_get_value` pass it through unchanged. It is a memory-hard BALLOON-SHA256 hash rather than the password, but a weak password can still be guessed against it offline.
+
+Password hashes are the exception. Pi-hole's configuration API masks the admin password and the TOTP secret but returns `webserver.api.pwhash` and `webserver.api.app_pwhash` in full. From v0.9.0 the configuration tools withhold both from everything they return, including the configuration `pihole_config_set` echoes after a write, and refuse to write either, because Pi-hole accepts a written hash and it replaces the credential outright. Earlier versions returned the admin password's hash.
 
 ### Limiting it
 
@@ -75,7 +76,6 @@ To keep a category away from the client, leave its toolset out of `PIHOLE_TOOLSE
 | Query history | `queries`, `history`, `logs` |
 | Device inventory and DHCP leases | `network`, `dhcp`, `clients` |
 | Other users' sessions | `sessions` |
-| The password hash | `config` |
 | Backup archives (see below) | `teleporter`, `instance` |
 
 `stats` and `dashboard` also name top clients by address, so leave those out as well if no client address should reach the model.

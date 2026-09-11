@@ -496,6 +496,19 @@ call_tool_expect "pihole_config_get" '{"section":"dns"}' "config_get (dns return
 call_tool "pihole_config_get" '{"detail":"minimal"}' "config_get (minimal)"
 call_tool_expect "pihole_config_get" '{"detail":"minimal"}' "config_get (minimal names sections sorted)" "Config sections: database, debug, dhcp, dns,"
 call_tool "pihole_config_get_value" '{"element":"dns.upstreams"}' "config_get_value (dns.upstreams)"
+# Password hashes. FTL masks webserver.api.password and totp_secret itself but
+# returns webserver.api.pwhash in full, and accepts a PATCH to it. Every read
+# path must withhold it, the rest of the section must survive, and a write must
+# be refused before it reaches FTL. Pi-hole's hashes all begin $BALLOON-SHA256,
+# so that prefix appearing anywhere in a reply is the leak.
+call_tool_expect_absent "pihole_config_get" '{"section":"webserver"}' "config_get (webserver withholds the password hash)" '$BALLOON-SHA256'
+call_tool_expect_absent "pihole_config_get" '{"section":"webserver","detail":"full"}' "config_get (full JSON withholds the password hash)" '$BALLOON-SHA256'
+call_tool_expect "pihole_config_get" '{"section":"webserver"}' "config_get (webserver keeps its other settings)" "webserver.api.max_sessions:"
+call_tool_expect "pihole_config_get" '{"section":"webserver"}' "config_get (webserver says what it withheld)" "withheld: \`webserver.api.pwhash\`"
+call_tool_expect "pihole_config_get_value" '{"element":"webserver.api.pwhash"}' "config_get_value (pwhash is withheld)" "withheld"
+call_tool_expect_absent "pihole_config_get_value" '{"element":"webserver.api"}' "config_get_value (webserver.api withholds the hash)" '$BALLOON-SHA256'
+call_tool_expect_error "pihole_config_set" '{"config":"{\"webserver\":{\"api\":{\"pwhash\":\"x\"}}}"}' "config_set (refuses a password hash write)" "Refusing to write webserver.api.pwhash"
+call_tool_expect_absent "pihole_config_set" '{"config":"{\"dns\":{\"cache\":{\"size\":10001}}}"}' "config_set (reply withholds the password hash)" '$BALLOON-SHA256'
 # A plain probe value first, so the round trip is proven independently of the
 # escaping. 127.0.0.99 is in the loopback range and reaches nothing.
 call_tool "pihole_config_add_value" '{"element":"dns.upstreams","value":"127.0.0.99","restart":false}' "config_add_value (round-trip add)"

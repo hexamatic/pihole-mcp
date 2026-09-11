@@ -66,6 +66,109 @@ func RegisterConfig(s *server.MCPServer, r *pihole.Registry) {
 	), configPropertiesHandler(r))
 }
 
+// credentialPaths are the configuration keys that hold password hashes.
+//
+// FTL masks webserver.api.password and webserver.api.totp_secret as "********"
+// on read, but returns these two in full, and accepts writes to both through
+// PATCH /api/config (measured against v6.7, 11 Sep 2026). So they are withheld
+// from everything these tools return, and refused on the way in.
+//
+// Withheld means omitted, never replaced with a placeholder. pihole_config_set
+// PATCHes whatever object it is given, and FTL leaves a key the PATCH does not
+// mention exactly as it was, so a caller that reads a section and writes it
+// back unchanged is safe. A placeholder in the same round trip would be
+// written as the new hash and lock the admin out.
+var credentialPaths = []string{"webserver.api.pwhash", "webserver.api.app_pwhash"}
+
+// normaliseConfigPath reduces a dotted config path to the form credentialPaths
+// uses. Case, surrounding whitespace, empty segments and slash separators are
+// all ways of spelling a path that FTL may still resolve to the same key.
+func normaliseConfigPath(p string) string {
+	parts := strings.FieldsFunc(strings.ToLower(strings.TrimSpace(p)), func(r rune) bool {
+		return r == '.' || r == '/'
+	})
+	return strings.Join(parts, ".")
+}
+
+// isCredentialPath reports whether a config path names a password hash.
+func isCredentialPath(p string) bool {
+	n := normaliseConfigPath(p)
+	for _, c := range credentialPaths {
+		if n == c {
+			return true
+		}
+	}
+	return false
+}
+
+// withholdCredentials deletes the password hashes from a config tree as FTL
+// returns it, rooted at the top level whatever section was asked for, and
+// reports which it removed. Callers apply it before rendering in any form.
+func withholdCredentials(cfg map[string]any) []string {
+	var withheld []string
+	for _, path := range credentialPaths {
+		parts := strings.Split(path, ".")
+		parent := cfg
+		for _, seg := range parts[:len(parts)-1] {
+			next, ok := parent[seg].(map[string]any)
+			if !ok {
+				parent = nil
+				break
+			}
+			parent = next
+		}
+		if parent == nil {
+			continue
+		}
+		if _, ok := parent[parts[len(parts)-1]]; ok {
+			delete(parent, parts[len(parts)-1])
+			withheld = append(withheld, path)
+		}
+	}
+	return withheld
+}
+
+// withheldNote tells the caller a key exists but was left out, so it is not
+// mistaken for a missing setting and "restored".
+func withheldNote(withheld []string) string {
+	if len(withheld) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("\n\n_Password hashes are never returned; withheld: `%s`._", strings.Join(withheld, "`, `"))
+}
+
+// credentialKeyIn returns the first password-hash key a config_set payload
+// would write, or "". Keys are split on dots as well as nesting, because a
+// payload may spell the same path either way.
+func credentialKeyIn(obj map[string]any) string {
+	var walk func(m map[string]any, prefix string) string
+	walk = func(m map[string]any, prefix string) string {
+		for k, v := range m {
+			path := normaliseConfigPath(prefix + "." + k)
+			if isCredentialPath(path) {
+				return path
+			}
+			if child, ok := v.(map[string]any); ok {
+				if found := walk(child, path); found != "" {
+					return found
+				}
+			}
+		}
+		return ""
+	}
+	return walk(obj, "")
+}
+
+// refuseCredentialWrite is the error every write tool returns for a password
+// hash. Whatever is written replaces the credential outright, and no caller of
+// these tools can know a valid hash, so there is no legitimate write to make.
+func refuseCredentialWrite(path string) *mcp.CallToolResult {
+	if path == "webserver.api.app_pwhash" {
+		return mcp.NewToolResultError("Refusing to write webserver.api.app_pwhash: it is the hash of the app password that integrations sign in with, and writing it replaces that password outright. Generate a new app password in Pi-hole's web interface instead.")
+	}
+	return mcp.NewToolResultError("Refusing to write " + path + ": it is the hash of the admin password, and writing it replaces that password outright. To change the password, set webserver.api.password to the new password and Pi-hole hashes it. That ends every open Pi-hole session, this server's included, so update PIHOLE_PASSWORD to match.")
+}
+
 func configGetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		c, err := getInstance(req, r)
@@ -86,6 +189,7 @@ func configGetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err := c.Get(ctx, path, &result); err != nil {
 			return toolError("get config", err), nil
 		}
+		withheld := withholdCredentials(result.Config)
 
 		detail := getDetail(req)
 
@@ -107,7 +211,7 @@ func configGetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			if flat == "" {
 				return mcp.NewToolResultText("No configuration returned."), nil
 			}
-			return mcp.NewToolResultText(flat), nil
+			return mcp.NewToolResultText(flat + withheldNote(withheld)), nil
 		}
 
 		// full: JSON dump
@@ -120,6 +224,7 @@ func configGetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		b.WriteString("```json\n")
 		b.Write(configJSON)
 		b.WriteString("\n```")
+		b.WriteString(withheldNote(withheld))
 
 		return mcp.NewToolResultText(b.String()), nil
 	}
@@ -167,6 +272,12 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			payload = inner
 		}
 
+		// Checked after unwrapping, so the test sees exactly the object FTL
+		// would be sent, whichever envelope the caller used.
+		if key := credentialKeyIn(payload); key != "" {
+			return refuseCredentialWrite(key), nil
+		}
+
 		path := "/config"
 		if !req.GetBool("restart", true) {
 			path += "?restart=false"
@@ -179,12 +290,16 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		sendLog(ctx, mcp.LoggingLevelInfo, "config", map[string]any{"instance": c.Name(), "event": "config_updated"})
 
+		// FTL answers a PATCH with the entire configuration, so without this
+		// every write of any setting handed back the admin password's hash.
+		withheld := withholdCredentials(result.Config)
 		configJSON, _ := json.MarshalIndent(result.Config, "", "  ")
 
 		var b strings.Builder
 		b.WriteString("**Config updated.**\n```json\n")
 		b.Write(configJSON)
 		b.WriteString("\n```")
+		b.WriteString(withheldNote(withheld))
 
 		return mcp.NewToolResultText(b.String()), nil
 	}
@@ -203,6 +318,11 @@ func configGetValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err := validateMaxLength("element", element, maxConfigPathLen); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
+		// Answered without a request: refusing after fetching would still
+		// carry the hash across the wire into this process for nothing.
+		if isCredentialPath(element) {
+			return mcp.NewToolResultText(fmt.Sprintf("**%s:** withheld. Password hashes are never returned.", normaliseConfigPath(element))), nil
+		}
 
 		path := "/config/" + escapeConfigElement(element)
 
@@ -210,6 +330,10 @@ func configGetValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err := c.Get(ctx, path, &result); err != nil {
 			return toolError("get config value", err), nil
 		}
+		// A parent section (webserver, webserver.api) still carries the hashes,
+		// and so does any spelling of the path the check above did not catch
+		// but FTL resolved anyway.
+		withheld := withholdCredentials(result.Config)
 
 		// FTL nests the requested item under its full path from the root, so
 		// dns.hosts comes back as {"config":{"dns":{"hosts":[...]}}}. The
@@ -235,7 +359,7 @@ func configGetValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			formatted = string(j)
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf("**%s:** %s", element, formatted)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("**%s:** %s", element, formatted) + withheldNote(withheld)), nil
 	}
 }
 
@@ -258,6 +382,9 @@ func configAddValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 		if err := validateMaxLength("value", value, maxCommentLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+		if isCredentialPath(element) {
+			return refuseCredentialWrite(normaliseConfigPath(element)), nil
 		}
 
 		path := "/config/" + escapeConfigElement(element) + "/" + pihole.EscapePathSegment(value)
@@ -294,6 +421,9 @@ func configRemoveValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 		if err := validateMaxLength("value", value, maxCommentLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+		if isCredentialPath(element) {
+			return refuseCredentialWrite(normaliseConfigPath(element)), nil
 		}
 
 		path := "/config/" + escapeConfigElement(element) + "/" + pihole.EscapePathSegment(value)
