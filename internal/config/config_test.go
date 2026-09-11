@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -245,5 +246,71 @@ func TestLoad_TLSSkipVerifyInvalid(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for invalid PIHOLE_TLS_SKIP_VERIFY")
+	}
+}
+
+// TestLoadRejectsBadURLScheme covers the URLs url.Parse is happy to accept and
+// nothing downstream can do anything sensible with.
+//
+// A PIHOLE_URL of "192.168.1.2" used to start the server cleanly and then fail
+// on the first tool call with "unsupported protocol scheme", naming neither the
+// variable nor the fix. Failing at load time puts the variable name in the
+// message, at the moment the user is looking at their configuration.
+func TestLoadRejectsBadURLScheme(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{"bare host", "192.168.1.2", "http://"},
+		{"bare hostname", "pihole.local", "http://"},
+		{"host and port without scheme", "pihole.local:8080", "only http and https"},
+		{"ftp", "ftp://192.168.1.2", "only http and https"},
+		{"file", "file:///etc/pihole", "only http and https"},
+		{"scheme with no host", "http://", "must include a host"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PIHOLE_URL", tc.url)
+			t.Setenv("PIHOLE_PASSWORD", "test")
+
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load() accepted PIHOLE_URL=%q", tc.url)
+			}
+			if !strings.Contains(err.Error(), "PIHOLE_URL") {
+				t.Errorf("error does not name the variable: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error does not tell the user the fix (want %q): %v", tc.want, err)
+			}
+		})
+	}
+}
+
+// TestLoadAcceptsValidURLSchemes is the other half: the scheme check must not
+// start rejecting configurations that work.
+func TestLoadAcceptsValidURLSchemes(t *testing.T) {
+	for _, raw := range []string{
+		"http://192.168.1.2",
+		"https://pihole.local",
+		"http://192.168.1.2:8080",
+		"http://pihole.local/admin",
+		"HTTP://192.168.1.2",
+		"http://[::1]:8080",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			t.Setenv("PIHOLE_URL", raw)
+			t.Setenv("PIHOLE_PASSWORD", "test")
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() rejected a valid PIHOLE_URL=%q: %v", raw, err)
+			}
+			if cfg.Instances[0].URL != raw {
+				t.Errorf("URL = %q, want it passed through unchanged as %q", cfg.Instances[0].URL, raw)
+			}
+		})
 	}
 }

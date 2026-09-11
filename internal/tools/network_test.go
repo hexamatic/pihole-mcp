@@ -11,7 +11,7 @@ func TestNetworkDevices_Normal(t *testing.T) {
 	vendor := "Apple"
 	hostname := "desktop"
 
-	c := newTestClient(t, piholeHandler(map[string]any{
+	h := piholeHandler(map[string]any{
 		"/network/devices": map[string]any{
 			"devices": []any{
 				map[string]any{
@@ -24,7 +24,8 @@ func TestNetworkDevices_Normal(t *testing.T) {
 				},
 			},
 		},
-	}))
+	})
+	c := newTestClient(t, h)
 
 	text := callTool(t, networkDevicesHandler, c, nil)
 	if !strings.Contains(text, "1 devices") {
@@ -42,6 +43,35 @@ func TestNetworkDevices_Normal(t *testing.T) {
 	if !strings.Contains(text, "1,500") {
 		t.Errorf("expected formatted query count, got: %s", text)
 	}
+
+	// Both caps ride in the query string and neither appears in the rendered
+	// table. Dropping them hands the model whatever Pi-hole's own defaults
+	// happen to be, and a device list truncated at a different point reads as a
+	// complete one.
+	req := h.Only(t, "GET", "/network/devices")
+	req.AssertQuery(t, "max_devices", "20")
+	req.AssertQuery(t, "max_addresses", "3")
+}
+
+// TestNetworkDevices_ForwardsExplicitCaps pins that a caller-supplied cap
+// reaches Pi-hole rather than being applied locally after the fact. A device
+// table on a large network is the one response in this package big enough to
+// matter, so trimming after the reply would defeat the point of asking for a
+// smaller one.
+func TestNetworkDevices_ForwardsExplicitCaps(t *testing.T) {
+	h := piholeHandler(map[string]any{
+		"/network/devices": map[string]any{"devices": []any{}},
+	})
+	c := newTestClient(t, h)
+
+	callTool(t, networkDevicesHandler, c, map[string]any{
+		"max_devices":   5.0,
+		"max_addresses": 1.0,
+	})
+
+	req := h.Only(t, "GET", "/network/devices")
+	req.AssertQuery(t, "max_devices", "5")
+	req.AssertQuery(t, "max_addresses", "1")
 }
 
 func TestNetworkDevices_Minimal(t *testing.T) {
@@ -173,10 +203,11 @@ func TestNetworkGateway_Empty(t *testing.T) {
 }
 
 func TestNetworkInfo_Normal(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	h := piholeHandler(map[string]any{
 		"/network/routes":     map[string]any{"routes": []any{map[string]any{"family": "inet", "dst": "default", "gateway": "192.168.1.1", "oif": "eth0"}}},
 		"/network/interfaces": map[string]any{"interfaces": []any{map[string]any{"name": "eth0", "type": "ether", "state": "UP"}}},
-	}))
+	})
+	c := newTestClient(t, h)
 
 	text := callTool(t, networkInfoHandler, c, nil)
 	if !strings.Contains(text, "1 routes") {
@@ -194,6 +225,13 @@ func TestNetworkInfo_Normal(t *testing.T) {
 	if !strings.Contains(text, "UP") {
 		t.Errorf("expected interface state, got: %s", text)
 	}
+
+	// This is the one tool in the file that stitches two endpoints together.
+	// Exactly one call each: a duplicated fetch would render identically while
+	// doubling the cost of every invocation, and this tool is called from the
+	// audit_network prompt against instances that also serve real DNS.
+	h.AssertCount(t, "GET", "/network/routes", 1)
+	h.AssertCount(t, "GET", "/network/interfaces", 1)
 }
 
 func TestNetworkRoutes_Normal(t *testing.T) {
@@ -331,30 +369,70 @@ func TestNetworkInterfaces_Empty(t *testing.T) {
 }
 
 func TestNetworkDeleteDevice_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	h := piholeHandler(map[string]any{
 		"/network/devices/42": nil,
-	}))
+	})
+	c := newTestClient(t, h)
 
 	text := callTool(t, networkDeleteDeviceHandler, c, map[string]any{"id": 42.0})
 	if !strings.Contains(text, "Device 42 deleted") {
 		t.Errorf("expected deletion confirmation, got: %s", text)
 	}
+
+	// "Device 42 deleted" is assembled from the argument and would be printed
+	// verbatim after a GET that deleted nothing at all. The method is the whole
+	// substance of this tool and the fake answers any of them, so only the wire
+	// says the device was actually removed. The id goes into the path, so pin
+	// the path too: /network/devices with no id is the whole device table.
+	req := h.Only(t, "DELETE", "")
+	req.AssertRawPath(t, "/network/devices/42")
+	req.AssertNoBody(t)
+	req.AssertNoQueryString(t)
 }
 
 func TestNetworkDeleteDevice_MissingID(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{}))
+	h := piholeHandler(map[string]any{})
+	c := newTestClient(t, h)
 
 	text := callToolExpectError(t, networkDeleteDeviceHandler, c, nil)
 	if !strings.Contains(text, "Parameter 'id' is required") {
 		t.Errorf("expected required-id error, got: %s", text)
 	}
+
+	// A rejected argument must be rejected locally. The error text alone cannot
+	// tell "we refused to send it" from "we sent it and Pi-hole refused", and
+	// for a destructive tool those are not the same outcome.
+	h.AssertNone(t, "", "")
 }
 
 func TestNetworkDeleteDevice_ZeroID(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{}))
+	// RequireInt distinguishes a supplied 0 from an absent argument, unlike
+	// the old GetFloat("id", 0) default that made the two indistinguishable
+	// and forced 0 to be treated as "missing". A caller that names device 0
+	// deliberately gets it deleted, matching the pattern already established
+	// at info.go's dismiss-message tool.
+	h := piholeHandler(map[string]any{
+		"/network/devices/0": nil,
+	})
+	c := newTestClient(t, h)
 
-	text := callToolExpectError(t, networkDeleteDeviceHandler, c, map[string]any{"id": 0.0})
-	if !strings.Contains(text, "must be a positive integer") {
-		t.Errorf("expected positive-integer error, got: %s", text)
+	text := callTool(t, networkDeleteDeviceHandler, c, map[string]any{"id": 0.0})
+	if !strings.Contains(text, "Device 0 deleted") {
+		t.Errorf("expected deletion confirmation, got: %s", text)
 	}
+	h.Only(t, "DELETE", "").AssertRawPath(t, "/network/devices/0")
+}
+
+func TestNetworkDeleteDevice_NegativeID(t *testing.T) {
+	h := piholeHandler(map[string]any{})
+	c := newTestClient(t, h)
+
+	text := callToolExpectError(t, networkDeleteDeviceHandler, c, map[string]any{"id": -1.0})
+	if !strings.Contains(text, "must not be negative") {
+		t.Errorf("expected negative-id error, got: %s", text)
+	}
+
+	// A rejected argument must be rejected locally, not forwarded and left to
+	// the API to refuse.
+	h.AssertNone(t, "", "")
 }

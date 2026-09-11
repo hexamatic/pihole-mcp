@@ -27,7 +27,7 @@ func RegisterStats(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithTitleAnnotation("Top Domains"),
 		mcp.WithDescription("Top queried or top blocked domains ranked by count. Returns 10 by default, max 50."),
 		mcp.WithBoolean("blocked", mcp.Description("True for top blocked, false/omit for top permitted.")),
-		mcp.WithNumber("count", mcp.Description("Number of results (default 10, max 50).")),
+		mcp.WithNumber("count", mcp.Description("Number of results (default 10, max 50)."), mcp.Min(1), mcp.Max(50)),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithOutputSchema[TopListOutput](),
@@ -37,7 +37,7 @@ func RegisterStats(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithTitleAnnotation("Top Clients"),
 		mcp.WithDescription("Most active network clients ranked by query count. Use blocked=true for clients with most blocked queries."),
 		mcp.WithBoolean("blocked", mcp.Description("True for most-blocked clients.")),
-		mcp.WithNumber("count", mcp.Description("Number of results (default 10, max 50).")),
+		mcp.WithNumber("count", mcp.Description("Number of results (default 10, max 50)."), mcp.Min(1), mcp.Max(50)),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithOutputSchema[TopListOutput](),
@@ -60,14 +60,14 @@ func RegisterStats(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_stats_recent_blocked",
 		mcp.WithTitleAnnotation("Recently Blocked"),
 		mcp.WithDescription("Most recently blocked domains — useful for spotting new tracking domains or false positives in real-time."),
-		mcp.WithNumber("count", mcp.Description("Number of domains (default 10).")),
+		mcp.WithNumber("count", mcp.Description("Number of domains (default 10, max 50)."), mcp.Min(1), mcp.Max(50)),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 	), statsRecentBlockedHandler(r))
 
 	addTool(s, r, mcp.NewTool("pihole_stats_database",
 		mcp.WithTitleAnnotation("Long-Term Statistics"),
-		mcp.WithDescription("Long-term database statistics for a time range. Returns totals for queries, blocked, and clients."),
+		mcp.WithDescription("Long-term database statistics aggregated over a time range: one set of totals for queries, blocked and clients. Use pihole_history_database for the same range broken into time slots."),
 		mcp.WithNumber("from", mcp.Description("Start Unix timestamp.")),
 		mcp.WithNumber("until", mcp.Description("End Unix timestamp.")),
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -78,7 +78,7 @@ func RegisterStats(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithDescription("Top queried or blocked domains from the long-term database for a date range. Returns 10 by default, max 50."),
 		mcp.WithNumber("from", mcp.Description("Start Unix timestamp.")),
 		mcp.WithNumber("until", mcp.Description("End Unix timestamp.")),
-		mcp.WithNumber("count", mcp.Description("Number of results (default 10, max 50).")),
+		mcp.WithNumber("count", mcp.Description("Number of results (default 10, max 50)."), mcp.Min(1), mcp.Max(50)),
 		mcp.WithBoolean("blocked", mcp.Description("True for top blocked, false/omit for top permitted.")),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -89,7 +89,7 @@ func RegisterStats(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithDescription("Most active clients from the long-term database for a date range. Use blocked=true for clients with most blocked queries."),
 		mcp.WithNumber("from", mcp.Description("Start Unix timestamp.")),
 		mcp.WithNumber("until", mcp.Description("End Unix timestamp.")),
-		mcp.WithNumber("count", mcp.Description("Number of results (default 10, max 50).")),
+		mcp.WithNumber("count", mcp.Description("Number of results (default 10, max 50)."), mcp.Min(1), mcp.Max(50)),
 		mcp.WithBoolean("blocked", mcp.Description("True for most-blocked clients.")),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -201,7 +201,10 @@ func statsTopDomainsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		count := getCountCapped(req, "count", 10, 50)
+		count, err := getCountCapped(req, "count", 10, 1, 50)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		blocked := req.GetBool("blocked", false)
 
 		path := fmt.Sprintf("/stats/top_domains?count=%d&blocked=%t", count, blocked)
@@ -242,7 +245,10 @@ func statsTopClientsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		count := getCountCapped(req, "count", 10, 50)
+		count, err := getCountCapped(req, "count", 10, 1, 50)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		blocked := req.GetBool("blocked", false)
 
 		path := fmt.Sprintf("/stats/top_clients?count=%d&blocked=%t", count, blocked)
@@ -360,7 +366,10 @@ func statsRecentBlockedHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		count := int(req.GetFloat("count", 10))
+		count, err := getCountCapped(req, "count", 10, 1, 50)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		path := fmt.Sprintf("/stats/recent_blocked?count=%d", count)
 
 		var result pihole.RecentBlocked
@@ -423,7 +432,10 @@ func statsDatabaseTopDomainsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		from, until := getTimeRange(req, 24*time.Hour)
-		count := getCountCapped(req, "count", 10, 50)
+		count, err := getCountCapped(req, "count", 10, 1, 50)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		blocked := req.GetBool("blocked", false)
 
 		params := map[string]string{
@@ -469,7 +481,10 @@ func statsDatabaseTopClientsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		from, until := getTimeRange(req, 24*time.Hour)
-		count := getCountCapped(req, "count", 10, 50)
+		count, err := getCountCapped(req, "count", 10, 1, 50)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		blocked := req.GetBool("blocked", false)
 
 		params := map[string]string{

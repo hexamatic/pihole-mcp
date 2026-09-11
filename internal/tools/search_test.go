@@ -6,7 +6,7 @@ import (
 )
 
 func TestSearchDomains_Found(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	h := piholeHandler(map[string]any{
 		"/search/ads.example.com": map[string]any{
 			"search": map[string]any{
 				"domains": []any{
@@ -23,7 +23,8 @@ func TestSearchDomains_Found(t *testing.T) {
 				},
 			},
 		},
-	}))
+	})
+	c := newTestClient(t, h)
 
 	text := callTool(t, searchDomainsHandler, c, map[string]any{
 		"domain": "ads.example.com",
@@ -43,6 +44,51 @@ func TestSearchDomains_Found(t *testing.T) {
 	if !strings.Contains(text, "blocklist.example.com") {
 		t.Errorf("expected gravity source in output, got: %s", text)
 	}
+
+	// The domain is interpolated straight into the path, and the handler echoes
+	// the domain it was given back into the heading rather than the one the API
+	// answered about. Asking about the wrong domain therefore reads as a
+	// perfectly ordinary answer about the right one, which is the failure mode
+	// that matters here: this tool exists to be consulted before someone edits
+	// a blocklist.
+	req := h.Only(t, "GET", "")
+	req.AssertRawPath(t, "/search/ads.example.com")
+	// N caps each result category. Dropping it would silently fall back to
+	// Pi-hole's own default rather than the 20 the tool advertises.
+	req.AssertQuery(t, "N", "20")
+	// partial defaults to false at both ends, so it is omitted rather than
+	// sent as false. Sending partial=true by accident turns an exact-match
+	// check into a substring sweep that reports unrelated entries as hits.
+	req.AssertNoQuery(t, "partial")
+}
+
+// TestSearchDomains_ForwardsMaxResults pins max_results to the API's N, which
+// is one of the few argument renames in the package. A dropped cap quietly
+// truncates or inflates what the model sees, and the rendered output does not
+// name the limit that was applied.
+func TestSearchDomains_ForwardsMaxResults(t *testing.T) {
+	h := piholeHandler(map[string]any{
+		"/search/ads.example.com": map[string]any{
+			"search": map[string]any{
+				"domains":    []any{},
+				"gravity":    []any{},
+				"parameters": map[string]any{"partial": false, "N": 5, "domain": "ads.example.com", "debug": false},
+				"results": map[string]any{
+					"domains": map[string]any{"exact": 0, "regex": 0},
+					"gravity": map[string]any{"allow": 0, "block": 0},
+					"total":   0,
+				},
+			},
+		},
+	})
+	c := newTestClient(t, h)
+
+	callTool(t, searchDomainsHandler, c, map[string]any{
+		"domain":      "ads.example.com",
+		"max_results": 5.0,
+	})
+
+	h.Only(t, "GET", "").AssertQuery(t, "N", "5")
 }
 
 func TestSearchDomains_NotFound(t *testing.T) {
@@ -76,7 +122,7 @@ func TestSearchDomains_NotFound(t *testing.T) {
 }
 
 func TestSearchDomains_Partial(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	h := piholeHandler(map[string]any{
 		"/search/ads.example.com": map[string]any{
 			"search": map[string]any{
 				"domains": []any{
@@ -91,7 +137,8 @@ func TestSearchDomains_Partial(t *testing.T) {
 				},
 			},
 		},
-	}))
+	})
+	c := newTestClient(t, h)
 
 	text := callTool(t, searchDomainsHandler, c, map[string]any{
 		"domain":  "ads.example.com",
@@ -103,4 +150,27 @@ func TestSearchDomains_Partial(t *testing.T) {
 	if !strings.Contains(text, "1 exact") {
 		t.Errorf("expected exact match count, got: %s", text)
 	}
+
+	// Partial matching is what makes this call answer a different question, and
+	// only the query string carries it. The fixture's own parameters block is
+	// canned, so the rendered output looks the same either way.
+	h.Only(t, "GET", "").AssertQuery(t, "partial", "true")
+}
+
+// The search term is spliced straight into the path, so a term carrying '#'
+// or '?' truncates the request: FTL searches for the prefix and the tool
+// reports the answer to a question nobody asked.
+func TestSearchDomains_EscapesTheSearchTerm(t *testing.T) {
+	const term = "ads.example.com?x=1"
+	rec := piholeHandler(map[string]any{
+		"/search/" + term: map[string]any{"search": map[string]any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, searchDomainsHandler, c, map[string]any{"domain": term})
+
+	req := rec.Only(t, "GET", "/search/"+term)
+	req.AssertRawPath(t, "/search/ads.example.com%3Fx=1")
+	req.AssertQuery(t, "N", "20")
+	req.AssertNoQuery(t, "x")
 }

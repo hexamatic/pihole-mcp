@@ -15,7 +15,9 @@ import (
 func RegisterDHCP(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_dhcp_leases",
 		mcp.WithTitleAnnotation("List DHCP Leases"),
-		mcp.WithDescription("Active DHCP leases: IP, hostname, MAC address, and expiry. Empty if Pi-hole's DHCP server is disabled."),
+		mcp.WithDescription("Active DHCP leases: IP, hostname, MAC address, and expiry, paged with limit/offset. Empty if Pi-hole's DHCP server is disabled."),
+		limitParam,
+		offsetParam,
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 	), dhcpLeasesHandler(r))
@@ -35,6 +37,13 @@ func dhcpLeasesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		// Validate paging before the request: a bad parameter is a bad
+		// parameter whether or not the collection turns out to be empty,
+		// and an empty list is not an answer to limit=-5.
+		limit, offset, err := getPage(req, maxPageLimit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		var result pihole.DHCPLeasesResponse
 		if err := c.Get(ctx, "/dhcp/leases", &result); err != nil {
 			return toolError("get DHCP leases", err), nil
@@ -44,22 +53,26 @@ func dhcpLeasesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultText("No active DHCP leases (DHCP server may be disabled)."), nil
 		}
 
+		total := len(result.Leases)
+		start, end := pageBounds(total, limit, offset)
+		page := result.Leases[start:end]
+
 		if wantCSV(req) {
 			headers := []string{"IP", "Hostname", "MAC", "Expires"}
-			rows := make([][]string, 0, len(result.Leases))
-			for _, l := range result.Leases {
+			rows := make([][]string, 0, len(page))
+			for _, l := range page {
 				expiry := "never"
 				if l.Expires > 0 {
 					expiry = format.Timestamp(float64(l.Expires))
 				}
 				rows = append(rows, []string{l.IP, l.Name, l.HWAddr, expiry})
 			}
-			return mcp.NewToolResultText(format.CSV(headers, rows)), nil
+			return mcp.NewToolResultText(format.CSV(headers, rows) + format.Truncate(len(page), total)), nil
 		}
 
 		var b strings.Builder
-		fmt.Fprintf(&b, "**%d leases:**\n", len(result.Leases))
-		for _, l := range result.Leases {
+		b.WriteString(pageHeading("leases", len(page), total))
+		for _, l := range page {
 			expiry := "never"
 			if l.Expires > 0 {
 				expiry = format.Timestamp(float64(l.Expires))

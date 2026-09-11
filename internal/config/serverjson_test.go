@@ -36,8 +36,14 @@ type serverManifest struct {
 	Name        string `json:"name"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
+	WebsiteURL  string `json:"websiteUrl"`
 	Version     string `json:"version"`
-	Packages    []struct {
+	Icons       []struct {
+		Src      string   `json:"src"`
+		MIMEType string   `json:"mimeType"`
+		Sizes    []string `json:"sizes"`
+	} `json:"icons"`
+	Packages []struct {
 		RegistryType         string `json:"registryType"`
 		Identifier           string `json:"identifier"`
 		Version              string `json:"version"`
@@ -64,21 +70,47 @@ func loadServerManifest(t *testing.T) serverManifest {
 
 // TestServerJSONNameMatchesImageLabel guards the ownership-verification link
 // between server.json and the image the registry inspects.
+//
+// Both Dockerfiles are checked, not just the one that ships. Dockerfile.goreleaser
+// builds the published image and is the file the registry actually reads the
+// label off; the root Dockerfile is what a contributor gets from `docker build .`
+// and carries a comment promising it is kept in step. Until this test read it,
+// that comment was an assertion nothing enforced, and the two could drift apart
+// with every check still green.
 func TestServerJSONNameMatchesImageLabel(t *testing.T) {
 	m := loadServerManifest(t)
 
-	dockerfile, err := os.ReadFile("../../Dockerfile.goreleaser")
+	label := regexp.MustCompile(`(?m)^LABEL\s+io\.modelcontextprotocol\.server\.name="([^"]+)"`)
+
+	// Read with literal paths rather than building them in the loop: gosec's
+	// G304 fires on any non-constant argument to os.ReadFile, and a suppression
+	// comment is a worse trade than two explicit reads.
+	releaseDockerfile, err := os.ReadFile("../../Dockerfile.goreleaser")
 	if err != nil {
 		t.Fatalf("read Dockerfile.goreleaser: %v", err)
 	}
-
-	label := regexp.MustCompile(`(?m)^LABEL\s+io\.modelcontextprotocol\.server\.name="([^"]+)"`)
-	match := label.FindSubmatch(dockerfile)
-	if match == nil {
-		t.Fatal("Dockerfile.goreleaser has no io.modelcontextprotocol.server.name label — MCP Registry publishing will fail ownership verification")
+	rootDockerfile, err := os.ReadFile("../../Dockerfile")
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
 	}
-	if got := string(match[1]); got != m.Name {
-		t.Errorf("image label = %q, server.json name = %q — these must be identical", got, m.Name)
+
+	for _, df := range []struct {
+		name    string
+		content []byte
+	}{
+		{"Dockerfile.goreleaser", releaseDockerfile},
+		{"Dockerfile", rootDockerfile},
+	} {
+		name := df.name
+		t.Run(name, func(t *testing.T) {
+			match := label.FindSubmatch(df.content)
+			if match == nil {
+				t.Fatalf("%s has no io.modelcontextprotocol.server.name label — MCP Registry publishing will fail ownership verification", name)
+			}
+			if got := string(match[1]); got != m.Name {
+				t.Errorf("%s label = %q, server.json name = %q — these must be identical", name, got, m.Name)
+			}
+		})
 	}
 
 	// GitHub-based namespaces are the only ones we can prove ownership of.
@@ -183,6 +215,124 @@ func TestServerJSONEnvVarsAreReal(t *testing.T) {
 	for name := range wantRequired {
 		if !seen[name] {
 			t.Errorf("server.json does not advertise %s, which the server cannot start without", name)
+		}
+	}
+}
+
+// TestServerJSONIdentityMatchesConstants pins the registry listing to the
+// identity the running server advertises over the protocol.
+//
+// These are two separate publication routes to the same user: server.json is
+// what someone browsing the MCP Registry reads, and the constants are what the
+// handshake carries to a client that already has the binary. Nothing links
+// them at build time, so without this test a change to one silently leaves the
+// other describing an older release.
+func TestServerJSONIdentityMatchesConstants(t *testing.T) {
+	m := loadServerManifest(t)
+
+	if m.Title != ServerTitle {
+		t.Errorf("server.json title = %q, ServerTitle = %q — these must be identical", m.Title, ServerTitle)
+	}
+	if m.Description != ServerDescription {
+		t.Errorf("server.json description = %q, ServerDescription = %q — these must be identical", m.Description, ServerDescription)
+	}
+	if m.WebsiteURL != ServerWebsiteURL {
+		t.Errorf("server.json websiteUrl = %q, ServerWebsiteURL = %q — these must be identical", m.WebsiteURL, ServerWebsiteURL)
+	}
+}
+
+// TestServerJSONIconsMatchConstants checks the icon sets agree entry for entry,
+// and that a raster icon is offered first.
+//
+// The MCP specification tells clients to prefer PNG or JPEG and warns that an
+// SVG may carry executable content, so a client that follows it either renders
+// nothing or takes a risk when the SVG is all we advertise.
+func TestServerJSONIconsMatchConstants(t *testing.T) {
+	m := loadServerManifest(t)
+
+	if len(m.Icons) != len(ServerIcons) {
+		t.Fatalf("server.json declares %d icons, ServerIcons has %d", len(m.Icons), len(ServerIcons))
+	}
+	for i, want := range ServerIcons {
+		got := m.Icons[i]
+		if got.Src != want.Src || got.MIMEType != want.MIMEType {
+			t.Errorf("icon %d: server.json = %q (%s), ServerIcons = %q (%s)", i, got.Src, got.MIMEType, want.Src, want.MIMEType)
+		}
+		if strings.Join(got.Sizes, ",") != strings.Join(want.Sizes, ",") {
+			t.Errorf("icon %d sizes: server.json = %v, ServerIcons = %v", i, got.Sizes, want.Sizes)
+		}
+	}
+
+	if len(ServerIcons) == 0 || ServerIcons[0].MIMEType != "image/png" {
+		t.Error("the first advertised icon must be a PNG — the MCP specification tells clients to prefer PNG or JPEG and warns that an SVG may carry executable content")
+	}
+}
+
+// TestServerIconAssetsExist checks every advertised icon is a file actually
+// committed to assets/, since an icon URL is served from the repository and a
+// missing file gives clients a 404 with nothing to fall back on.
+func TestServerIconAssetsExist(t *testing.T) {
+	for _, icon := range ServerIcons {
+		name := icon.Src[strings.LastIndex(icon.Src, "/")+1:]
+		if _, err := os.Stat("../../assets/" + name); err != nil {
+			t.Errorf("icon %s is advertised but assets/%s is missing: %v", icon.Src, name, err)
+		}
+	}
+}
+
+// TestConfigVarsReachServerJSON is the reverse of TestServerJSONEnvVarsAreReal.
+// That one catches an advertised variable the code never reads; this one
+// catches a variable the code reads that the registry listing never mentions,
+// which is how PIHOLE_RATE_LIMIT and four others came to be absent without
+// anyone deciding they should be.
+//
+// Honest about what this is: with the allowlist seeded as it ships, it passes
+// both before and after the change that introduced it. It is a drift guard in
+// the same category as e2eSkips in cmd/toolsdoc, not a bug guard. Omission is
+// fine, but only when it is named and reasoned.
+func TestConfigVarsReachServerJSON(t *testing.T) {
+	// Deliberately not advertised, with the reason. A registry client renders
+	// this block as a first-run form, so every entry is a question asked of
+	// every person who installs from the listing.
+	//nolint:gosec // G101: these are environment variable NAMES and their reasons for being absent from a public manifest, not values
+	deliberatelyAbsent := map[string]string{
+		"PIHOLE_RATE_LIMIT":           "HTTP and SSE only; the sole listed package declares a stdio transport",
+		"PIHOLE_ALLOWED_ORIGINS":      "HTTP and SSE only",
+		"PIHOLE_HTTP_AUTH_TOKEN":      "HTTP and SSE only",
+		"PIHOLE_HTTP_AUTH_TOKEN_FILE": "HTTP and SSE only",
+		"PIHOLE_TRUSTED_PROXIES":      "HTTP and SSE only",
+		"PIHOLE_TOOLSETS":             "free text with no choices key available, so a form would show a box whose valid values are invisible and a typo fails startup; documented in the README instead",
+		"PIHOLE_1_URL":                "the numbered multi-instance form is documented in the README; a registry form cannot express a repeating group",
+	}
+
+	source, err := os.ReadFile("config.go")
+	if err != nil {
+		t.Fatalf("reading config.go: %v", err)
+	}
+
+	advertised := map[string]bool{}
+	for _, env := range loadServerManifest(t).Packages[0].EnvironmentVariables {
+		advertised[env.Name] = true
+	}
+
+	seen := map[string]bool{}
+	for _, m := range regexp.MustCompile(`"(PIHOLE_[A-Z0-9_]+)"`).FindAllStringSubmatch(string(source), -1) {
+		name := m[1]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		if advertised[name] || deliberatelyAbsent[name] != "" {
+			continue
+		}
+		t.Errorf("internal/config reads %s but server.json never advertises it. Add it to the "+
+			"environmentVariables block, or to deliberatelyAbsent in this test with the reason.", name)
+	}
+
+	// A stale reason is as misleading as a missing one.
+	for name := range deliberatelyAbsent {
+		if !seen[name] {
+			t.Errorf("deliberatelyAbsent names %s, which internal/config no longer reads", name)
 		}
 	}
 }

@@ -360,3 +360,31 @@ func TestStatsDatabaseQueryTypes_RealFixture(t *testing.T) {
 		t.Fatal("expected non-empty database query_types output from real fixture")
 	}
 }
+
+// count=-5 used to reach Pi-hole unchanged, come back with nothing, and render
+// an empty list with isError false. That is the same answer a Pi-hole with no
+// traffic gives, so the mistake was invisible.
+func TestStatsTopDomains_NegativeCountIsNamedError(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/stats/top_domains": loadFixture(t, "stats_top_domains"),
+	}))
+
+	msg := callToolExpectError(t, statsTopDomainsHandler, c, map[string]any{"count": -5})
+	if !strings.Contains(msg, "'count'") {
+		t.Errorf("error %q does not name the parameter", msg)
+	}
+	if !strings.Contains(msg, "-5") {
+		t.Errorf("error %q does not repeat the value it rejected", msg)
+	}
+}
+
+// The cap is the other direction and stays lenient: asking for more than the
+// tool will give is a request for everything, not a mistake.
+func TestStatsTopDomains_CountAboveCapIsCapped(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/stats/top_domains": loadFixture(t, "stats_top_domains"),
+	})
+
+	callTool(t, statsTopDomainsHandler, newTestClient(t, rec), map[string]any{"count": 5000})
+	rec.Only(t, "GET", "/stats/top_domains").AssertQuery(t, "count", "50")
+}

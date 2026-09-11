@@ -12,11 +12,52 @@ jobs:
   commitlint:
     name: Conventional Commits
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: wagoid/commitlint-github-action@b948419dd99f3fd78a6548d48f94e3df7f6bf3ed # v6.2.1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          configFile: commitlint.config.mjs
+          node-version: "22"
+
+      # Replaces wagoid/commitlint-github-action (issue #63). That action is a
+      # Docker action and reads the PR's commits through the GitHub API, so it
+      # depended on Docker Hub *and* the API being reachable on top of the
+      # commit actually being valid, and failed twice on 25 July 2026 for
+      # neither reason: PR #38 on `Get "https://registry-1.docker.io/v2/":
+      # context deadline exceeded`, PR #34 on a GitHub API 5xx that it reported
+      # as the misleading "You have commit messages with errors". Running
+      # commitlint directly removes both dependencies — the commits come from
+      # the local clone.
+      #
+      # The versions are pinned, and the pin is load-bearing rather than
+      # tidiness. Under @commitlint/cli 19.x this invocation dies with
+      # `Cannot find module "@commitlint/config-conventional"`: npx installs
+      # both packages into its own cache directory, which is not on the
+      # resolution path from the config file next to the repository root.
+      # 21.x resolves it. Bump both together, and re-run the range below
+      # against a few real commits before merging the bump.
+      #
+      # Verified against 49 commits of main and the 11 on the v0.9.0 branch:
+      # identical verdicts to the action it replaces, the Dependabot
+      # `ignores` rule in commitlint.config.mjs still suppresses
+      # body-max-line-length on grouped bumps, and a non-conventional subject
+      # still exits 1.
+      - name: Lint the commits this pull request adds
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # The merge base, not base.sha. base.sha is the base branch's tip
+          # when the PR was opened, so if main has moved and been merged in,
+          # base.sha..head.sha would also lint commits that came from main —
+          # including pre-enforcement history that predates this check.
+          from="$(git merge-base "$BASE" "$HEAD")"
+          echo "Linting ${from}..${HEAD} ($(git rev-list --count "${from}..${HEAD}") commits)"
+          npx --yes \
+            -p @commitlint/cli@21.2.2 \
+            -p @commitlint/config-conventional@21.2.2 \
+            commitlint --from "$from" --to "$HEAD" --config commitlint.config.mjs --verbose

@@ -50,6 +50,53 @@ func TestToolAnnotationInvariants(t *testing.T) {
 	}
 }
 
+// TestDestructiveHintMatrix locks in the specific hint each CRUD family's add
+// and update tool carries: additive tools are not destructive (nothing
+// existing is overwritten or removed), update tools are (a PUT replaces an
+// existing row). A regression here is the exact shape of the bug
+// normaliseReadOnlyAnnotations exists to prevent — a tool's own annotation
+// disagreeing with what it does.
+func TestDestructiveHintMatrix(t *testing.T) {
+	srv := server.NewMCPServer("test", "0.0.0")
+	RegisterAll(srv, dummyRegistry(1))
+	tools := srv.ListTools()
+
+	notDestructive := []string{
+		"pihole_domains_add",
+		"pihole_groups_add",
+		"pihole_clients_add",
+		"pihole_lists_add",
+		"pihole_config_add_value",
+	}
+	destructive := []string{
+		"pihole_domains_update",
+		"pihole_groups_update",
+		"pihole_clients_update",
+		"pihole_lists_update",
+	}
+
+	for _, name := range notDestructive {
+		st, ok := tools[name]
+		if !ok {
+			t.Errorf("%s: not registered", name)
+			continue
+		}
+		if h := st.Tool.Annotations.DestructiveHint; h == nil || *h {
+			t.Errorf("%s: expected destructiveHint=false, got %v", name, h)
+		}
+	}
+	for _, name := range destructive {
+		st, ok := tools[name]
+		if !ok {
+			t.Errorf("%s: not registered", name)
+			continue
+		}
+		if h := st.Tool.Annotations.DestructiveHint; h == nil || !*h {
+			t.Errorf("%s: expected destructiveHint=true, got %v", name, h)
+		}
+	}
+}
+
 // TestSyncToolsGatedByInstanceCount verifies the diff/sync tools appear only
 // when more than one instance is configured.
 func TestSyncToolsGatedByInstanceCount(t *testing.T) {
@@ -84,5 +131,34 @@ func TestInstanceArgGatedByInstanceCount(t *testing.T) {
 	st = multi.GetTool("pihole_stats_summary")
 	if _, ok := st.Tool.InputSchema.Properties[instanceArg]; !ok {
 		t.Error("multi-instance tool must advertise the instance argument")
+	}
+}
+
+// TestToolTitleIsSet asserts every registered tool carries a title on the tool
+// itself, not only in its annotations.
+//
+// The 2025-11-25 revision moved the display name onto Tool.Title; clients
+// written against it read that field and fall back to the raw tool name, so a
+// title that lives only in the annotations shows "pihole_stats_summary" in a
+// tool picker that could have shown "Query Statistics". Nothing else catches
+// this: docs/TOOLS.md does not render Title, so CI's documentation drift check
+// stays green either way.
+func TestToolTitleIsSet(t *testing.T) {
+	srv := server.NewMCPServer("test", "0.0.0")
+	RegisterAll(srv, dummyRegistry(2))
+
+	tools := srv.ListTools()
+	if len(tools) == 0 {
+		t.Fatal("no tools registered")
+	}
+
+	for name, st := range tools {
+		if st.Tool.Title == "" {
+			t.Errorf("%s: Tool.Title is empty, so spec-current clients display the raw tool name", name)
+			continue
+		}
+		if ann := st.Tool.Annotations.Title; ann != "" && st.Tool.Title != ann {
+			t.Errorf("%s: Tool.Title = %q but Annotations.Title = %q — clients reading either field must see the same name", name, st.Tool.Title, ann)
+		}
 	}
 }

@@ -15,8 +15,10 @@ import (
 func RegisterClients(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_clients_list",
 		mcp.WithTitleAnnotation("List Clients"),
-		mcp.WithDescription("List configured clients with their group assignments. Clients can be identified by IP, MAC, hostname, subnet, or interface."),
+		mcp.WithDescription("List configured clients with their group assignments, paged with limit/offset. Clients can be identified by IP, MAC, hostname, subnet, or interface."),
 		mcp.WithString("client", mcp.Description("Specific client to look up (IP, MAC, hostname).")),
+		limitParam,
+		offsetParam,
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 	), clientsListHandler(r))
@@ -37,7 +39,7 @@ func RegisterClients(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_clients_update",
 		mcp.WithTitleAnnotation("Update Client"),
-		mcp.WithDescription("Update a configured client's comment or group assignments."),
+		mcp.WithDescription("Update a configured client's comment. Group assignments are managed through the group tools."),
 		mcp.WithString("client", mcp.Required(), mcp.Description("Client identifier.")),
 		mcp.WithString("comment", mcp.Description("Updated comment.")),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -53,8 +55,8 @@ func RegisterClients(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_clients_batch_delete",
 		mcp.WithTitleAnnotation("Batch Delete Clients"),
-		mcp.WithDescription("Remove multiple configured clients at once. Provide a JSON array of client identifiers."),
-		mcp.WithString("items", mcp.Required(), mcp.Description("JSON array of client identifiers, e.g. [\"192.168.1.10\",\"192.168.1.20\"]")),
+		mcp.WithDescription("Remove multiple configured clients at once. Each item needs the client identifier."),
+		mcp.WithString("items", mcp.Required(), mcp.Description("JSON array: [{\"item\":\"192.168.1.10\"}]")),
 		mcp.WithDestructiveHintAnnotation(true),
 	), clientsBatchDeleteHandler(r))
 }
@@ -65,9 +67,16 @@ func clientsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		// Validate paging before the request: a bad parameter is a bad
+		// parameter whether or not the collection turns out to be empty,
+		// and an empty list is not an answer to limit=-5.
+		limit, offset, err := getPage(req, maxPageLimit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		path := "/clients"
 		if client := req.GetString("client", ""); client != "" {
-			path += "/" + client
+			path += "/" + pihole.EscapePathSegment(client)
 		}
 
 		var result pihole.ClientsResponse
@@ -79,18 +88,22 @@ func clientsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultText("No configured clients."), nil
 		}
 
+		total := len(result.Clients)
+		start, end := pageBounds(total, limit, offset)
+		page := result.Clients[start:end]
+
 		if wantCSV(req) {
 			headers := []string{"Client", "Name", "Comment", "Groups"}
-			rows := make([][]string, 0, len(result.Clients))
-			for _, cl := range result.Clients {
+			rows := make([][]string, 0, len(page))
+			for _, cl := range page {
 				rows = append(rows, []string{cl.Client, cl.Name, cl.Comment, fmt.Sprintf("%v", cl.Groups)})
 			}
-			return mcp.NewToolResultText(format.CSV(headers, rows)), nil
+			return mcp.NewToolResultText(format.CSV(headers, rows) + format.Truncate(len(page), total)), nil
 		}
 
 		var b strings.Builder
-		fmt.Fprintf(&b, "**%d clients:**\n", len(result.Clients))
-		for _, cl := range result.Clients {
+		b.WriteString(pageHeading("clients", len(page), total))
+		for _, cl := range page {
 			fmt.Fprintf(&b, "- %s", cl.Client)
 			if cl.Name != "" {
 				fmt.Fprintf(&b, " (%s)", cl.Name)
@@ -149,19 +162,23 @@ func clientsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		client, _ := req.RequireString("client")
+		vals, err := requireStrings(req, "client")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		client := vals[0]
 
 		if err := validateMaxLength("client", client, maxNameLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
-		body := map[string]any{"client": client}
-		if comment := req.GetString("comment", ""); comment != "" {
-			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
-				return mcp.NewToolResultError("Invalid " + err.Error()), nil
-			}
-			body["comment"] = comment
+		// A client row has no enabled column, so its body is the identifier
+		// and the comment. Group membership survives a write that omits it.
+		comment := req.GetString("comment", "")
+		if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
+		body := map[string]any{"client": client, "comment": comment}
 
 		var result pihole.ClientsResponse
 		if err := c.Post(ctx, "/clients", body, &result); err != nil {
@@ -178,22 +195,39 @@ func clientsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		client, _ := req.RequireString("client")
+		vals, err := requireStrings(req, "client")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		client := vals[0]
 
 		if err := validateMaxLength("client", client, maxNameLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
-		body := make(map[string]any)
-		if comment := req.GetString("comment", ""); comment != "" {
-			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
-				return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		path := "/clients/" + pihole.EscapePathSegment(client)
+
+		// FTL replaces the comment on every PUT, and a comment is the only
+		// mutable field a client row has, so an update that does not name one
+		// erases it. Read it back rather than write over it. Group membership
+		// survives a PUT that omits it, so it needs no round trip.
+		comment, supplied := suppliedString(req, "comment")
+		if !supplied {
+			var existing pihole.ClientsResponse
+			if err := c.Get(ctx, path, &existing); err != nil {
+				return toolError("read the client before updating it", err), nil
 			}
-			body["comment"] = comment
+			if len(existing.Clients) > 0 {
+				comment = existing.Clients[0].Comment
+			}
 		}
+		if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+		body := map[string]any{"comment": comment}
 
 		var result pihole.ClientsResponse
-		if err := c.Put(ctx, "/clients/"+client, body, &result); err != nil {
+		if err := c.Put(ctx, path, body, &result); err != nil {
 			return toolError("update client", err), nil
 		}
 
@@ -207,13 +241,17 @@ func clientsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		client, _ := req.RequireString("client")
+		vals, err := requireStrings(req, "client")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		client := vals[0]
 
 		if err := validateMaxLength("client", client, maxNameLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
-		if err := c.Delete(ctx, "/clients/"+client); err != nil {
+		if err := c.Delete(ctx, "/clients/"+pihole.EscapePathSegment(client)); err != nil {
 			return toolError("delete client", err), nil
 		}
 
@@ -222,20 +260,5 @@ func clientsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 }
 
 func clientsBatchDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		c, err := getInstance(req, r)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		items, err := req.RequireString("items")
-		if err != nil {
-			return mcp.NewToolResultError("Parameter 'items' is required (JSON array)"), nil
-		}
-
-		if err := c.Post(ctx, "/clients:batchDelete", rawJSON(items), nil); err != nil {
-			return toolError("batch delete clients", err), nil
-		}
-
-		return mcp.NewToolResultText("**Batch delete completed.**"), nil
-	}
+	return batchDeleteHandler(r, "clients")
 }

@@ -6,7 +6,7 @@ Thanks for your interest in contributing. This document covers how to get starte
 
 - [Go 1.26+](https://go.dev/dl/)
 - [Docker](https://docs.docker.com/get-docker/) (for local Pi-hole testing)
-- [mise](https://mise.jdx.dev/) (recommended — manages tool versions)
+- [mise](https://mise.jdx.dev/) (required: manages tool versions)
 - [just](https://just.systems/) (task runner)
 
 ## Quick Start
@@ -29,8 +29,8 @@ just check
 ## Development Workflow
 
 1. **Create a branch** from `main` for your change
-2. **Start the dev environment:** `just dev-up` (Pi-hole at http://localhost:8081)
-3. **Make your changes** — one logical change per PR
+2. **Start the dev environment:** `just dev-up` (Pi-hole at http://localhost:8081). If something else on your machine already holds that port, set `PIHOLE_DEV_PORT` and every recipe follows it: `PIHOLE_DEV_PORT=8091 just dev-up`. `PIHOLE_DEV_PORT_2` does the same for the secondary instance used by `just dev-up-multi`.
+3. **Make your changes**, one logical change per PR
 4. **Run quality checks:** `just check` (format, lint, test)
 5. **Test against live Pi-hole:** `just integration`
 6. **Submit a pull request** with a clear description of the change
@@ -38,16 +38,16 @@ just check
 ## Code Standards
 
 - **Australian English** spelling in all public-facing text (commit messages, PR descriptions, comments, docs). Use "colour", "behaviour", "organisation", "analyse", etc.
-- **Go conventions** — follow existing patterns in the codebase. Run `just fmt` before committing.
+- **Go conventions.** Follow existing patterns in the codebase. Run `just fmt` before committing.
 - **Tool descriptions** should be 15-25 words, front-loaded with purpose.
-- **Response formatting** — use `format.` helpers from `internal/format/`. Prefer compact text over Markdown headings.
-- **Error handling** — return `mcp.NewToolResultError()` for domain errors, not Go errors.
+- **Response formatting.** Use `format.` helpers from `internal/format/`. Prefer compact text over Markdown headings.
+- **Error handling.** Return `mcp.NewToolResultError()` for domain errors, not Go errors.
 
 ## Testing
 
-- **Unit tests:** `just test` — uses `httptest.Server` with mocked API responses
-- **Integration tests:** `just integration` — requires `just dev-up` running
-- **Linting:** `just lint` — uses golangci-lint with strict config (UK spelling enforced)
+- **Unit tests:** `just test`, using `httptest.Server` with mocked API responses
+- **Integration tests:** `just integration`, which requires `just dev-up` running
+- **Linting:** `just lint`, using golangci-lint with strict config (UK spelling enforced)
 
 Every tool handler should have corresponding unit tests in a `_test.go` file.
 
@@ -62,23 +62,23 @@ docs: update README integration guide for Cursor
 test: add unit tests for stats handlers
 ```
 
-Allowed types: `feat`, `fix`, `docs`, `test`, `ci`, `chore`, `refactor`, `perf`, `build`, `style`, `revert`. Scopes are unrestricted — Dependabot's `build(deps):` / `chore(deps):` / `ci(deps):` all pass without further config.
+Allowed types: `feat`, `fix`, `docs`, `test`, `ci`, `chore`, `refactor`, `perf`, `build`, `style`, `revert`. Scopes are unrestricted, so Dependabot's `build(deps):` / `chore(deps):` / `ci(deps):` all pass without further config.
 
 **Enforcement:**
-- **Locally:** the lefthook `commit-msg` hook validates every commit subject against the Conventional Commits regex *before the commit is created*. Rejected commits never enter history. Zero external dependencies — pure shell.
+- **Locally:** the lefthook `commit-msg` hook validates every commit subject against the Conventional Commits regex *before the commit is created*. Rejected commits never enter history. Zero external dependencies, pure shell.
 - **In CI:** [`wagoid/commitlint-github-action`](https://github.com/wagoid/commitlint-github-action) runs on every PR (`.github/workflows/commitlint.yml`) and blocks the merge if any commit fails. Configuration lives in `commitlint.config.mjs` (extends `@commitlint/config-conventional`). The CI check is stricter than the local regex (validates body/footer rules in addition to the subject).
 
-The release pipeline also depends on these prefixes — `feat:` lands under "Features" in goreleaser's fallback changelog, `fix:` under "Bug Fixes", `docs:`/`test:`/`ci:`/`chore:` are filtered out. Plain-sentence subjects fall into a generic "Other" group that produces unhelpful release notes.
+The release pipeline also depends on these prefixes: `feat:` lands under "Features" in goreleaser's fallback changelog, `fix:` under "Bug Fixes", `docs:`/`test:`/`ci:`/`chore:` are filtered out. Plain-sentence subjects fall into a generic "Other" group that produces unhelpful release notes.
 
 ## Updating the Changelog
 
 Every user-visible change adds a line to the `[Unreleased]` section of [`CHANGELOG.md`](CHANGELOG.md) in the same PR, under the appropriate Keep-a-Changelog subsection (`Added` / `Changed` / `Fixed` / `Removed` / `Security` / `Dependencies`). Australian English, no AI mentions.
 
-**What counts as user-visible?** Anything a consumer of this MCP server would notice — new tools, changed tool behaviour, new flags or env vars, bug fixes, breaking changes, or removed features. Internal-only changes (refactors, tests, CI, build/dev tooling, no-op dependency bumps) do **not** need an entry — apply the `Skip-Changelog` label to the PR instead.
+**What counts as user-visible?** Anything a consumer of this MCP server would notice: new tools, changed tool behaviour, new flags or env vars, bug fixes, breaking changes, or removed features. Internal-only changes (refactors, tests, CI, build/dev tooling, no-op dependency bumps) do **not** need an entry. Apply the `Skip-Changelog` label to the PR instead.
 
 **Enforcement:** [`dangoslen/changelog-enforcer`](https://github.com/dangoslen/changelog-enforcer) runs on every PR (`.github/workflows/changelog.yml`) and blocks the merge if `CHANGELOG.md` is unchanged and the `Skip-Changelog` label is not applied.
 
-The maintainer rolls `[Unreleased]` to a versioned heading at release time and writes the **Highlights** prose paragraph that opens the release body — see [RELEASING.md](RELEASING.md). The release body on GitHub is sourced from `CHANGELOG.md` (not auto-generated by goreleaser), so the polish of the entry directly determines what users see.
+The maintainer rolls `[Unreleased]` to a versioned heading at release time and writes the **Highlights** prose paragraph that opens the release body. See [RELEASING.md](RELEASING.md). The release body on GitHub is sourced from `CHANGELOG.md` (not auto-generated by goreleaser), so the polish of the entry directly determines what users see.
 
 Reference: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
 
@@ -88,13 +88,50 @@ Reference: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
 2. Create the tool handler in the appropriate file under `internal/tools/`
 3. Register it in the category's `Register*()` function
 4. Add the `Register*()` call to `internal/tools/registry.go` if it's a new category
-5. Add unit tests with mocked API responses
-6. Run `just check` to verify everything passes
-7. Test against live Pi-hole with `just integration`
+5. If the tool introduces a new family token, add it to the table in `internal/toolsets` so the tool
+   belongs to a toolset. See [Toolset stability](#toolset-stability)
+6. Annotate it accurately. `ReadOnlyHint` is what `PIHOLE_READ_ONLY` filters on, so a tool that can
+   change anything must not carry it, and a tool that only reads should
+7. Add unit tests with mocked API responses, and a case in `scripts/e2e-test.sh`. Every write case
+   needs a read-back that asserts the new value: Pi-hole answers 200 for a body it ignored
+8. Run `just docs-gen` to regenerate `docs/TOOLS.md`. CI fails the build if it drifts from the
+   registered tool definitions
+9. Run `just check` to verify everything passes
+10. Test against live Pi-hole with `just integration`
+
+## Toolset stability
+
+The names in `PIHOLE_TOOLSETS` are a compatibility contract. Users pin them in client configuration
+files that we never see and cannot migrate, so:
+
+**A published toolset name is never removed, never renamed, and never narrowed.**
+
+What that permits and forbids:
+
+- **Adding a tool to an existing toolset is always fine**, and usually automatic. Membership is
+  derived from the tool name's family token, so a new `pihole_stats_*` tool reaches every
+  configuration that pinned `stats` with no change to the table in `internal/toolsets`.
+- **A new family token needs one row or one token added** to that table.
+  `TestEveryRegisteredToolHasAToolset` fails the moment a tool belongs to no toolset, so this cannot
+  be forgotten.
+- **A toolset that outgrows its name gets a new, narrower name published alongside it.** The wide
+  name keeps meaning the union forever. Deprecation is by documentation only.
+- **Merging two toolsets is permanent**, because the merged name can never be split back apart
+  without narrowing one of them. Splitting is the reversible direction, so when the choice is
+  genuinely close, split.
+
+Tool names carry a weaker promise, because nothing pins them in configuration today: a released tool
+name is not renamed in place. A rename ships the new name alongside the old, with the old deprecated
+in the documentation for at least one minor release.
+
+There is deliberately no alias mechanism. No tool has been renamed in nine releases and no toolset
+name has existed long enough to need one, so building the resolution layer now would be guessing at
+the shape of a problem nobody has had. The first real rename ships its alias in the same pull
+request, designed around the actual case.
 
 ## Releasing
 
-Releases are tag-driven and publish automatically — no manual draft step. See [RELEASING.md](RELEASING.md) for the full runbook.
+Releases are tag-driven and publish automatically, with no manual draft step. See [RELEASING.md](RELEASING.md) for the full runbook.
 
 ## Licence
 

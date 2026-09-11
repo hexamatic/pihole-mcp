@@ -71,6 +71,7 @@ func RegisterSync(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithOutputSchema[InstanceDiffOutput](),
 	)
 	normaliseReadOnlyAnnotations(&diffTool)
+	applyToolTitle(&diffTool)
 	recordTool(diffTool)
 	s.AddTool(diffTool, withTracing(diffTool.Name, instanceDiffHandler(r)))
 
@@ -89,6 +90,7 @@ func RegisterSync(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithOutputSchema[InstanceSyncOutput](),
 	)
+	applyToolTitle(&syncTool)
 	recordTool(syncTool)
 	s.AddTool(syncTool, withTracing(syncTool.Name, instanceSyncHandler(r)))
 }
@@ -291,6 +293,8 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 // exportSnapshot downloads a teleporter backup of the client to a temp file and
 // returns its path. Used as a rollback point before a sync applies changes.
 func exportSnapshot(ctx context.Context, c *pihole.Client) (string, error) {
+	reapStaleBackups()
+
 	resp, err := c.DoRaw(ctx, "GET", "/teleporter", nil)
 	if err != nil {
 		return "", err

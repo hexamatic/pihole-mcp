@@ -3,8 +3,10 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/hexamatic/pihole-mcp/internal/format"
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -14,8 +16,11 @@ import (
 func RegisterGroups(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_groups_list",
 		mcp.WithTitleAnnotation("List Groups"),
-		mcp.WithDescription("List groups used for organising domains and clients into sets with independent blocking rules."),
+		mcp.WithDescription("List groups used for organising domains and clients into sets with independent blocking rules. Page with limit/offset."),
 		mcp.WithString("name", mcp.Description("Specific group name to look up.")),
+		limitParam,
+		offsetParam,
+		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 	), groupsListHandler(r))
 
@@ -60,9 +65,16 @@ func groupsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		// Validate paging before the request: a bad parameter is a bad
+		// parameter whether or not the collection turns out to be empty,
+		// and an empty list is not an answer to limit=-5.
+		limit, offset, err := getPage(req, maxPageLimit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		path := "/groups"
 		if name := req.GetString("name", ""); name != "" {
-			path += "/" + name
+			path += "/" + pihole.EscapePathSegment(name)
 		}
 
 		var result pihole.GroupsResponse
@@ -74,9 +86,22 @@ func groupsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultText("No groups found."), nil
 		}
 
+		total := len(result.Groups)
+		start, end := pageBounds(total, limit, offset)
+		page := result.Groups[start:end]
+
+		if wantCSV(req) {
+			headers := []string{"Name", "ID", "Enabled", "Comment"}
+			rows := make([][]string, 0, len(page))
+			for _, g := range page {
+				rows = append(rows, []string{g.Name, strconv.Itoa(g.ID), format.Bool(g.Enabled), g.Comment})
+			}
+			return mcp.NewToolResultText(format.CSV(headers, rows) + format.Truncate(len(page), total)), nil
+		}
+
 		var b strings.Builder
-		fmt.Fprintf(&b, "**%d groups:**\n", len(result.Groups))
-		for _, g := range result.Groups {
+		b.WriteString(pageHeading("groups", len(page), total))
+		for _, g := range page {
 			status := "enabled"
 			if !g.Enabled {
 				status = "disabled"
@@ -98,21 +123,19 @@ func groupsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		name, _ := req.RequireString("name")
+		vals, err := requireStrings(req, "name")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		name := vals[0]
 
 		if err := validateMaxLength("name", name, maxNameLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
-		body := map[string]any{"name": name}
-		if comment := req.GetString("comment", ""); comment != "" {
-			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
-				return mcp.NewToolResultError("Invalid " + err.Error()), nil
-			}
-			body["comment"] = comment
-		}
-		if !req.GetBool("enabled", true) {
-			body["enabled"] = false
+		body, err := crudAddBody(req, "name", name)
+		if err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
 		var result pihole.GroupsResponse
@@ -130,31 +153,45 @@ func groupsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		name, _ := req.RequireString("name")
+		vals, err := requireStrings(req, "name")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		name := vals[0]
 
 		if err := validateMaxLength("name", name, maxNameLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
-		body := make(map[string]any)
+		path := "/groups/" + pihole.EscapePathSegment(name)
+
+		// The PUT replaces comment and enabled together, so whichever the
+		// caller left out has to come from the group as it stands. The name is
+		// not replaced: FTL keeps it when the body omits it.
+		current := newEntryFields()
+		if needsCurrentEntry(req) {
+			var existing pihole.GroupsResponse
+			if err := c.Get(ctx, path, &existing); err != nil {
+				return toolError("read the group before updating it", err), nil
+			}
+			if len(existing.Groups) > 0 {
+				current = entryFields{comment: existing.Groups[0].Comment, enabled: existing.Groups[0].Enabled}
+			}
+		}
+
+		body, err := crudUpdateBody(req, current)
+		if err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
 		if newName := req.GetString("new_name", ""); newName != "" {
 			if err := validateMaxLength("new_name", newName, maxNameLength); err != nil {
 				return mcp.NewToolResultError("Invalid " + err.Error()), nil
 			}
 			body["name"] = newName
 		}
-		if comment := req.GetString("comment", ""); comment != "" {
-			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
-				return mcp.NewToolResultError("Invalid " + err.Error()), nil
-			}
-			body["comment"] = comment
-		}
-		if enabled := req.GetBool("enabled", true); !enabled {
-			body["enabled"] = false
-		}
 
 		var result pihole.GroupsResponse
-		if err := c.Put(ctx, "/groups/"+name, body, &result); err != nil {
+		if err := c.Put(ctx, path, body, &result); err != nil {
 			return toolError("update group", err), nil
 		}
 
@@ -168,13 +205,17 @@ func groupsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		name, _ := req.RequireString("name")
+		vals, err := requireStrings(req, "name")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		name := vals[0]
 
 		if err := validateMaxLength("name", name, maxNameLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
-		if err := c.Delete(ctx, "/groups/"+name); err != nil {
+		if err := c.Delete(ctx, "/groups/"+pihole.EscapePathSegment(name)); err != nil {
 			return toolError("delete group", err), nil
 		}
 
@@ -183,20 +224,5 @@ func groupsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 }
 
 func groupsBatchDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		c, err := getInstance(req, r)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		items, err := req.RequireString("items")
-		if err != nil {
-			return mcp.NewToolResultError("Parameter 'items' is required (JSON array)"), nil
-		}
-
-		if err := c.Post(ctx, "/groups:batchDelete", rawJSON(items), nil); err != nil {
-			return toolError("batch delete groups", err), nil
-		}
-
-		return mcp.NewToolResultText("**Batch delete completed.**"), nil
-	}
+	return batchDeleteHandler(r, "groups")
 }

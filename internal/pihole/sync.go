@@ -115,7 +115,7 @@ func readDomains(ctx context.Context, c *Client) (map[string]item, error) {
 		d := d
 		key := strings.Join([]string{"domain", d.Type, d.Kind, d.Domain}, "|")
 		base := fmt.Sprintf("/domains/%s/%s", d.Type, d.Kind)
-		single := base + "/" + url.PathEscape(d.Domain)
+		single := base + "/" + EscapePathSegment(d.Domain)
 		m[key] = item{
 			key:     key,
 			label:   fmt.Sprintf("%s (%s/%s)", d.Domain, d.Type, d.Kind),
@@ -143,7 +143,7 @@ func readLists(ctx context.Context, c *Client) (map[string]item, error) {
 	for _, l := range resp.Lists {
 		l := l
 		key := strings.Join([]string{"list", l.Type, l.Address}, "|")
-		single := "/lists/" + url.PathEscape(l.Address) + "?type=" + url.QueryEscape(l.Type)
+		single := "/lists/" + EscapePathSegment(l.Address) + "?type=" + url.QueryEscape(l.Type)
 		m[key] = item{
 			key:     key,
 			label:   fmt.Sprintf("%s (%s)", l.Address, l.Type),
@@ -171,7 +171,7 @@ func readGroups(ctx context.Context, c *Client) (map[string]item, error) {
 	for _, g := range resp.Groups {
 		g := g
 		key := "group|" + g.Name
-		single := "/groups/" + url.PathEscape(g.Name)
+		single := "/groups/" + EscapePathSegment(g.Name)
 		m[key] = item{
 			key:     key,
 			label:   g.Name,
@@ -199,7 +199,7 @@ func readClients(ctx context.Context, c *Client) (map[string]item, error) {
 	for _, cl := range resp.Clients {
 		cl := cl
 		key := "client|" + cl.Client
-		single := "/clients/" + url.PathEscape(cl.Client)
+		single := "/clients/" + EscapePathSegment(cl.Client)
 		m[key] = item{
 			key:     key,
 			label:   cl.Client,
@@ -234,7 +234,13 @@ func readDNSArray(ctx context.Context, c *Client, field, kind string) (map[strin
 	if err := c.Get(ctx, "/config/dns", &resp); err != nil {
 		return nil, err
 	}
-	raw, _ := resp.Config[field].([]any)
+	// FTL nests a config item under its full path from the root: a request for
+	// dns.hosts comes back as {"config":{"dns":{"hosts":[...]}}}. Reading
+	// resp.Config[field] read the wrapper, found nothing, and discarded the
+	// error, so a sync against a real Pi-hole saw zero local DNS and CNAME
+	// records and reported them as in sync.
+	dns, _ := resp.Config["dns"].(map[string]any)
+	raw, _ := dns[field].([]any)
 	m := make(map[string]item, len(raw))
 	for _, v := range raw {
 		s, ok := v.(string)
@@ -242,7 +248,7 @@ func readDNSArray(ctx context.Context, c *Client, field, kind string) (map[strin
 			continue
 		}
 		key := kind + "|" + s
-		path := "/config/dns/" + field + "/" + url.PathEscape(s)
+		path := "/config/dns/" + field + "/" + EscapePathSegment(s)
 		m[key] = item{
 			key:   key,
 			label: s,

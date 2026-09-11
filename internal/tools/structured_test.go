@@ -25,6 +25,20 @@ func callToolResult(t *testing.T, handlerFn func(*pihole.Registry) server.ToolHa
 	return result
 }
 
+// textOf returns the text content of a result, for tests that assert on both
+// the rendered text and the structured payload.
+func textOf(t *testing.T, res *mcp.CallToolResult) string {
+	t.Helper()
+	if len(res.Content) == 0 {
+		return ""
+	}
+	tc, ok := res.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("first content block is %T, want TextContent", res.Content[0])
+	}
+	return tc.Text
+}
+
 func TestStructuredOutput_PADD(t *testing.T) {
 	c := newTestClient(t, piholeHandler(map[string]any{"/padd": loadFixture(t, "padd")}))
 	res := callToolResult(t, paddHandler, c, nil)

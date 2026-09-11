@@ -12,6 +12,16 @@
   "version": "0.7.0",
   "icons": [
     {
+      "src": "https://raw.githubusercontent.com/hexamatic/pihole-mcp/main/assets/logo-256.png",
+      "mimeType": "image/png",
+      "sizes": ["256x256"]
+    },
+    {
+      "src": "https://raw.githubusercontent.com/hexamatic/pihole-mcp/main/assets/logo-120.png",
+      "mimeType": "image/png",
+      "sizes": ["120x120"]
+    },
+    {
       "src": "https://raw.githubusercontent.com/hexamatic/pihole-mcp/main/assets/logo.svg",
       "mimeType": "image/svg+xml",
       "sizes": ["any"]
@@ -44,6 +54,13 @@
           "description": "IANA timezone for rendered timestamps, e.g. Australia/Adelaide. Defaults to UTC in the container.",
           "isRequired": false,
           "format": "string"
+        },
+        {
+          "name": "PIHOLE_READ_ONLY",
+          "description": "Expose only inspection tools. Every tool that can change Pi-hole is hidden and rejected if called.",
+          "isRequired": false,
+          "default": "false",
+          "format": "boolean"
         },
         {
           "name": "PIHOLE_TLS_SKIP_VERIFY",

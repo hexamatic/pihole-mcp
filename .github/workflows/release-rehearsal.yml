@@ -1,0 +1,210 @@
+name: Release Rehearsal
+
+# Runs the release pipeline end to end, short of publishing anything.
+#
+# The reason this exists: until v0.9.0, several pipes had never executed
+# outside a tag. `just release-dry` passes `--skip=sign,sbom` because keyless
+# cosign wants the CI OIDC identity and syft may not be installed locally, so
+# the signing block's first ever execution was on the v0.8.0 tag, where it
+# failed on a cosign v3 breaking change and left a half-published release. A
+# tag is the worst possible place to discover that.
+#
+# `--snapshot` skips only Publish, Announce and Validate, so everything below
+# them runs for real here: the two builds, both archive sets, nfpm's deb/rpm,
+# syft's SBOMs, and cosign's keyless signature over the checksum file. That is
+# the whole release except the parts that hand artefacts to a third party.
+#
+# Verified locally against goreleaser 2.18.0 rather than assumed. A bare
+# `--snapshot --clean` logs `skipping announce, docker, publish, and validate`
+# and then runs `cataloging cmd=syft` and `signing cmd=cosign artifact=...
+# _SHA256SUMS signature=dist/..._SHA256SUMS.sigstore.json`. So `just
+# release-dry`'s `--skip=sign,sbom` really is a local workaround for a missing
+# syft and an absent OIDC identity, not a property of snapshot mode.
+#
+# The expected artefact counts below were measured twice: from a local snapshot
+# and from the published v0.8.1 release. They agree.
+#
+# What is still tag-only, and therefore still unrehearsed, is everything inside
+# publish.New(): the GHCR image push, the image signatures (docker_signs), the
+# Homebrew cask and Scoop manifest commits, and the GitHub release itself.
+# RELEASING.md states that residual surface rather than implying this workflow
+# covers it.
+#
+# Note that the cosign signature produced here is real and lands in the public
+# Rekor transparency log, attributed to this workflow's identity rather than
+# release.yml's. That is expected and harmless: nothing consumes it, and the
+# certificate identity regexp in SECURITY.md is scoped to the repository, not
+# to a single workflow file.
+
+on:
+  workflow_dispatch:
+  # Monthly, so drift in an unpinned dependency (the goreleaser action resolves
+  # `~> v2` at run time) surfaces on a schedule rather than on a tag.
+  schedule:
+    - cron: "0 4 1 * *"
+  pull_request:
+    paths:
+      - ".goreleaser.yaml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/release-rehearsal.yml"
+      - "Dockerfile.goreleaser"
+      - "scripts/release-notes.sh"
+      # CHANGELOG.md is deliberately NOT here. The changelog enforcer requires
+      # every pull request to touch it, so listing it would fire this whole
+      # build on every pull request and the path filter would mean nothing.
+      # The cheap half of this check — that release-notes.sh can still extract
+      # a body — runs in ci.yml's validate job, on every pull request, in about
+      # a second.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    name: Snapshot release
+    # A pull request from a fork gets a read-only token with no `id-token`
+    # scope, so keyless cosign cannot sign and the job would fail for a reason
+    # that has nothing to do with the contributor's change. Skip it there; the
+    # scheduled run and the post-merge dispatch still cover the config.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write # keyless cosign signing, exactly as on the tag path
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # goreleaser derives the snapshot version from the most recent tag.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: "go.mod"
+
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      # Keep this pin in step with release.yml's. The whole point of the
+      # rehearsal is that it runs the same cosign the tag will.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: "v3.1.2"
+
+      - uses: anchore/sbom-action/download-syft@aa80c8c5bd439a416a62804f2151ab38c671a638 # v0.24.1
+
+      # release.yml extracts the body for the tag being built. There is no tag
+      # here, so rehearse against the newest versioned heading in the file —
+      # which is the section the next release-prep run will have just written,
+      # and the one a malformed changelog would break. A structural mistake
+      # (a heading that does not match `## [vX.Y.Z]`, an empty section, a
+      # stray reference-link block) fails here instead of after the tag.
+      - name: Rehearse release-notes extraction
+        run: |
+          version="$(grep -m1 -oE '^## \[v[0-9]+\.[0-9]+\.[0-9]+\]' CHANGELOG.md | tr -d '#[] ')"
+          if [ -z "$version" ]; then
+            echo "::error::no versioned '## [vX.Y.Z]' heading found in CHANGELOG.md"
+            exit 1
+          fi
+          echo "Newest released version in CHANGELOG.md: ${version}"
+          scripts/release-notes.sh "$version" > "${RUNNER_TEMP}/NOTES.md"
+          if [ ! -s "${RUNNER_TEMP}/NOTES.md" ]; then
+            echo "::error::release-notes.sh produced an empty body for ${version}"
+            exit 1
+          fi
+          # [Unreleased] is what the next release-prep run promotes, so a
+          # malformed section there is a problem worth catching now too.
+          scripts/release-notes.sh Unreleased > /dev/null
+          echo "--- first 20 lines of the rehearsed release body ---"
+          head -20 "${RUNNER_TEMP}/NOTES.md"
+
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: "~> v2"
+          args: check
+
+      # No --skip. `--snapshot` already suppresses Publish/Announce/Validate,
+      # and every pipe below those is exactly what this workflow exists to
+      # exercise.
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Belt and braces rather than a requirement. Measured against
+          # goreleaser 2.18.0: the `{{ .Env.TAP_GITHUB_TOKEN }}` in the cask and
+          # Scoop repository blocks is only dereferenced in the publish stage,
+          # which a snapshot skips, so both manifests generate correctly with
+          # the variable unset. It is set anyway so that a future goreleaser
+          # that evaluates the template earlier does not turn this workflow red
+          # for a reason unrelated to the change under test. The value is
+          # deliberately invalid, which keeps the rehearsal incapable of writing
+          # to the tap even if an edit ever un-skips publishing.
+          TAP_GITHUB_TOKEN: "not-a-real-token-snapshot-rehearsal-only"
+
+      # A green goreleaser step is not evidence that sign and sbom ran — both
+      # emit skip messages and exit 0 when their preconditions are unmet, which
+      # is how a release shipped unsigned once already. Assert the artefacts.
+      - name: Assert every rehearsed pipe produced its artefacts
+        run: |
+          fail=0
+          expect() {
+            n=$(find dist -maxdepth 1 -name "$1" | wc -l | tr -d ' ')
+            if [ "$n" -lt "$2" ]; then
+              echo "::error::$3: expected at least $2 file(s) matching '$1', found $n"
+              fail=1
+            else
+              echo "ok: $3 ($n x $1)"
+            fi
+          }
+          expect '*.tar.gz'         8 'archives (2 flavours x linux/darwin x amd64/arm64)'
+          expect '*.zip'            4 'Windows archives (2 flavours x amd64/arm64)'
+          expect '*.deb'            2 'nfpm deb packages'
+          expect '*.rpm'            2 'nfpm rpm packages'
+          expect '*_SHA256SUMS'     1 'checksum file'
+          expect '*.sigstore.json'  1 'cosign signature bundle (sign.Pipe)'
+          expect '*.sbom.json'     12 'syft SBOMs (one per archive)'
+
+          # These two generate into subdirectories, and their absence is the
+          # quiet kind: goreleaser writes no error when a repository block's
+          # template cannot be resolved, it simply produces no manifest. The
+          # tap and bucket pushes themselves are tag-only, so a broken template
+          # would otherwise surface for the first time during a release.
+          for f in dist/homebrew/Casks/pihole-mcp.rb dist/scoop/pihole-mcp.json; do
+            if [ -s "$f" ]; then
+              echo "ok: $f"
+            else
+              echo "::error::$f was not generated"
+              fail=1
+            fi
+          done
+
+          [ "$fail" -eq 0 ] || exit 1
+
+      # dockers_v2 in snapshot mode builds one image per platform with --load
+      # rather than a pushed multi-arch manifest, so the digest count here is
+      # higher than the two a real release produces. Reported, not asserted:
+      # the point is that release.yml's jq filter keeps matching the artefact
+      # type goreleaser actually emits.
+      - name: Report the artefact manifest
+        if: always()
+        run: |
+          if [ ! -f dist/artifacts.json ]; then
+            echo "::warning::no dist/artifacts.json to report"
+            exit 0
+          fi
+          echo "### Rehearsed artefacts" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          jq -r 'group_by(.type) | .[] | "\(.[0].type): \(length)"' dist/artifacts.json \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "Image digests release.yml's filter would attest:"
+          jq -r '.[] | select(.type=="Docker Image") | .extra.Digest' dist/artifacts.json \
+            | sort -u

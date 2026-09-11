@@ -290,7 +290,14 @@ type QueriesResponse struct {
 	Cursor          int     `json:"cursor"`
 	RecordsTotal    int     `json:"recordsTotal"`
 	RecordsFiltered int     `json:"recordsFiltered"`
-	Took            float64 `json:"took"`
+	// EarliestTimestamp and EarliestTimestampDisk are how far back FTL's
+	// in-memory window and the on-disk long-term database reach. FTL returns
+	// both on every query search, which is what lets an empty result say why
+	// it is empty rather than just reporting zero. The disk figure is 0 until
+	// queries have been flushed to disk, so treat zero as "not known yet".
+	EarliestTimestamp     float64 `json:"earliest_timestamp,omitempty"`
+	EarliestTimestampDisk float64 `json:"earliest_timestamp_disk,omitempty"`
+	Took                  float64 `json:"took"`
 }
 
 // QuerySuggestions contains filter suggestions for the query log.
@@ -577,7 +584,11 @@ type DatabaseInfo struct {
 	QueriesDisk       int     `json:"queries_disk,omitempty"`
 	SQLite            string  `json:"sqlite_version"`
 	EarliestTimestamp float64 `json:"earliest_timestamp,omitempty"`
-	Took              float64 `json:"took"`
+	// EarliestTimestampDisk is how far back the on-disk long-term database
+	// reaches. FTL reports 0 until queries have been flushed to disk, so a
+	// caller has to treat zero as "not known yet" rather than "the epoch".
+	EarliestTimestampDisk float64 `json:"earliest_timestamp_disk,omitempty"`
+	Took                  float64 `json:"took"`
 }
 
 // MessagesResponse is the response from GET /api/info/messages.

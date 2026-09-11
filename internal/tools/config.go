@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/hexamatic/pihole-mcp/internal/format"
@@ -16,7 +17,7 @@ import (
 func RegisterConfig(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_config_get",
 		mcp.WithTitleAnnotation("Get Configuration"),
-		mcp.WithDescription("Get Pi-hole configuration. Specify a section (dns, webserver, dhcp, etc.) for a subset, or omit for full config."),
+		mcp.WithDescription("Get Pi-hole configuration as dotted key/value lines. Name a section (dns, webserver, dhcp) for a subset, or omit for everything. detail=minimal lists section names; detail=full returns raw JSON."),
 		mcp.WithString("section", mcp.Description("Config section: dns, webserver, dhcp, files, misc, etc.")),
 		detailParam,
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -26,6 +27,7 @@ func RegisterConfig(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithTitleAnnotation("Set Configuration"),
 		mcp.WithDescription("Modify Pi-hole configuration. Provide nested JSON properties to change. Changes take effect immediately and can affect DNS behaviour system-wide."),
 		mcp.WithString("config", mcp.Required(), mcp.Description("JSON config object, e.g. {\"dns\":{\"blocking\":{\"active\":true}}}")),
+		mcp.WithBoolean("restart", mcp.Description("Restart FTL after change (default true). Set false when chaining several config_set calls, so only the last one pays for the restart.")),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(true),
 	), configSetHandler(r))
@@ -33,14 +35,14 @@ func RegisterConfig(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_config_get_value",
 		mcp.WithTitleAnnotation("Get Config Value"),
 		mcp.WithDescription("Get a specific configuration value by dotted path (e.g. dns.upstreams, webserver.port, dhcp.active)."),
-		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams or dns/upstreams.")),
+		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams, dns.hosts (local DNS records) or dns.cnameRecords.")),
 		mcp.WithReadOnlyHintAnnotation(true),
 	), configGetValueHandler(r))
 
 	addTool(s, r, mcp.NewTool("pihole_config_add_value",
 		mcp.WithTitleAnnotation("Add Config Array Value"),
-		mcp.WithDescription("Add a value to a configuration array (e.g. add an upstream DNS server). Set restart=false to defer FTL restart."),
-		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams.")),
+		mcp.WithDescription("Add a value to a configuration array such as dns.upstreams. For dns.hosts and dns.cnameRecords prefer pihole_local_dns_add and pihole_local_cname_add, which take structured arguments."),
+		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams, dns.hosts or dns.cnameRecords.")),
 		mcp.WithString("value", mcp.Required(), mcp.Description("Value to add.")),
 		mcp.WithBoolean("restart", mcp.Description("Restart FTL after change (default true).")),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -48,8 +50,8 @@ func RegisterConfig(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_config_remove_value",
 		mcp.WithTitleAnnotation("Remove Config Array Value"),
-		mcp.WithDescription("Remove a value from a configuration array (e.g. remove an upstream DNS server). Set restart=false to defer FTL restart."),
-		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams.")),
+		mcp.WithDescription("Remove a value from a configuration array such as dns.upstreams. For dns.hosts and dns.cnameRecords prefer pihole_local_dns_delete and pihole_local_cname_delete, which take structured arguments."),
+		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams, dns.hosts or dns.cnameRecords.")),
 		mcp.WithString("value", mcp.Required(), mcp.Description("Value to remove.")),
 		mcp.WithBoolean("restart", mcp.Description("Restart FTL after change (default true).")),
 		mcp.WithDestructiveHintAnnotation(true),
@@ -64,6 +66,109 @@ func RegisterConfig(s *server.MCPServer, r *pihole.Registry) {
 	), configPropertiesHandler(r))
 }
 
+// credentialPaths are the configuration keys that hold password hashes.
+//
+// FTL masks webserver.api.password and webserver.api.totp_secret as "********"
+// on read, but returns these two in full, and accepts writes to both through
+// PATCH /api/config (measured against v6.7, 11 Sep 2026). So they are withheld
+// from everything these tools return, and refused on the way in.
+//
+// Withheld means omitted, never replaced with a placeholder. pihole_config_set
+// PATCHes whatever object it is given, and FTL leaves a key the PATCH does not
+// mention exactly as it was, so a caller that reads a section and writes it
+// back unchanged is safe. A placeholder in the same round trip would be
+// written as the new hash and lock the admin out.
+var credentialPaths = []string{"webserver.api.pwhash", "webserver.api.app_pwhash"}
+
+// normaliseConfigPath reduces a dotted config path to the form credentialPaths
+// uses. Case, surrounding whitespace, empty segments and slash separators are
+// all ways of spelling a path that FTL may still resolve to the same key.
+func normaliseConfigPath(p string) string {
+	parts := strings.FieldsFunc(strings.ToLower(strings.TrimSpace(p)), func(r rune) bool {
+		return r == '.' || r == '/'
+	})
+	return strings.Join(parts, ".")
+}
+
+// isCredentialPath reports whether a config path names a password hash.
+func isCredentialPath(p string) bool {
+	n := normaliseConfigPath(p)
+	for _, c := range credentialPaths {
+		if n == c {
+			return true
+		}
+	}
+	return false
+}
+
+// withholdCredentials deletes the password hashes from a config tree as FTL
+// returns it, rooted at the top level whatever section was asked for, and
+// reports which it removed. Callers apply it before rendering in any form.
+func withholdCredentials(cfg map[string]any) []string {
+	var withheld []string
+	for _, path := range credentialPaths {
+		parts := strings.Split(path, ".")
+		parent := cfg
+		for _, seg := range parts[:len(parts)-1] {
+			next, ok := parent[seg].(map[string]any)
+			if !ok {
+				parent = nil
+				break
+			}
+			parent = next
+		}
+		if parent == nil {
+			continue
+		}
+		if _, ok := parent[parts[len(parts)-1]]; ok {
+			delete(parent, parts[len(parts)-1])
+			withheld = append(withheld, path)
+		}
+	}
+	return withheld
+}
+
+// withheldNote tells the caller a key exists but was left out, so it is not
+// mistaken for a missing setting and "restored".
+func withheldNote(withheld []string) string {
+	if len(withheld) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("\n\n_Password hashes are never returned; withheld: `%s`._", strings.Join(withheld, "`, `"))
+}
+
+// credentialKeyIn returns the first password-hash key a config_set payload
+// would write, or "". Keys are split on dots as well as nesting, because a
+// payload may spell the same path either way.
+func credentialKeyIn(obj map[string]any) string {
+	var walk func(m map[string]any, prefix string) string
+	walk = func(m map[string]any, prefix string) string {
+		for k, v := range m {
+			path := normaliseConfigPath(prefix + "." + k)
+			if isCredentialPath(path) {
+				return path
+			}
+			if child, ok := v.(map[string]any); ok {
+				if found := walk(child, path); found != "" {
+					return found
+				}
+			}
+		}
+		return ""
+	}
+	return walk(obj, "")
+}
+
+// refuseCredentialWrite is the error every write tool returns for a password
+// hash. Whatever is written replaces the credential outright, and no caller of
+// these tools can know a valid hash, so there is no legitimate write to make.
+func refuseCredentialWrite(path string) *mcp.CallToolResult {
+	if path == "webserver.api.app_pwhash" {
+		return mcp.NewToolResultError("Refusing to write webserver.api.app_pwhash: it is the hash of the app password that integrations sign in with, and writing it replaces that password outright. Generate a new app password in Pi-hole's web interface instead.")
+	}
+	return mcp.NewToolResultError("Refusing to write " + path + ": it is the hash of the admin password, and writing it replaces that password outright. To change the password, set webserver.api.password to the new password and Pi-hole hashes it. That ends every open Pi-hole session, this server's included, so update PIHOLE_PASSWORD to match.")
+}
+
 func configGetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		c, err := getInstance(req, r)
@@ -75,13 +180,16 @@ func configGetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			if err := validateMaxLength("section", section, maxConfigPathLen); err != nil {
 				return mcp.NewToolResultError("Invalid " + err.Error()), nil
 			}
-			path += "/" + section
+			// A section is normally one component, but escapeConfigElement also
+			// handles a dotted path without turning its separators into %2F.
+			path += "/" + escapeConfigElement(section)
 		}
 
 		var result pihole.ConfigResponse
 		if err := c.Get(ctx, path, &result); err != nil {
 			return toolError("get config", err), nil
 		}
+		withheld := withholdCredentials(result.Config)
 
 		detail := getDetail(req)
 
@@ -90,22 +198,20 @@ func configGetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			for k := range result.Config {
 				sections = append(sections, k)
 			}
+			sort.Strings(sections)
 			return mcp.NewToolResultText(fmt.Sprintf("Config sections: %s", strings.Join(sections, ", "))), nil
 		}
 
 		if detail == "normal" {
-			var b strings.Builder
-			for section, value := range result.Config {
-				switch v := value.(type) {
-				case map[string]any:
-					fmt.Fprintf(&b, "**%s:** %d settings\n", section, len(v))
-				case []any:
-					fmt.Fprintf(&b, "**%s:** %d items\n", section, len(v))
-				default:
-					fmt.Fprintf(&b, "**%s:** %v\n", section, v)
-				}
+			// One dotted line per setting. The old normal detail counted the
+			// keys in each section and printed the counts, so a tool whose
+			// description promises the full config could not emit a single
+			// configuration value at the level callers get by default.
+			flat := flattenTree(result.Config)
+			if flat == "" {
+				return mcp.NewToolResultText("No configuration returned."), nil
 			}
-			return mcp.NewToolResultText(b.String()), nil
+			return mcp.NewToolResultText(flat + withheldNote(withheld)), nil
 		}
 
 		// full: JSON dump
@@ -118,6 +224,7 @@ func configGetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		b.WriteString("```json\n")
 		b.Write(configJSON)
 		b.WriteString("\n```")
+		b.WriteString(withheldNote(withheld))
 
 		return mcp.NewToolResultText(b.String()), nil
 	}
@@ -153,25 +260,46 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		// wrapper itself. Wrapping it a second time is the dangerous case: FTL
 		// ignores keys it does not recognise and still answers 200, so the write
 		// would silently apply nothing.
-		if len(payload) == 1 {
-			if inner, wrapped := payload["config"].(map[string]any); wrapped {
-				payload = inner
+		// Unwrap as many envelopes as the caller supplied. Someone working
+		// around the original bug by adding the key themselves can easily add
+		// it to a payload that already had it, and one unwrap would then leave
+		// a doubled envelope on the wire for FTL to ignore.
+		for len(payload) == 1 {
+			inner, wrapped := payload["config"].(map[string]any)
+			if !wrapped {
+				break
 			}
+			payload = inner
+		}
+
+		// Checked after unwrapping, so the test sees exactly the object FTL
+		// would be sent, whichever envelope the caller used.
+		if key := credentialKeyIn(payload); key != "" {
+			return refuseCredentialWrite(key), nil
+		}
+
+		path := "/config"
+		if !req.GetBool("restart", true) {
+			path += "?restart=false"
 		}
 
 		var result pihole.ConfigResponse
-		if err := c.Do(ctx, "PATCH", "/config", map[string]any{"config": payload}, &result); err != nil {
+		if err := c.Do(ctx, "PATCH", path, map[string]any{"config": payload}, &result); err != nil {
 			return toolError("update config", err), nil
 		}
 
 		sendLog(ctx, mcp.LoggingLevelInfo, "config", map[string]any{"instance": c.Name(), "event": "config_updated"})
 
+		// FTL answers a PATCH with the entire configuration, so without this
+		// every write of any setting handed back the admin password's hash.
+		withheld := withholdCredentials(result.Config)
 		configJSON, _ := json.MarshalIndent(result.Config, "", "  ")
 
 		var b strings.Builder
 		b.WriteString("**Config updated.**\n```json\n")
 		b.Write(configJSON)
 		b.WriteString("\n```")
+		b.WriteString(withheldNote(withheld))
 
 		return mcp.NewToolResultText(b.String()), nil
 	}
@@ -190,19 +318,34 @@ func configGetValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err := validateMaxLength("element", element, maxConfigPathLen); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
+		// Answered without a request: refusing after fetching would still
+		// carry the hash across the wire into this process for nothing.
+		if isCredentialPath(element) {
+			return mcp.NewToolResultText(fmt.Sprintf("**%s:** withheld. Password hashes are never returned.", normaliseConfigPath(element))), nil
+		}
 
-		element = strings.ReplaceAll(element, ".", "/")
-		path := "/config/" + element
+		path := "/config/" + escapeConfigElement(element)
 
 		var result pihole.ConfigResponse
 		if err := c.Get(ctx, path, &result); err != nil {
 			return toolError("get config value", err), nil
 		}
+		// A parent section (webserver, webserver.api) still carries the hashes,
+		// and so does any spelling of the path the check above did not catch
+		// but FTL resolved anyway.
+		withheld := withholdCredentials(result.Config)
+
+		// FTL nests the requested item under its full path from the root, so
+		// dns.hosts comes back as {"config":{"dns":{"hosts":[...]}}}. The
+		// element is a filter over what is included, never a change of root,
+		// so walk down to the leaf before rendering it. Printing result.Config
+		// straight out returns the wrapper the user did not ask for.
+		value := unwrapConfigValue(result.Config, element)
 
 		// Format the value — use JSON for complex types, plain text for scalars.
 		var formatted string
-		if len(result.Config) == 1 {
-			for _, v := range result.Config {
+		if len(value) == 1 {
+			for _, v := range value {
 				switch v.(type) {
 				case string, float64, bool, nil:
 					formatted = fmt.Sprintf("%v", v)
@@ -212,11 +355,11 @@ func configGetValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 				}
 			}
 		} else {
-			j, _ := json.Marshal(result.Config)
+			j, _ := json.Marshal(value)
 			formatted = string(j)
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf("**%s:** %s", element, formatted)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("**%s:** %s", element, formatted) + withheldNote(withheld)), nil
 	}
 }
 
@@ -240,9 +383,11 @@ func configAddValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err := validateMaxLength("value", value, maxCommentLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
+		if isCredentialPath(element) {
+			return refuseCredentialWrite(normaliseConfigPath(element)), nil
+		}
 
-		element = strings.ReplaceAll(element, ".", "/")
-		path := "/config/" + element + "/" + value
+		path := "/config/" + escapeConfigElement(element) + "/" + pihole.EscapePathSegment(value)
 
 		if !req.GetBool("restart", true) {
 			path += "?restart=false"
@@ -277,9 +422,11 @@ func configRemoveValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err := validateMaxLength("value", value, maxCommentLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
+		if isCredentialPath(element) {
+			return refuseCredentialWrite(normaliseConfigPath(element)), nil
+		}
 
-		element = strings.ReplaceAll(element, ".", "/")
-		path := "/config/" + element + "/" + value
+		path := "/config/" + escapeConfigElement(element) + "/" + pihole.EscapePathSegment(value)
 
 		if !req.GetBool("restart", true) {
 			path += "?restart=false"
@@ -305,6 +452,7 @@ func configPropertiesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 
 		ros := result.Config.ReadOnly
+		sort.Slice(ros, func(i, j int) bool { return ros[i].Key < ros[j].Key })
 		if len(ros) == 0 {
 			return mcp.NewToolResultText("No read-only config keys reported."), nil
 		}
@@ -325,4 +473,29 @@ func configPropertiesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 		return mcp.NewToolResultText(b.String()), nil
 	}
+}
+
+// unwrapConfigValue walks a config response down the dotted element path to
+// the value the caller asked for. FTL builds the body from the root of the
+// config tree, so a request for dns.hosts arrives wrapped in one object per
+// path component. Anything that does not match that shape is returned as it
+// came, so an unexpected body is still rendered rather than swallowed.
+func unwrapConfigValue(cfg map[string]any, element string) map[string]any {
+	out := cfg
+	parts := strings.Split(element, ".")
+	for i, p := range parts {
+		v, ok := out[p]
+		if !ok {
+			return cfg
+		}
+		if i == len(parts)-1 {
+			return map[string]any{p: v}
+		}
+		next, ok := v.(map[string]any)
+		if !ok {
+			return cfg
+		}
+		out = next
+	}
+	return out
 }

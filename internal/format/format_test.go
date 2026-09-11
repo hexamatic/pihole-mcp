@@ -1,6 +1,8 @@
 package format
 
 import (
+	"encoding/csv"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -107,22 +109,6 @@ func TestTimestamp_UsesSetLocation(t *testing.T) {
 	}
 }
 
-func TestTable(t *testing.T) {
-	got := Table([]string{"Name", "Value"}, [][]string{{"foo", "bar"}})
-	if !strings.Contains(got, "| Name | Value |") {
-		t.Errorf("Table missing header: %q", got)
-	}
-	if !strings.Contains(got, "| foo | bar |") {
-		t.Errorf("Table missing row: %q", got)
-	}
-}
-
-func TestTable_Empty(t *testing.T) {
-	if got := Table([]string{"A"}, nil); got != "_No data_" {
-		t.Errorf("Table(empty) = %q, want %q", got, "_No data_")
-	}
-}
-
 func TestCSV(t *testing.T) {
 	got := CSV([]string{"A", "B"}, [][]string{{"1", "2"}, {"3", "4"}})
 	if !strings.Contains(got, "A,B\n") {
@@ -130,6 +116,45 @@ func TestCSV(t *testing.T) {
 	}
 	if !strings.Contains(got, "1,2\n") {
 		t.Errorf("CSV missing row: %q", got)
+	}
+}
+
+// A comment is free text, so a comma, a double quote or a newline in one used
+// to splice itself straight into the row and change its column count. The
+// round trip is the assertion that matters: what a reader parses back has to
+// be the fields that went in.
+func TestCSV_QuotesAndRoundTrips(t *testing.T) {
+	headers := []string{"Domain", "Comment"}
+	rows := [][]string{
+		{"ads.example.com", "blocked, permanently"},
+		{"cdn.example.com", `he said "no"`},
+		{"api.example.com", "line one\nline two"},
+		{"plain.example.com", "nothing special"},
+	}
+
+	got := CSV(headers, rows)
+
+	if !strings.Contains(got, `"blocked, permanently"`) {
+		t.Errorf("comma field not quoted: %q", got)
+	}
+	if !strings.Contains(got, `"he said ""no"""`) {
+		t.Errorf("double quote not doubled: %q", got)
+	}
+
+	records, err := csv.NewReader(strings.NewReader(got)).ReadAll()
+	if err != nil {
+		t.Fatalf("output is not valid CSV: %v\n%s", err, got)
+	}
+	if len(records) != len(rows)+1 {
+		t.Fatalf("parsed %d records, want %d (header plus %d rows)", len(records), len(rows)+1, len(rows))
+	}
+	if !slices.Equal(records[0], headers) {
+		t.Errorf("header round-tripped as %q, want %q", records[0], headers)
+	}
+	for i, want := range rows {
+		if !slices.Equal(records[i+1], want) {
+			t.Errorf("row %d round-tripped as %q, want %q", i, records[i+1], want)
+		}
 	}
 }
 
@@ -217,5 +242,35 @@ func TestQueryParams(t *testing.T) {
 	}
 	if got := QueryParams(map[string]string{}); got != "" {
 		t.Errorf("QueryParams(empty) = %q, want empty", got)
+	}
+}
+
+// A filter value is user data. Spliced in raw, a '#' ends the request at the
+// fragment and an '&' adds parameters of its own, so pihole_queries_search
+// with upstream=8.8.8.8#53 asked FTL about 8.8.8.8 and reported the answer as
+// though it were the one requested.
+func TestQueryParams_EscapesValuesAndOrdersKeys(t *testing.T) {
+	got := QueryParams(map[string]string{"upstream": "8.8.8.8#53", "length": "3"})
+	if want := "?length=3&upstream=8.8.8.8%2353"; got != want {
+		t.Errorf("QueryParams = %q, want %q", got, want)
+	}
+}
+
+func TestQueryParams_ValueCannotAddAParameter(t *testing.T) {
+	got := QueryParams(map[string]string{"domain": "example.com&length=9999"})
+	if want := "?domain=example.com%26length%3D9999"; got != want {
+		t.Errorf("QueryParams = %q, want %q", got, want)
+	}
+}
+
+// Ranging over a map is deliberately unordered, so identical filters produced
+// a different URL on every call: nothing downstream can cache or compare them.
+func TestQueryParams_IsDeterministic(t *testing.T) {
+	params := map[string]string{"a": "1", "b": "2", "c": "3", "d": "4", "e": "5", "f": "6"}
+	first := QueryParams(params)
+	for range 100 {
+		if got := QueryParams(params); got != first {
+			t.Fatalf("QueryParams returned %q then %q for the same filters", first, got)
+		}
 	}
 }

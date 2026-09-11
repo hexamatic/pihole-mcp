@@ -26,8 +26,10 @@ builds:
       - -s -w
       - -X github.com/hexamatic/pihole-mcp/internal/server.Version={{.Version}}
 
-  # Slim build — strips OpenTelemetry deps via the `slim` build tag. ~45%
-  # smaller binary (17 MB → 9 MB on linux/amd64, 6 MB → 3.5 MB compressed).
+  # Slim build — strips OpenTelemetry deps via the `slim` build tag. ~42%
+  # smaller binary (18 MB → 10.3 MB on linux/amd64; measured from a local
+  # build — re-measure from a tagged release's assets for the compressed
+  # archive figure).
   # Functionally identical aside from OTEL_EXPORTER_OTLP_ENDPOINT being a
   # no-op. Distributed alongside the default build for users who want a
   # leaner footprint (resource-constrained homelabs, no-tracing setups).
@@ -147,10 +149,13 @@ homebrew_casks:
     homepage: "https://github.com/hexamatic/pihole-mcp"
     description: "Pi-hole v6 MCP server — DNS blocking, domain management, statistics and network administration"
     license: "MIT"
-    url:
-      # The download host (github.com releases) differs from the homepage host,
-      # which `brew audit --cask` flags unless the domain is declared verified.
-      verified: "github.com/hexamatic/pihole-mcp"
+    # No `url: { verified: ... }` block. It used to declare the release host so
+    # that `brew audit --cask` accepted a download host different from the
+    # homepage, but Homebrew removed the parameter (Homebrew/brew#23280) and
+    # now applies its default URL verification, printing a warning to every
+    # user of a cask that still sets it. goreleaser 2.18.1 stopped writing it
+    # and `goreleaser check` reports the key as deprecated, which is how the
+    # release rehearsal caught it before a tag did.
     # No `conflicts: [{formula: pihole-mcp}]` here, despite the migration note on
     # goreleaser's deprecations page suggesting it: cask-conflicts-with-formula
     # was always a no-op and Homebrew has since removed it (goreleaser

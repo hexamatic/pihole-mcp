@@ -1,12 +1,12 @@
 package tools
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/hexamatic/pihole-mcp/internal/pihole"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 func TestConfigGet_Minimal(t *testing.T) {
@@ -41,11 +41,64 @@ func TestConfigGet_Normal(t *testing.T) {
 	}))
 
 	text := callTool(t, configGetHandler, c, nil)
-	if !strings.Contains(text, "**dns:**") {
-		t.Errorf("expected section summary, got: %s", text)
+	if !strings.Contains(text, "dns.blocking.active: true") {
+		t.Errorf("expected the flattened setting and its value, got: %s", text)
 	}
-	if !strings.Contains(text, "1 settings") {
-		t.Errorf("expected settings count, got: %s", text)
+	// The old normal detail rendered "**dns:** 1 settings", which is a count of
+	// the answer rather than the answer. A tool promising the full config has
+	// to be able to emit a configuration value.
+	if strings.Contains(text, "settings") {
+		t.Errorf("expected values rather than a per-section count, got: %s", text)
+	}
+}
+
+// Two identical calls have to produce identical bytes. The renderer used to
+// range over the config map directly, so section order changed per call and a
+// reader had no way to tell a reordering from a change.
+func TestConfigGet_NormalIsDeterministic(t *testing.T) {
+	routes := map[string]any{
+		"/config": map[string]any{
+			"config": map[string]any{
+				"webserver": map[string]any{"port": "80", "threads": 50},
+				"dns":       map[string]any{"upstreams": []any{"8.8.8.8#53", "1.1.1.1"}},
+				"dhcp":      map[string]any{"active": false},
+				"misc":      map[string]any{},
+			},
+		},
+	}
+
+	first := callTool(t, configGetHandler, newTestClient(t, piholeHandler(routes)), nil)
+	for i := range 8 {
+		got := callTool(t, configGetHandler, newTestClient(t, piholeHandler(routes)), nil)
+		if got != first {
+			t.Fatalf("call %d rendered different bytes:\n%s\nwant:\n%s", i, got, first)
+		}
+	}
+
+	want := "dhcp.active: false\n" +
+		"dns.upstreams: [\"8.8.8.8#53\",\"1.1.1.1\"]\n" +
+		"misc: {}\n" +
+		"webserver.port: 80\n" +
+		"webserver.threads: 50\n"
+	if first != want {
+		t.Errorf("rendered:\n%s\nwant:\n%s", first, want)
+	}
+}
+
+func TestConfigGet_MinimalListsSectionsSorted(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/config": map[string]any{
+			"config": map[string]any{
+				"webserver": map[string]any{"port": "80"},
+				"dns":       map[string]any{"active": true},
+				"dhcp":      map[string]any{"active": false},
+			},
+		},
+	}))
+
+	text := callTool(t, configGetHandler, c, map[string]any{"detail": "minimal"})
+	if text != "Config sections: dhcp, dns, webserver" {
+		t.Errorf("got %q, want the section names in sorted order", text)
 	}
 }
 
@@ -80,22 +133,12 @@ func TestConfigGet_WithSection(t *testing.T) {
 }
 
 func TestConfigSet_Success(t *testing.T) {
-	// Capture the actual request body to assert the {"config": ...} wrapper.
-	var gotBody []byte
-	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/auth" {
-			writeTestJSON(w, map[string]any{"session": map[string]any{"valid": true, "sid": "test-sid"}})
-			return
-		}
-		if r.URL.Path == "/api/config" && r.Method == "PATCH" {
-			gotBody, _ = io.ReadAll(r.Body)
-			writeTestJSON(w, map[string]any{
-				"config": map[string]any{"dns": map[string]any{"blocking": map[string]any{"active": false}}},
-			})
-			return
-		}
-		http.NotFound(w, r)
-	}))
+	rec := piholeHandler(map[string]any{
+		"PATCH /config": map[string]any{
+			"config": map[string]any{"dns": map[string]any{"blocking": map[string]any{"active": false}}},
+		},
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, configSetHandler, c, map[string]any{
 		"config": `{"dns":{"blocking":{"active":false}}}`,
@@ -106,26 +149,29 @@ func TestConfigSet_Success(t *testing.T) {
 
 	// The Pi-hole API requires the body wrapped in a "config" key.
 	// Regression: the handler previously sent the bare object, which the
-	// API rejects with 400 "No \"config\" object in body data".
-	if len(gotBody) == 0 {
-		t.Fatal("expected PATCH /config request body, got none")
-	}
-	var body map[string]any
-	if err := json.Unmarshal(gotBody, &body); err != nil {
-		t.Fatalf("PATCH body is not valid JSON: %v (raw: %s)", err, gotBody)
-	}
-	cfg, ok := body["config"]
-	if !ok {
-		t.Fatalf("PATCH body missing 'config' wrapper, got: %s", gotBody)
-	}
-	dns, ok := cfg.(map[string]any)["dns"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected dns section inside config wrapper, got: %s", gotBody)
-	}
-	blocking, ok := dns["blocking"].(map[string]any)
-	if !ok || blocking["active"] != false {
-		t.Fatalf("expected nested blocking.active=false in body, got: %s", gotBody)
-	}
+	// API rejects with 400 "No \"config\" object in body data". The selector
+	// pins the verb as well: the fake routes on path alone, so a handler that
+	// switched to PUT would still be answered and the reply would look right.
+	req := rec.Only(t, "PATCH", "/config")
+	req.AssertBodyKeys(t, "config")
+	req.AssertHeader(t, "Content-Type", "application/json")
+	// The selector matches on the decoded path, which net/url has already
+	// stripped the query from, so PATCH /config?restart=false satisfies it just
+	// as happily. This tool rewrites the whole config; a stray restart=false
+	// would defer the FTL reload the caller is expecting with no symptom in the
+	// reply text.
+	req.AssertNoQueryString(t)
+
+	// Compare the whole wrapped object rather than the one leaf. FTL applies
+	// what it is sent and answers 200 either way, so a handler that kept the
+	// key under test while dropping its siblings would look successful and
+	// write half the change.
+	req.AssertField(t, "config", map[string]any{
+		"dns": map[string]any{"blocking": map[string]any{"active": false}},
+	})
+	// Double-wrapping is the other way this write silently applies nothing, so
+	// the happy path pins its absence too, not only the already-wrapped case.
+	req.AssertNoField(t, "config.config")
 }
 
 func TestConfigSet_InvalidJSON(t *testing.T) {
@@ -139,69 +185,44 @@ func TestConfigSet_InvalidJSON(t *testing.T) {
 	}
 }
 
-// captureConfigPatch returns a handler that records the PATCH /config body.
-func captureConfigPatch(got *[]byte) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/auth" {
-			writeTestJSON(w, map[string]any{"session": map[string]any{"valid": true, "sid": "test-sid"}})
-			return
-		}
-		if r.URL.Path == "/api/config" && r.Method == "PATCH" {
-			*got, _ = io.ReadAll(r.Body)
-			writeTestJSON(w, map[string]any{"config": map[string]any{}})
-			return
-		}
-		http.NotFound(w, r)
-	}
+// configSetRecorder answers the one PATCH the tool makes and keeps the request,
+// so the assertions below read the wire rather than the canned reply.
+func configSetRecorder() *recorder {
+	return piholeHandler(map[string]any{
+		"PATCH /config": map[string]any{"config": map[string]any{}},
+	})
 }
 
 // A caller who worked around the missing wrapper sends {"config": {...}} already.
 // Wrapping that again yields {"config":{"config":{...}}}, which FTL answers 200 to
 // while applying nothing, so the envelope must be detected rather than nested.
 func TestConfigSet_AlreadyWrappedPayloadIsNotDoubleWrapped(t *testing.T) {
-	var gotBody []byte
-	c := newTestClient(t, captureConfigPatch(&gotBody))
+	rec := configSetRecorder()
+	c := newTestClient(t, rec)
 
 	callTool(t, configSetHandler, c, map[string]any{
 		"config": `{"config":{"dns":{"blocking":{"active":false}}}}`,
 	})
 
-	var body map[string]any
-	if err := json.Unmarshal(gotBody, &body); err != nil {
-		t.Fatalf("PATCH body is not valid JSON: %v (raw: %s)", err, gotBody)
-	}
-	cfg, ok := body["config"].(map[string]any)
-	if !ok {
-		t.Fatalf("PATCH body missing 'config' wrapper, got: %s", gotBody)
-	}
-	if _, doubled := cfg["config"]; doubled {
-		t.Fatalf("payload was wrapped twice, got: %s", gotBody)
-	}
-	if _, ok := cfg["dns"].(map[string]any); !ok {
-		t.Fatalf("expected dns section directly under the wrapper, got: %s", gotBody)
-	}
+	req := rec.Only(t, "PATCH", "/config")
+	req.AssertBodyKeys(t, "config")
+	req.AssertNoField(t, "config.config")
+	req.AssertField(t, "config.dns.blocking.active", false)
 }
 
 // A bare object with a single "dns" key must still be wrapped normally.
 func TestConfigSet_SingleKeyBarePayloadIsWrapped(t *testing.T) {
-	var gotBody []byte
-	c := newTestClient(t, captureConfigPatch(&gotBody))
+	rec := configSetRecorder()
+	c := newTestClient(t, rec)
 
 	callTool(t, configSetHandler, c, map[string]any{
 		"config": `{"dns":{"blocking":{"active":false}}}`,
 	})
 
-	var body map[string]any
-	if err := json.Unmarshal(gotBody, &body); err != nil {
-		t.Fatalf("PATCH body is not valid JSON: %v (raw: %s)", err, gotBody)
-	}
-	cfg, ok := body["config"].(map[string]any)
-	if !ok {
-		t.Fatalf("PATCH body missing 'config' wrapper, got: %s", gotBody)
-	}
-	if _, ok := cfg["dns"].(map[string]any); !ok {
-		t.Fatalf("expected dns section inside the wrapper, got: %s", gotBody)
-	}
+	req := rec.Only(t, "PATCH", "/config")
+	req.AssertBodyKeys(t, "config")
+	req.AssertNoField(t, "config.config")
+	req.AssertField(t, "config.dns.blocking.active", false)
 }
 
 func TestConfigSet_NonObjectJSON(t *testing.T) {
@@ -243,31 +264,80 @@ func TestConfigSet_Error(t *testing.T) {
 }
 
 func TestConfigGetValue_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	rec := piholeHandler(map[string]any{
 		"/config/dns/upstreams": map[string]any{
 			"config": map[string]any{
-				"upstreams": []any{"1.1.1.1#53", "8.8.8.8#53"},
+				"dns": map[string]any{"upstreams": []any{"1.1.1.1#53", "8.8.8.8#53"}},
 			},
 		},
-	}))
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, configGetValueHandler, c, map[string]any{"element": "dns.upstreams"})
-	if !strings.Contains(text, "dns/upstreams") {
-		t.Errorf("expected element path in output, got: %s", text)
+	// The element is echoed back in the dotted spelling the caller used, not
+	// the slash-separated path form it is turned into on the way out.
+	if !strings.Contains(text, "dns.upstreams") {
+		t.Errorf("expected element in output, got: %s", text)
 	}
 	if !strings.Contains(text, "1.1.1.1#53") {
 		t.Errorf("expected upstream value, got: %s", text)
 	}
+
+	// Everything asserted above is built from the caller's own argument and the
+	// canned reply, so none of it can see the request. This tool is the
+	// read-back half of every write-then-read verification in
+	// scripts/e2e-test.sh: if it ever addressed the wrong path or verb, those
+	// verifications would stop verifying anything and stay green. Pin the verb,
+	// the dotted-element-to-segment translation, and the absence of a body.
+	req := rec.Only(t, "GET", "/config/dns/upstreams")
+	req.AssertNoBody(t)
+	req.AssertNoQueryString(t)
+}
+
+// 127.0.0.1#5335 is the canonical Unbound upstream, and the '#' used to end
+// the path at the fragment: FTL saw /config/dns/upstreams/127.0.0.1, the
+// appended restart parameter went into the discarded fragment with it, and the
+// tool reported success for a value it had not written.
+func TestConfigAddRemoveValue_ReservedCharactersAreEscaped(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		handler func(*pihole.Registry) server.ToolHandlerFunc
+		method  string
+	}{
+		{"add", configAddValueHandler, "PUT"},
+		{"remove", configRemoveValueHandler, "DELETE"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Route-table keys are matched against the DECODED path, so the
+			// key carries the literal '#'. The selector and AssertRawPath
+			// below use the escaped spelling, which is what went on the wire.
+			rec := piholeHandler(map[string]any{
+				"/config/dns/upstreams/127.0.0.1#5335": map[string]any{},
+			})
+			c := newTestClient(t, rec)
+
+			callTool(t, tc.handler, c, map[string]any{
+				"element": "dns.upstreams",
+				"value":   "127.0.0.1#5335",
+				"restart": false,
+			})
+
+			req := rec.Only(t, tc.method, "/config/dns/upstreams/127.0.0.1%235335")
+			req.AssertRawPath(t, "/config/dns/upstreams/127.0.0.1%235335")
+			req.AssertQuery(t, "restart", "false")
+		})
+	}
 }
 
 func TestConfigAddValue_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	rec := piholeHandler(map[string]any{
 		"/config/dns/upstreams/1.1.1.1": map[string]any{
 			"config": map[string]any{
 				"upstreams": []any{"1.1.1.1"},
 			},
 		},
-	}))
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, configAddValueHandler, c, map[string]any{
 		"element": "dns.upstreams",
@@ -279,12 +349,51 @@ func TestConfigAddValue_Success(t *testing.T) {
 	if !strings.Contains(text, "1.1.1.1") {
 		t.Errorf("expected value in output, got: %s", text)
 	}
+
+	// This endpoint carries both the element and the new value in the path, so
+	// the path is the whole request: the dotted element becomes segments and
+	// the value is appended. PUT is what extends the array, and the reply text
+	// is built from the tool's own arguments rather than the response, so
+	// nothing above would notice a wrong verb or a mangled element.
+	req := rec.Only(t, "PUT", "/config/dns/upstreams/1.1.1.1")
+	// restart defaults to true and so does the API, so the flag belongs off the
+	// wire. Sending restart=false here would quietly defer the FTL restart that
+	// a caller who never mentioned it still expects.
+	req.AssertNoQuery(t, "restart")
+	req.AssertNoQueryString(t)
+}
+
+// restart=false has to reach the wire as a query parameter. The tool's reply is
+// identical either way, so a dropped flag restarts FTL and interrupts DNS for
+// every client on the network with no symptom a caller could see.
+func TestConfigAddValue_RestartFalseIsSentAsQuery(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/config/dns/upstreams/1.1.1.1": map[string]any{
+			"config": map[string]any{
+				"upstreams": []any{"1.1.1.1"},
+			},
+		},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, configAddValueHandler, c, map[string]any{
+		"element": "dns.upstreams",
+		"value":   "1.1.1.1",
+		"restart": false,
+	})
+
+	req := rec.Only(t, "PUT", "/config/dns/upstreams/1.1.1.1")
+	req.AssertQuery(t, "restart", "false")
+	// restart is the only parameter this endpoint takes, and a stray extra one
+	// would be as invisible in the reply as a missing one.
+	req.AssertQueryKeys(t, "restart")
 }
 
 func TestConfigRemoveValue_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	rec := piholeHandler(map[string]any{
 		"/config/dns/upstreams/1.1.1.1": map[string]any{},
-	}))
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, configRemoveValueHandler, c, map[string]any{
 		"element": "dns.upstreams",
@@ -296,6 +405,32 @@ func TestConfigRemoveValue_Success(t *testing.T) {
 	if !strings.Contains(text, "1.1.1.1") {
 		t.Errorf("expected value in output, got: %s", text)
 	}
+
+	// Add and remove differ only by verb: both address the same path and
+	// neither sends a body. A DELETE that went out as a PUT would add the
+	// value the caller asked to remove, and the reply would still say Removed.
+	req := rec.Only(t, "DELETE", "/config/dns/upstreams/1.1.1.1")
+	req.AssertNoQuery(t, "restart")
+	req.AssertNoQueryString(t)
+}
+
+// The mirror of the add case: a silently dropped restart=false costs a
+// network-wide DNS interruption that nothing in the reply hints at.
+func TestConfigRemoveValue_RestartFalseIsSentAsQuery(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/config/dns/upstreams/1.1.1.1": map[string]any{},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, configRemoveValueHandler, c, map[string]any{
+		"element": "dns.upstreams",
+		"value":   "1.1.1.1",
+		"restart": false,
+	})
+
+	req := rec.Only(t, "DELETE", "/config/dns/upstreams/1.1.1.1")
+	req.AssertQuery(t, "restart", "false")
+	req.AssertQueryKeys(t, "restart")
 }
 
 func TestConfigProperties_Fixture(t *testing.T) {
@@ -354,5 +489,329 @@ func TestConfigProperties_Empty(t *testing.T) {
 	text := callTool(t, configPropertiesHandler, c, nil)
 	if !strings.Contains(text, "No read-only config keys reported") {
 		t.Errorf("expected empty-state message, got: %s", text)
+	}
+}
+
+// A '+' is the trap inside the trap. url.PathEscape leaves it alone because a
+// plus is a legal sub-delimiter in a path, but FTL decodes it as a space, so
+// the escape has to be spelled out. Verified against FTL v6.7.
+func TestConfigAddRemoveValue_EscapesAPlusInTheValue(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		handler func(*pihole.Registry) server.ToolHandlerFunc
+		method  string
+	}{
+		{"add", configAddValueHandler, "PUT"},
+		{"remove", configRemoveValueHandler, "DELETE"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := piholeHandler(map[string]any{
+				"/config/dns/hosts/10.0.0.1+alias.lan": map[string]any{},
+			})
+			c := newTestClient(t, rec)
+
+			callTool(t, tc.handler, c, map[string]any{
+				"element": "dns.hosts",
+				"value":   "10.0.0.1+alias.lan",
+			})
+
+			rec.Only(t, tc.method, "/config/dns/hosts/10.0.0.1+alias.lan").
+				AssertRawPath(t, "/config/dns/hosts/10.0.0.1%2Balias.lan")
+		})
+	}
+}
+
+// The element is a dotted path, and the dots are separators: escaping the
+// joined string turns every one of them into %2F and 404s the request. Each
+// component is escaped on its own, so the separators survive and a component
+// carrying a reserved character still travels intact.
+func TestConfigValue_ElementSeparatorsSurviveEscaping(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/config/dns/upstreams": map[string]any{"config": map[string]any{"upstreams": []any{}}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, configGetValueHandler, c, map[string]any{"element": "dns.upstreams"})
+
+	rec.Only(t, "GET", "/config/dns/upstreams").AssertRawPath(t, "/config/dns/upstreams")
+}
+
+// unwrapConfigValue walks the response down to the leaf. Everything that does
+// not match the shape FTL sends is handed back untouched rather than being
+// reported as an empty value.
+func TestUnwrapConfigValue(t *testing.T) {
+	nested := map[string]any{"dns": map[string]any{"hosts": []any{"10.0.0.1 nas.lan"}}}
+
+	for _, tt := range []struct {
+		name    string
+		cfg     map[string]any
+		element string
+		want    map[string]any
+	}{
+		{"nested section", nested, "dns.hosts", map[string]any{"hosts": []any{"10.0.0.1 nas.lan"}}},
+		{"single component", map[string]any{"dns": "x"}, "dns", map[string]any{"dns": "x"}},
+		{"component missing", nested, "dhcp.leases", nested},
+		{"leaf is not an object", nested, "dns.hosts.deeper", nested},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := unwrapConfigValue(tt.cfg, tt.element)
+			if fmt.Sprint(got) != fmt.Sprint(tt.want) {
+				t.Errorf("unwrapConfigValue(%v, %q) = %v, want %v", tt.cfg, tt.element, got, tt.want)
+			}
+		})
+	}
+}
+
+// The section is user-supplied and goes straight into the path. A reserved
+// character truncates the request, and the reply then describes a section
+// nobody asked for.
+func TestConfigGet_EscapesTheSection(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/config/dns#x": map[string]any{"config": map[string]any{"dns": map[string]any{}}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, configGetHandler, c, map[string]any{"section": "dns#x"})
+
+	rec.Only(t, "GET", "/config/dns#x").AssertRawPath(t, "/config/dns%23x")
+}
+
+// Unwrapping one envelope is not enough. A caller that wrapped twice, which is
+// exactly what someone working around the original bug would do after reading
+// that the payload needs a config key, reduced to a single wrap and was then
+// re-wrapped on the way out. Pi-hole has no top-level config section, so a lone
+// config key can only ever be the envelope, at any depth.
+func TestConfigSet_DoublyWrappedPayloadIsNotSentWrapped(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"PATCH /config": map[string]any{"config": map[string]any{}},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, configSetHandler, c, map[string]any{
+		"config": `{"config":{"config":{"dns":{"cache":{"size":10001}}}}}`,
+	})
+
+	req := rec.Only(t, "PATCH", "/config")
+	req.AssertField(t, "config.dns.cache.size", 10001)
+	req.AssertNoField(t, "config.config")
+}
+
+// A config response with nothing in it must say so rather than render as an
+// empty string, which a caller cannot distinguish from a failed read.
+func TestConfigGet_NormalEmptyConfig(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/config": map[string]any{"config": map[string]any{}},
+	}))
+
+	if text := callTool(t, configGetHandler, c, nil); text != "No configuration returned." {
+		t.Errorf("got %q, want a named empty result", text)
+	}
+}
+
+// leakSentinel stands in for the value of webserver.api.pwhash. It is not a
+// real hash, and it is distinctive enough that any appearance in tool output is
+// unambiguous. (Named for what it detects rather than what it replaces: gosec's
+// G101 reads any identifier containing "pw" as a hardcoded credential.)
+const leakSentinel = "SENTINEL-ADMIN-HASH-MUST-NOT-REACH-THE-CLIENT"
+
+// appLeakSentinel stands in for the value of webserver.api.app_pwhash.
+const appLeakSentinel = "SENTINEL-APP-HASH-MUST-NOT-REACH-THE-CLIENT"
+
+// webserverAPIConfig is the shape FTL v6.7 returns for the webserver.api
+// section, trimmed to the keys that matter here. FTL masks password and
+// totp_secret itself; pwhash and app_pwhash come back in full, which is what
+// the handlers must withhold.
+func webserverAPIConfig() map[string]any {
+	return map[string]any{
+		"config": map[string]any{
+			"webserver": map[string]any{
+				"api": map[string]any{
+					"max_sessions": float64(16),
+					"password":     "********",
+					"totp_secret":  "********",
+					"pwhash":       leakSentinel,
+					"app_pwhash":   appLeakSentinel,
+				},
+			},
+		},
+	}
+}
+
+func assertNoPasswordHash(t *testing.T, text string) {
+	t.Helper()
+	for _, secret := range []string{leakSentinel, appLeakSentinel} {
+		if strings.Contains(text, secret) {
+			t.Errorf("tool output carries a password hash (%s):\n%s", secret, text)
+		}
+	}
+}
+
+// TestConfigGet_WithholdsPasswordHashes pins the fix for the admin password's
+// hash reaching the model. Pi-hole's configuration API masks the password
+// itself but returns webserver.api.pwhash unmasked, and every detail level of
+// pihole_config_get passed it straight through from v0.1.0 onwards. The
+// sibling keys must survive: dropping the whole section would hide the leak by
+// breaking the tool.
+func TestConfigGet_WithholdsPasswordHashes(t *testing.T) {
+	for _, tc := range []struct{ name, section, detail, sibling string }{
+		{"section, normal", "webserver", "normal", "webserver.api.max_sessions"},
+		{"section, full", "webserver", "full", `"max_sessions"`},
+		{"whole config, normal", "", "normal", "webserver.api.max_sessions"},
+		{"whole config, full", "", "full", `"max_sessions"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			route := "/config"
+			if tc.section != "" {
+				route += "/" + tc.section
+			}
+			c := newTestClient(t, piholeHandler(map[string]any{route: webserverAPIConfig()}))
+
+			args := map[string]any{"detail": tc.detail}
+			if tc.section != "" {
+				args["section"] = tc.section
+			}
+			text := callTool(t, configGetHandler, c, args)
+
+			assertNoPasswordHash(t, text)
+			if !strings.Contains(text, tc.sibling) {
+				t.Errorf("expected the rest of webserver.api to survive (%s), got:\n%s", tc.sibling, text)
+			}
+			if !strings.Contains(text, "webserver.api.pwhash") || !strings.Contains(text, "withheld") {
+				t.Errorf("expected a note naming what was withheld, got:\n%s", text)
+			}
+		})
+	}
+}
+
+// TestConfigGetValue_RefusesCredentialPathsWithoutAsking checks the direct
+// request for a hash. Refusing after fetching it would still move the hash
+// across the wire into this process for nothing, so no request is sent at all.
+// The spellings cover the ways a path can be written that still reach the same
+// key: case, stray whitespace and dots, and slash separators.
+func TestConfigGetValue_RefusesCredentialPathsWithoutAsking(t *testing.T) {
+	for _, element := range []string{
+		"webserver.api.pwhash",
+		"webserver.api.app_pwhash",
+		"WebServer.API.PWHash",
+		" webserver.api.pwhash ",
+		"webserver..api.pwhash",
+		".webserver.api.pwhash.",
+		"webserver/api/pwhash",
+	} {
+		t.Run(element, func(t *testing.T) {
+			rec := piholeHandler(map[string]any{
+				"/config/webserver/api/pwhash":     webserverAPIConfig(),
+				"/config/webserver/api/app_pwhash": webserverAPIConfig(),
+			})
+			c := newTestClient(t, rec)
+
+			text := callTool(t, configGetValueHandler, c, map[string]any{"element": element})
+
+			assertNoPasswordHash(t, text)
+			if !strings.Contains(text, "withheld") {
+				t.Errorf("expected the reply to say the value is withheld, got: %s", text)
+			}
+			if n := len(rec.AllRequests()); n != 0 {
+				t.Errorf("sent %d request(s) for a credential path; want none:\n%s", n, rec.Dump())
+			}
+		})
+	}
+}
+
+// TestConfigGetValue_SectionAboveACredentialIsFiltered covers asking for the
+// section that contains the hash rather than the hash itself.
+func TestConfigGetValue_SectionAboveACredentialIsFiltered(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{"/config/webserver/api": webserverAPIConfig()}))
+
+	text := callTool(t, configGetValueHandler, c, map[string]any{"element": "webserver.api"})
+
+	assertNoPasswordHash(t, text)
+	if !strings.Contains(text, "max_sessions") {
+		t.Errorf("expected the rest of webserver.api to survive, got: %s", text)
+	}
+}
+
+// TestConfigSet_ResponseWithholdsPasswordHashes covers the path that was
+// easiest to miss. FTL answers a PATCH with the entire configuration, and the
+// handler echoes it, so every successful write of any setting returned the
+// admin password's hash as a side effect.
+func TestConfigSet_ResponseWithholdsPasswordHashes(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{"PATCH /config": webserverAPIConfig()}))
+
+	text := callTool(t, configSetHandler, c, map[string]any{"config": `{"dns":{"cache":{"size":10001}}}`})
+
+	assertNoPasswordHash(t, text)
+	if !strings.Contains(text, "Config updated") || !strings.Contains(text, "max_sessions") {
+		t.Errorf("expected a normal success reply with the rest of the config, got:\n%s", text)
+	}
+}
+
+// TestConfigSet_RefusesPasswordHashWrites checks the other half. FTL accepts a
+// write to webserver.api.pwhash through PATCH /api/config (measured against
+// v6.7), and whatever is written replaces the admin password outright. No
+// caller of this tool can know a valid hash, so there is no legitimate write
+// to make, and the request never leaves the process. Every payload shape the
+// handler accepts is covered, including both envelope forms and a dotted key.
+func TestConfigSet_RefusesPasswordHashWrites(t *testing.T) {
+	for _, tc := range []struct{ name, payload, want string }{
+		{"nested", `{"webserver":{"api":{"pwhash":"x"}}}`, "webserver.api.pwhash"},
+		{"empty value", `{"webserver":{"api":{"pwhash":""}}}`, "webserver.api.pwhash"},
+		{"app password", `{"webserver":{"api":{"app_pwhash":"x"}}}`, "webserver.api.app_pwhash"},
+		{"alongside a legitimate key", `{"webserver":{"api":{"max_sessions":20,"pwhash":"x"}}}`, "webserver.api.pwhash"},
+		{"already wrapped", `{"config":{"webserver":{"api":{"pwhash":"x"}}}}`, "webserver.api.pwhash"},
+		{"doubly wrapped", `{"config":{"config":{"webserver":{"api":{"pwhash":"x"}}}}}`, "webserver.api.pwhash"},
+		{"dotted key", `{"webserver.api.pwhash":"x"}`, "webserver.api.pwhash"},
+		{"partly dotted key", `{"webserver":{"api.pwhash":"x"}}`, "webserver.api.pwhash"},
+		{"case variant", `{"WebServer":{"API":{"PWHash":"x"}}}`, "webserver.api.pwhash"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := piholeHandler(map[string]any{"PATCH /config": webserverAPIConfig()})
+			c := newTestClient(t, rec)
+
+			msg := callToolExpectError(t, configSetHandler, c, map[string]any{"config": tc.payload})
+
+			if !strings.Contains(msg, tc.want) {
+				t.Errorf("expected the refusal to name %s, got: %s", tc.want, msg)
+			}
+			rec.AssertNone(t, "PATCH", "/config")
+		})
+	}
+}
+
+// TestConfigSet_PasswordChangeIsStillAllowed guards against the refusal
+// growing to cover the supported way to change the password, which is to send
+// the plain password and let Pi-hole hash it.
+func TestConfigSet_PasswordChangeIsStillAllowed(t *testing.T) {
+	rec := piholeHandler(map[string]any{"PATCH /config": webserverAPIConfig()})
+	c := newTestClient(t, rec)
+
+	callTool(t, configSetHandler, c, map[string]any{"config": `{"webserver":{"api":{"password":"new-password"}}}`})
+
+	rec.Only(t, "PATCH", "/config").AssertField(t, "config.webserver.api.password", "new-password")
+}
+
+// TestConfigAddRemoveValue_RefuseCredentialPaths closes the two remaining
+// write routes, which take a dotted element rather than an object.
+func TestConfigAddRemoveValue_RefuseCredentialPaths(t *testing.T) {
+	for _, h := range []struct {
+		name    string
+		handler func(*pihole.Registry) server.ToolHandlerFunc
+	}{
+		{"add", configAddValueHandler},
+		{"remove", configRemoveValueHandler},
+	} {
+		t.Run(h.name, func(t *testing.T) {
+			rec := piholeHandler(map[string]any{})
+			c := newTestClient(t, rec)
+
+			msg := callToolExpectError(t, h.handler, c, map[string]any{"element": "webserver.api.pwhash", "value": "x"})
+
+			if !strings.Contains(msg, "webserver.api.pwhash") {
+				t.Errorf("expected the refusal to name the key, got: %s", msg)
+			}
+			if n := len(rec.AllRequests()); n != 0 {
+				t.Errorf("sent %d request(s) for a credential path; want none:\n%s", n, rec.Dump())
+			}
+		})
 	}
 }

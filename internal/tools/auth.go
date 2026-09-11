@@ -64,9 +64,12 @@ func authRevokeSessionHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		id := int(req.GetFloat("id", 0))
-		if id <= 0 {
+		id, err := req.RequireInt("id")
+		if err != nil {
 			return mcp.NewToolResultError("Parameter 'id' is required"), nil
+		}
+		if id < 0 {
+			return mcp.NewToolResultError(fmt.Sprintf("id must not be negative (got %d)", id)), nil
 		}
 
 		if err := c.Delete(ctx, fmt.Sprintf("/auth/session/%d", id)); err != nil {

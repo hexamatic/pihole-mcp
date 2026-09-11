@@ -10,6 +10,7 @@ permissions: {}
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: write # create the GitHub release
       packages: write # push images to GHCR
@@ -37,9 +38,10 @@ jobs:
       # whatever cosign is newest, which is how the first v0.8.0 tag attempt
       # failed: it picked up cosign v3, whose `sign-blob` had dropped the
       # `--output-signature` / `--output-certificate` flags the signs block was
-      # written against. Signing only ever runs on a tag (`just release-dry`
-      # skips it), so an unpinned major bump surfaces as a broken release and
-      # nowhere earlier. Bump this in step with the args in .goreleaser.yaml.
+      # written against. Since v0.9.0 the signing block is exercised on every
+      # pull request that touches release config, by release-rehearsal.yml, so
+      # a bump here is no longer first executed on a tag. Bump this in step
+      # with the args in .goreleaser.yaml and with the pin in the rehearsal.
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: "v3.1.2"
@@ -50,6 +52,7 @@ jobs:
         run: scripts/release-notes.sh "${GITHUB_REF_NAME}" > "${RUNNER_TEMP}/NOTES.md"
 
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        id: goreleaser
         with:
           version: "~> v2"
           args: release --clean --release-notes=${{ runner.temp }}/NOTES.md
@@ -57,9 +60,42 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
 
+      # goreleaser uploads the archives to the release, and only afterwards
+      # commits the Homebrew cask and the Scoop manifest. A failure in either
+      # of those late publishers used to take the attestation step down with
+      # it, leaving a fully published, downloadable release with no provenance
+      # at all — the one outcome worth preventing, because a release cannot be
+      # re-attested without moving the tag.
+      #
+      # goreleaser has no per-publisher continue-on-error, so the fix is on
+      # this side of the fence: the steps below run on `always()` and gate
+      # themselves on the artefacts existing. A tap failure still fails the
+      # job, which is correct — it is a real problem, it just is not one that
+      # should cost the release its provenance.
+      #
+      # `always()` on its own is not enough. attest-build-provenance errors on
+      # a subject-path glob that matches nothing, so an early goreleaser
+      # failure would produce a second, misleading red step on top of the real
+      # one. Hence the explicit presence check.
+      - name: Check which release artefacts exist
+        id: artefacts
+        if: always()
+        run: |
+          shopt -s nullglob
+          archives=(dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm)
+          if [ "${#archives[@]}" -eq 0 ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::dist/ holds no archives — skipping attestation"
+            exit 0
+          fi
+          echo "present=true" >> "$GITHUB_OUTPUT"
+          echo "found ${#archives[@]} attestable archives"
+
       # SLSA build provenance for every downloadable artefact, verifiable
       # with `gh attestation verify <file> --repo hexamatic/pihole-mcp`.
       - name: Attest build provenance
+        id: attest
+        if: always() && steps.artefacts.outputs.present == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
@@ -67,3 +103,118 @@ jobs:
             dist/*.zip
             dist/*.deb
             dist/*.rpm
+
+      # The archive attestation above lives in GitHub's attestation store and
+      # is found by digest, so it needs no release asset. This copy exists for
+      # one reason: OpenSSF Scorecard's Signed-Releases check awards its last
+      # 2 points for a release asset whose name ends in `.intoto.jsonl`, and
+      # suffix-matches nothing else. Without it the ceiling is 8/10 across five
+      # releases, not 10/10.
+      #
+      # This is score mechanics, not added assurance. The provenance that
+      # actually verifies is the one `gh attestation verify` resolves; this
+      # asset is the same bundle under a name a scanner recognises.
+      - name: Publish the attestation bundle as a release asset
+        if: always() && steps.attest.outputs.bundle-path != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          asset="pihole-mcp_${TAG#v}_SHA256SUMS.intoto.jsonl"
+          cp "$BUNDLE" "$asset"
+          # Archives can exist in dist/ without the release having been created,
+          # if goreleaser died at the release pipe itself. Upload failure is then
+          # a consequence of the real error rather than a second one, and this
+          # asset is cosmetic to begin with, so warn instead of adding a second
+          # red step to a run that is already failing.
+          gh release upload "$TAG" "$asset" --clobber --repo "$GITHUB_REPOSITORY" \
+            || echo "::warning::could not upload ${asset} — is the release published?"
+
+      # Container images are attested by digest rather than by path. The two
+      # dockers_v2 configurations (default and slim) each publish a multi-arch
+      # manifest under several tags, so the artefact list holds one entry per
+      # image:tag but only two distinct digests.
+      #
+      # `Docker Image` is the string form of artifact.DockerImageV2 as well as
+      # PublishableDockerImage, so this filter is correct for dockers_v2. A
+      # snapshot build loads one image per platform instead of pushing a
+      # manifest and therefore yields more than two digests — the rehearsal
+      # reports that number rather than asserting it.
+      - name: Collect published image digests
+        id: images
+        if: always()
+        run: |
+          if [ ! -f dist/artifacts.json ]; then
+            echo "::warning::no dist/artifacts.json — skipping image attestation"
+            exit 0
+          fi
+          digests=$(jq -r '
+            .[] | select(.type == "Docker Image")
+                | .extra.Digest // empty
+          ' dist/artifacts.json | sort -u)
+          count=$(printf '%s' "$digests" | grep -c . || true)
+          echo "found $count distinct image digest(s):"
+          printf '%s\n' "$digests"
+          if [ "$count" -ne 2 ]; then
+            # Not fatal. The images are already pushed and cosign-signed by
+            # this point; an unattested image is a smaller problem than a
+            # failed release, and the annotation makes it impossible to miss.
+            echo "::error::expected 2 image digests (default + slim), found ${count} — image attestation may be incomplete"
+          fi
+          echo "digest_1=$(printf '%s\n' "$digests" | sed -n 1p)" >> "$GITHUB_OUTPUT"
+          echo "digest_2=$(printf '%s\n' "$digests" | sed -n 2p)" >> "$GITHUB_OUTPUT"
+
+      # subject-digest takes a single value, hence two steps rather than a
+      # loop. push-to-registry writes the attestation alongside the image so
+      # `gh attestation verify oci://ghcr.io/hexamatic/pihole-mcp:X.Y.Z`
+      # resolves it — see SECURITY.md.
+      - name: Attest the default container image
+        if: always() && steps.images.outputs.digest_1 != ''
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/hexamatic/pihole-mcp
+          subject-digest: ${{ steps.images.outputs.digest_1 }}
+          push-to-registry: true
+
+      - name: Attest the slim container image
+        if: always() && steps.images.outputs.digest_2 != ''
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/hexamatic/pihole-mcp
+          subject-digest: ${{ steps.images.outputs.digest_2 }}
+          push-to-registry: true
+
+      # goreleaser's own error names the pipe, but it scrolls past in a long
+      # log. This restates it as the one question worth answering on a failed
+      # release: what got out, and what did not.
+      - name: Name what failed
+        if: failure()
+        run: |
+          {
+            echo "### Release failed"
+            echo
+            echo "| Pipe | Evidence | Produced |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          report() {
+            n=$(find dist -maxdepth 1 -name "$2" 2>/dev/null | wc -l | tr -d ' ')
+            [ "$n" -gt 0 ] && s="yes ($n)" || s="**no**"
+            echo "| $1 | \`$2\` | $s |" >> "$GITHUB_STEP_SUMMARY"
+          }
+          report 'builds + archives' '*.tar.gz'
+          report 'builds + archives (Windows)' '*.zip'
+          report 'nfpm (deb)' '*.deb'
+          report 'nfpm (rpm)' '*.rpm'
+          report 'checksum' '*_SHA256SUMS'
+          report 'sign (cosign)' '*.sigstore.json'
+          report 'sbom (syft)' '*.sbom.json'
+          {
+            echo
+            echo "A 'no' on the first row means the failure was early and nothing"
+            echo "was published. Rows filled in down to \`sign\` mean the archives"
+            echo "reached the release and the failure was a late publisher"
+            echo "(Homebrew tap, Scoop bucket, or the release API itself). In that"
+            echo "case the release is live: check it, and fix forward with"
+            echo "\`gh release upload\` or a tap commit rather than re-tagging."
+          } >> "$GITHUB_STEP_SUMMARY"

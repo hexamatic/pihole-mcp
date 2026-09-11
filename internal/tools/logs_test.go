@@ -19,6 +19,60 @@ func ftlLogHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return logHandler(r, "/logs/ftl")
 }
 
+// webserverLogHandler wraps logHandler for use with callTool.
+func webserverLogHandler(r *pihole.Registry) server.ToolHandlerFunc {
+	return logHandler(r, "/logs/webserver")
+}
+
+// next_id is what makes these three tools incremental: it is appended to the
+// path as ?nextID=, and the rendered output is byte-for-byte identical whether
+// or not it reaches the wire. A dropped parameter makes every poll re-return
+// the whole log instead of only the new lines, and nothing in the reply says
+// so. The same shape as the restart flag on the config value tools.
+//
+// logs.go builds the query by string concatenation rather than net/url.Values,
+// so this is also the assertion that guards the eventual move to a proper
+// encoder.
+func TestLogs_NextIDReachesTheWire(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		handler  func(*pihole.Registry) server.ToolHandlerFunc
+		endpoint string
+	}{
+		{"dnsmasq", dnsLogHandler, "/logs/dnsmasq"},
+		{"ftl", ftlLogHandler, "/logs/ftl"},
+		{"webserver", webserverLogHandler, "/logs/webserver"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reply := map[string]any{"log": []any{}, "nextID": 150}
+
+			t.Run("sent when supplied", func(t *testing.T) {
+				rec := piholeHandler(map[string]any{tc.endpoint: reply})
+				c := newTestClient(t, rec)
+
+				callTool(t, tc.handler, c, map[string]any{"next_id": 42.0})
+
+				req := rec.Only(t, "GET", tc.endpoint)
+				req.AssertQuery(t, "nextID", "42")
+				req.AssertQueryKeys(t, "nextID")
+			})
+
+			t.Run("absent when omitted", func(t *testing.T) {
+				rec := piholeHandler(map[string]any{tc.endpoint: reply})
+				c := newTestClient(t, rec)
+
+				callTool(t, tc.handler, c, nil)
+
+				req := rec.Only(t, "GET", tc.endpoint)
+				// A polling parameter that appears uninvited would silently
+				// hide every line before it.
+				req.AssertNoQuery(t, "nextID")
+				req.AssertNoQueryString(t)
+			})
+		})
+	}
+}
+
 func TestLogsDNS_Normal(t *testing.T) {
 	c := newTestClient(t, piholeHandler(map[string]any{
 		"/logs/dnsmasq": map[string]any{

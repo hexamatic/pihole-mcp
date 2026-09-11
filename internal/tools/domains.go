@@ -15,9 +15,11 @@ import (
 func RegisterDomains(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_domains_list",
 		mcp.WithTitleAnnotation("List Domain Rules"),
-		mcp.WithDescription("List domains on allow/deny lists. Filter by type (allow/deny) and kind (exact/regex). Use pihole_search_domains for cross-list search."),
+		mcp.WithDescription("List domains on allow/deny lists. Filter by type (allow/deny) and kind (exact/regex), page with limit/offset. Use pihole_search_domains for cross-list search."),
 		mcp.WithString("type", mcp.Description("Filter: 'allow' or 'deny'."), mcp.Enum("allow", "deny")),
 		mcp.WithString("kind", mcp.Description("Filter: 'exact' or 'regex'."), mcp.Enum("exact", "regex")),
+		limitParam,
+		offsetParam,
 		detailParam,
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -29,7 +31,7 @@ func RegisterDomains(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithDescription("Add domains to an allow or deny list. Supports bulk add via comma-separated domains. Use pihole_search_domains first to avoid duplicates."),
 		mcp.WithString("type", mcp.Required(), mcp.Description("'allow' or 'deny'."), mcp.Enum("allow", "deny")),
 		mcp.WithString("kind", mcp.Required(), mcp.Description("'exact' or 'regex'."), mcp.Enum("exact", "regex")),
-		mcp.WithString("domain", mcp.Required(), mcp.Description("Domain(s) to add (comma-separated for bulk).")),
+		mcp.WithString("domain", mcp.Required(), mcp.Description("Domain(s) to add. Comma-separated for bulk when kind is exact; a regex is taken whole.")),
 		mcp.WithString("comment", mcp.Description("Comment for the entry.")),
 		mcp.WithBoolean("enabled", mcp.Description("Enabled state (default true).")),
 		mcp.WithOpenWorldHintAnnotation(true),
@@ -37,7 +39,7 @@ func RegisterDomains(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_domains_update",
 		mcp.WithTitleAnnotation("Update Domain Rule"),
-		mcp.WithDescription("Update a domain entry's comment, enabled status, or move it between allow/deny lists."),
+		mcp.WithDescription("Update a domain entry's comment or enabled status. Changing type or kind creates a duplicate rather than moving the entry; delete the original separately if that is what you want."),
 		mcp.WithString("type", mcp.Required(), mcp.Description("Current type: 'allow' or 'deny'."), mcp.Enum("allow", "deny")),
 		mcp.WithString("kind", mcp.Required(), mcp.Description("Current kind: 'exact' or 'regex'."), mcp.Enum("exact", "regex")),
 		mcp.WithString("domain", mcp.Required(), mcp.Description("Domain to update.")),
@@ -70,6 +72,13 @@ func domainsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		// Validate paging before the request: a bad parameter is a bad
+		// parameter whether or not the collection turns out to be empty,
+		// and an empty list is not an answer to limit=-5.
+		limit, offset, err := getPage(req, maxPageLimit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		path := "/domains"
 		if t := req.GetString("type", ""); t != "" {
 			path += "/" + t
@@ -87,40 +96,51 @@ func domainsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultText("No domains found."), nil
 		}
 
-		// Build structured output.
-		domains := make([]DomainOutput, len(result.Domains))
-		for i, d := range result.Domains {
-			domains[i] = DomainOutput{
-				Domain:  d.Domain,
-				Type:    d.Type,
-				Kind:    d.Kind,
-				Enabled: d.Enabled,
-				Comment: d.Comment,
+		total := len(result.Domains)
+		start, end := pageBounds(total, limit, offset)
+		page := result.Domains[start:end]
+
+		detail := getDetail(req)
+
+		// Count is always the size of the whole collection; Domains carries
+		// the page. At minimal the page is deliberately empty: the text was
+		// already one short line, while the structured content still shipped
+		// every gravity-sized entry behind it, so asking for less returned
+		// exactly as many bytes. The field stays present and non-nil so the
+		// declared output schema still matches.
+		domains := make([]DomainOutput, 0, len(page))
+		if detail != "minimal" {
+			for _, d := range page {
+				domains = append(domains, DomainOutput{
+					Domain:  d.Domain,
+					Type:    d.Type,
+					Kind:    d.Kind,
+					Enabled: d.Enabled,
+					Comment: d.Comment,
+				})
 			}
 		}
 		output := DomainsListOutput{
 			Domains: domains,
-			Count:   len(result.Domains),
+			Count:   total,
 		}
 
-		detail := getDetail(req)
-
 		if detail == "minimal" {
-			return mcp.NewToolResultStructured(output, fmt.Sprintf("%d domains.", len(result.Domains))), nil
+			return mcp.NewToolResultStructured(output, fmt.Sprintf("%d domains.", total)), nil
 		}
 
 		if wantCSV(req) {
 			headers := []string{"Domain", "Type", "Kind", "Enabled", "Comment"}
-			rows := make([][]string, 0, len(result.Domains))
-			for _, d := range result.Domains {
+			rows := make([][]string, 0, len(page))
+			for _, d := range page {
 				rows = append(rows, []string{d.Domain, d.Type, d.Kind, format.Bool(d.Enabled), d.Comment})
 			}
-			return mcp.NewToolResultStructured(output, format.CSV(headers, rows)), nil
+			return mcp.NewToolResultStructured(output, format.CSV(headers, rows)+format.Truncate(len(page), total)), nil
 		}
 
 		var b strings.Builder
-		fmt.Fprintf(&b, "**%d domains:**\n", len(result.Domains))
-		for _, d := range result.Domains {
+		b.WriteString(pageHeading("domains", len(page), total))
+		for _, d := range page {
 			status := "enabled"
 			if !d.Enabled {
 				status = "disabled"
@@ -145,30 +165,28 @@ func domainsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		t, _ := req.RequireString("type")
-		k, _ := req.RequireString("kind")
-		domain, _ := req.RequireString("domain")
+		vals, err := requireStrings(req, "type", "kind", "domain")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		t, k, domain := vals[0], vals[1], vals[2]
 
-		// Bulk add accepts comma-separated domains; validate each.
-		for _, d := range strings.Split(domain, ",") {
-			d = strings.TrimSpace(d)
-			if d == "" {
-				continue
-			}
-			if err := validateDomainName(d); err != nil {
+		names := splitDomains(domain, k)
+		if len(names) == 0 {
+			return mcp.NewToolResultError("Parameter 'domain' is required"), nil
+		}
+		for _, d := range names {
+			if err := validateDomainName(d, k); err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("Invalid domain %q: %v", d, err)), nil
 			}
 		}
 
-		body := map[string]any{"domain": domain}
-		if comment := req.GetString("comment", ""); comment != "" {
-			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
-				return mcp.NewToolResultError("Invalid " + err.Error()), nil
-			}
-			body["comment"] = comment
-		}
-		if !req.GetBool("enabled", true) {
-			body["enabled"] = false
+		// FTL wants the rules as an array. It rejects a comma-joined string
+		// outright: "a.example.com,b.example.com" answered 400 "Invalid domain"
+		// against FTL v6.7, so bulk add never worked when it was sent whole.
+		body, err := crudAddBody(req, "domain", names)
+		if err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
 		path := fmt.Sprintf("/domains/%s/%s", t, k)
@@ -191,26 +209,36 @@ func domainsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		t, _ := req.RequireString("type")
-		k, _ := req.RequireString("kind")
-		domain, _ := req.RequireString("domain")
+		vals, err := requireStrings(req, "type", "kind", "domain")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		t, k, domain := vals[0], vals[1], vals[2]
 
-		if err := validateDomainName(domain); err != nil {
+		if err := validateDomainName(domain, k); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid domain: %v", err)), nil
 		}
 
-		body := make(map[string]any)
-		if comment := req.GetString("comment", ""); comment != "" {
-			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
-				return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		path := fmt.Sprintf("/domains/%s/%s/%s", t, k, pihole.EscapePathSegment(domain))
+
+		// The PUT replaces comment and enabled together, so whichever the
+		// caller left out has to come from the entry as it stands.
+		current := newEntryFields()
+		if needsCurrentEntry(req) {
+			var existing pihole.DomainsResponse
+			if err := c.Get(ctx, path, &existing); err != nil {
+				return toolError("read the domain before updating it", err), nil
 			}
-			body["comment"] = comment
-		}
-		if enabled := req.GetBool("enabled", true); !enabled {
-			body["enabled"] = false
+			if len(existing.Domains) > 0 {
+				current = entryFields{comment: existing.Domains[0].Comment, enabled: existing.Domains[0].Enabled}
+			}
 		}
 
-		path := fmt.Sprintf("/domains/%s/%s/%s", t, k, domain)
+		body, err := crudUpdateBody(req, current)
+		if err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+
 		var result pihole.DomainsResponse
 		if err := c.Put(ctx, path, body, &result); err != nil {
 			return toolError("update domain", err), nil
@@ -226,15 +254,17 @@ func domainsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		t, _ := req.RequireString("type")
-		k, _ := req.RequireString("kind")
-		domain, _ := req.RequireString("domain")
+		vals, err := requireStrings(req, "type", "kind", "domain")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		t, k, domain := vals[0], vals[1], vals[2]
 
-		if err := validateDomainName(domain); err != nil {
+		if err := validateDomainName(domain, k); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid domain: %v", err)), nil
 		}
 
-		path := fmt.Sprintf("/domains/%s/%s/%s", t, k, domain)
+		path := fmt.Sprintf("/domains/%s/%s/%s", t, k, pihole.EscapePathSegment(domain))
 		if err := c.Delete(ctx, path); err != nil {
 			return toolError("delete domain", err), nil
 		}
@@ -244,28 +274,25 @@ func domainsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 }
 
 func domainsBatchDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		c, err := getInstance(req, r)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		items, err := req.RequireString("items")
-		if err != nil {
-			return mcp.NewToolResultError("Parameter 'items' is required (JSON array)"), nil
-		}
-
-		if err := c.Post(ctx, "/domains:batchDelete", rawJSON(items), nil); err != nil {
-			return toolError("batch delete domains", err), nil
-		}
-
-		return mcp.NewToolResultText("**Batch delete completed.**"), nil
-	}
+	return batchDeleteHandler(r, "domains")
 }
 
-// rawJSON passes pre-encoded JSON through json.Marshal unchanged.
-type rawJSON string
-
-// MarshalJSON implements the json.Marshaler interface.
-func (r rawJSON) MarshalJSON() ([]byte, error) {
-	return []byte(r), nil
+// splitDomains turns the domain parameter into the rules to create. Exact
+// names are comma-separated for bulk add; a regex is never split, because a
+// comma is significant inside a quantifier and splitting ^ads{1,3}\.example\.com
+// would send two fragments, neither of which compiles.
+func splitDomains(domain, kind string) []string {
+	if kind == "regex" {
+		if strings.TrimSpace(domain) == "" {
+			return nil
+		}
+		return []string{domain}
+	}
+	var out []string
+	for _, d := range strings.Split(domain, ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
 }

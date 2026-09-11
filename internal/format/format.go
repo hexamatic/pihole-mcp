@@ -3,7 +3,9 @@
 package format
 
 import (
+	"encoding/csv"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -80,47 +82,24 @@ func TimestampIn(unix float64, loc *time.Location) string {
 	return time.Unix(int64(unix), 0).In(loc).Format("2 Jan 2006, 3:04 PM MST")
 }
 
-// Table renders a Markdown table from headers and rows.
-func Table(headers []string, rows [][]string) string {
-	if len(rows) == 0 {
-		return "_No data_"
-	}
-
-	var b strings.Builder
-
-	b.WriteString("| ")
-	b.WriteString(strings.Join(headers, " | "))
-	b.WriteString(" |\n")
-
-	b.WriteString("|")
-	for range headers {
-		b.WriteString("---|")
-	}
-	b.WriteString("\n")
-
-	for _, row := range rows {
-		b.WriteString("| ")
-		b.WriteString(strings.Join(row, " | "))
-		b.WriteString(" |\n")
-	}
-
-	return b.String()
-}
-
 // CSV renders comma-separated values from headers and rows.
 // ~29% fewer tokens than Markdown tables for tabular data.
+//
+// Fields go through encoding/csv, so a comment carrying a comma, a double
+// quote or a newline is quoted per RFC 4180 rather than splicing itself into
+// extra columns. Joining the fields by hand produced a row whose column count
+// depended on the data, which a reader has no way to detect.
 func CSV(headers []string, rows [][]string) string {
 	if len(rows) == 0 {
 		return "No data"
 	}
 
 	var b strings.Builder
-	b.WriteString(strings.Join(headers, ","))
-	b.WriteString("\n")
-	for _, row := range rows {
-		b.WriteString(strings.Join(row, ","))
-		b.WriteString("\n")
-	}
+	w := csv.NewWriter(&b)
+	// A strings.Builder never fails a write, so the only error csv.Writer can
+	// report here is one it cannot produce.
+	_ = w.Write(headers)
+	_ = w.WriteAll(rows)
 	return b.String()
 }
 
@@ -192,15 +171,20 @@ func ResponseTime(ms float64) string {
 }
 
 // QueryParams builds a URL query string from non-empty key-value pairs.
+//
+// Values are percent-encoded, so a filter carrying '#', '&' or '=' reaches
+// Pi-hole as the one value it is: spliced in raw, an upstream of 8.8.8.8#53
+// ended the request at the fragment and FTL answered about 8.8.8.8 instead.
+// Encoding also sorts the keys, so the same filters always build the same URL.
 func QueryParams(params map[string]string) string {
-	var parts []string
-	for k, v := range params {
-		if v != "" {
-			parts = append(parts, k+"="+v)
+	v := make(url.Values, len(params))
+	for k, val := range params {
+		if val != "" {
+			v.Set(k, val)
 		}
 	}
-	if len(parts) == 0 {
+	if len(v) == 0 {
 		return ""
 	}
-	return "?" + strings.Join(parts, "&")
+	return "?" + v.Encode()
 }

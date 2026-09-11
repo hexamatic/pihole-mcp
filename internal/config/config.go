@@ -3,11 +3,14 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hexamatic/pihole-mcp/internal/toolsets"
 )
 
 const (
@@ -15,11 +18,52 @@ const (
 	defaultRateLimit      = 120
 	defaultMaxRetries     = 3
 	defaultRetryMaxDelay  = 8 * time.Second
+
+	// minAuthTokenLength is the shortest PIHOLE_HTTP_AUTH_TOKEN accepted. A
+	// bearer token short enough to guess is worse than no token, because it
+	// reads as protection that isn't there. Rejected at startup, where the
+	// message can name the variable, rather than silently accepted.
+	minAuthTokenLength = 16
 )
 
 // defaultAllowedOrigins is the loopback-only allowlist. Matches the
 // DNS-rebinding protection prescribed by the MCP 2025-11-25 spec.
 var defaultAllowedOrigins = []string{"localhost", "127.0.0.1", "[::1]"}
+
+// Identity advertised to MCP clients during the protocol handshake. These mirror
+// the matching fields of server.json, the manifest the MCP Registry publishes,
+// so a client that installed us from the registry and a client talking to the
+// running process see the same name, blurb and icons.
+// TestServerJSONIdentityMatchesConstants fails if the two ever disagree.
+const (
+	ServerTitle       = "Pi-hole MCP Server"
+	ServerDescription = "Manage Pi-hole v6: DNS blocking, domains, clients, query analysis, DHCP, and multi-instance sync."
+	ServerWebsiteURL  = "https://github.com/hexamatic/pihole-mcp"
+)
+
+// ServerIcon is one entry of the icon set advertised to clients, matching the
+// shape of an entry in server.json's "icons" array.
+type ServerIcon struct {
+	Src      string
+	MIMEType string
+	Sizes    []string
+}
+
+// ServerIcons is the icon set advertised over the protocol and in server.json.
+// Raster images come first deliberately: the MCP specification tells clients to
+// prefer PNG or JPEG and warns that an SVG may carry executable content, so the
+// SVG is offered last as a resolution-independent fallback for clients that
+// render it safely.
+var ServerIcons = []ServerIcon{
+	{Src: assetBaseURL + "logo-256.png", MIMEType: "image/png", Sizes: []string{"256x256"}},
+	{Src: assetBaseURL + "logo-120.png", MIMEType: "image/png", Sizes: []string{"120x120"}},
+	{Src: assetBaseURL + "logo.svg", MIMEType: "image/svg+xml", Sizes: []string{"any"}},
+}
+
+// assetBaseURL is where the icons above are served from. Icons have to be
+// fetchable by a client that only has the binary, so they cannot be relative
+// paths into the repository.
+const assetBaseURL = "https://raw.githubusercontent.com/hexamatic/pihole-mcp/main/assets/"
 
 // InstanceConfig describes a single Pi-hole instance.
 type InstanceConfig struct {
@@ -49,7 +93,22 @@ type Config struct {
 
 	// AllowedOrigins is the Origin/Host allowlist for the HTTP/SSE transports.
 	// Defaults to loopback. The special value "*" disables enforcement.
+	//
+	// This is DNS-rebinding protection, not authentication: both headers are
+	// supplied by the client, so any non-browser caller can set them freely.
+	// HTTPAuthToken is the access control.
 	AllowedOrigins []string
+
+	// HTTPAuthToken is the shared bearer token the HTTP and SSE transports
+	// require on every request. Empty (the default) leaves the transports
+	// unauthenticated, which is only safe on a loopback bind.
+	HTTPAuthToken string
+
+	// TrustedProxies lists the networks whose X-Forwarded-For header the rate
+	// limiter believes when working out which client a request came from.
+	// Empty (the default) means the header is ignored entirely and the
+	// immediate peer address is used.
+	TrustedProxies []netip.Prefix
 
 	// MaxRetries is how many times a failed Pi-hole API call is re-attempted
 	// after the first try. 0 disables retrying.
@@ -57,6 +116,17 @@ type Config struct {
 
 	// RetryMaxDelay caps how long a single backoff wait may last.
 	RetryMaxDelay time.Duration
+
+	// ReadOnly restricts the server to tools annotated read-only. Every tool
+	// that can change Pi-hole is then absent from tools/list and rejected if
+	// called anyway, so this is an access control boundary rather than a hint.
+	ReadOnly bool
+
+	// Toolsets is the selection of published toolset names to expose. Nil, the
+	// default, places no restriction, and so does a selection containing
+	// "all". Read-only and toolsets intersect: neither can restore a tool the
+	// other removed.
+	Toolsets []string
 
 	// TLSSkipVerify disables TLS certificate verification for Pi-hole API
 	// connections. Off by default; intended only for instances serving
@@ -108,10 +178,24 @@ func Load() (*Config, error) {
 	}
 
 	if v, ok := os.LookupEnv("PIHOLE_ALLOWED_ORIGINS"); ok {
-		cfg.AllowedOrigins = parseOrigins(v)
+		cfg.AllowedOrigins = parseList(v)
 		if len(cfg.AllowedOrigins) == 0 {
 			return nil, fmt.Errorf("PIHOLE_ALLOWED_ORIGINS must contain at least one entry (or '*' to disable enforcement)")
 		}
+	}
+
+	token, err := loadAuthToken()
+	if err != nil {
+		return nil, err
+	}
+	cfg.HTTPAuthToken = token
+
+	if v := os.Getenv("PIHOLE_TRUSTED_PROXIES"); v != "" {
+		proxies, err := parseTrustedProxies(v)
+		if err != nil {
+			return nil, err
+		}
+		cfg.TrustedProxies = proxies
 	}
 
 	if v := os.Getenv("PIHOLE_MAX_RETRIES"); v != "" {
@@ -131,6 +215,28 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("PIHOLE_TLS_SKIP_VERIFY is not a valid boolean (use true or false): %w", err)
 		}
 		cfg.TLSSkipVerify = b
+	}
+
+	if v := os.Getenv("PIHOLE_READ_ONLY"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("PIHOLE_READ_ONLY is not a valid boolean (use true or false): %w", err)
+		}
+		cfg.ReadOnly = b
+	}
+
+	// An empty value is treated as unset, deliberately, and not as "expose
+	// nothing". This is the one place the PIHOLE_ALLOWED_ORIGINS precedent does
+	// not transfer: there an empty list means "block everything" and failing
+	// loud is the safe answer, whereas here an empty string is simply what a
+	// client's first-run form, a compose file or a ConfigMap emits for an
+	// optional field somebody left blank. Failing on it would break installs
+	// that are asking for the default.
+	if v := os.Getenv("PIHOLE_TOOLSETS"); v != "" {
+		cfg.Toolsets = parseList(v)
+		if err := toolsets.Validate(cfg.Toolsets); err != nil {
+			return nil, fmt.Errorf("PIHOLE_TOOLSETS %w", err)
+		}
 	}
 
 	if v := os.Getenv("PIHOLE_RETRY_MAX_DELAY"); v != "" {
@@ -225,8 +331,23 @@ func loadInstance(prefix, name string) (InstanceConfig, error) {
 	if rawURL == "" {
 		return InstanceConfig{}, fmt.Errorf("%s_URL is required and must not be empty", prefix)
 	}
-	if _, err := url.Parse(rawURL); err != nil {
+	u, err := url.Parse(rawURL)
+	if err != nil {
 		return InstanceConfig{}, fmt.Errorf("%s_URL is not a valid URL: %w", prefix, err)
+	}
+	// url.Parse accepts almost anything, so a bare host or a typo in the scheme
+	// used to be carried all the way to the first tool call and surface there as
+	// an opaque transport error. Reject it at startup, where the message can name
+	// the variable.
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		if u.Host == "" {
+			return InstanceConfig{}, fmt.Errorf("%s_URL must include a host, for example http://192.168.1.2 (got %q)", prefix, rawURL)
+		}
+	case "":
+		return InstanceConfig{}, fmt.Errorf("%s_URL must start with http:// or https://, for example http://192.168.1.2 (got %q)", prefix, rawURL)
+	default:
+		return InstanceConfig{}, fmt.Errorf("%s_URL has scheme %q, but only http and https are supported. If that is a host and port, add the scheme: http://%s", prefix, u.Scheme, rawURL)
 	}
 	pw, ok := os.LookupEnv(prefix + "_PASSWORD")
 	if !ok {
@@ -235,7 +356,9 @@ func loadInstance(prefix, name string) (InstanceConfig, error) {
 	return InstanceConfig{Name: name, URL: rawURL, Password: pw}, nil
 }
 
-func parseOrigins(raw string) []string {
+// parseList splits a comma-separated environment value, trimming each entry and
+// dropping empties.
+func parseList(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
@@ -246,4 +369,88 @@ func parseOrigins(raw string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// loadAuthToken resolves the shared bearer token for the HTTP and SSE
+// transports from PIHOLE_HTTP_AUTH_TOKEN or PIHOLE_HTTP_AUTH_TOKEN_FILE.
+//
+// The file form exists because an environment variable set on the command line
+// is visible in `ps` to every user on the host, and container platforms mount
+// secrets as files. Surrounding whitespace is stripped from both forms: a file
+// written by `echo` ends in a newline, and a trailing space in an exported
+// variable is never intentional.
+//
+// An empty value is treated as "not set" rather than "empty token", so a
+// misconfigured secret mount cannot silently disable authentication while
+// looking configured.
+func loadAuthToken() (string, error) {
+	inline, inlineSet := os.LookupEnv("PIHOLE_HTTP_AUTH_TOKEN")
+	path, pathSet := os.LookupEnv("PIHOLE_HTTP_AUTH_TOKEN_FILE")
+	inline, path = strings.TrimSpace(inline), strings.TrimSpace(path)
+	inlineSet, pathSet = inlineSet && inline != "", pathSet && path != ""
+
+	switch {
+	case inlineSet && pathSet:
+		return "", fmt.Errorf("set either PIHOLE_HTTP_AUTH_TOKEN or PIHOLE_HTTP_AUTH_TOKEN_FILE, not both")
+	case pathSet:
+		raw, err := os.ReadFile(path) //nolint:gosec // G304: reading the operator-nominated secret file is the point of this variable
+		if err != nil {
+			return "", fmt.Errorf("PIHOLE_HTTP_AUTH_TOKEN_FILE %q could not be read: %w", path, err)
+		}
+		token := strings.TrimSpace(string(raw))
+		if token == "" {
+			return "", fmt.Errorf("PIHOLE_HTTP_AUTH_TOKEN_FILE %q is empty; write the token to it or unset the variable", path)
+		}
+		return token, validateAuthToken(token, "PIHOLE_HTTP_AUTH_TOKEN_FILE "+path)
+	case inlineSet:
+		return inline, validateAuthToken(inline, "PIHOLE_HTTP_AUTH_TOKEN")
+	default:
+		return "", nil
+	}
+}
+
+// validateAuthToken rejects a token short enough to be guessed. source names
+// the variable or file the value came from so the message is actionable.
+func validateAuthToken(token, source string) error {
+	if len(token) < minAuthTokenLength {
+		return fmt.Errorf("%s must be at least %d characters (got %d); generate one with: openssl rand -base64 32",
+			source, minAuthTokenLength, len(token))
+	}
+	return nil
+}
+
+// parseTrustedProxies parses a comma-separated list of CIDR blocks and bare IP
+// addresses into prefixes. A bare address becomes a single-host prefix.
+//
+// Nothing is trusted by default. X-Forwarded-For is client-supplied, so a
+// server that believes it unconditionally lets any caller pick its own
+// rate-limit bucket; the header is only consulted when the immediate peer is
+// one of these.
+func parseTrustedProxies(raw string) ([]netip.Prefix, error) {
+	parts := strings.Split(raw, ",")
+	out := make([]netip.Prefix, 0, len(parts))
+	for _, p := range parts {
+		entry := strings.TrimSpace(p)
+		if entry == "" {
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			prefix, err := netip.ParsePrefix(entry)
+			if err != nil {
+				return nil, fmt.Errorf("PIHOLE_TRUSTED_PROXIES entry %q is not a valid CIDR block: %w", entry, err)
+			}
+			out = append(out, prefix.Masked())
+			continue
+		}
+		addr, err := netip.ParseAddr(entry)
+		if err != nil {
+			return nil, fmt.Errorf("PIHOLE_TRUSTED_PROXIES entry %q is not a valid IP address or CIDR block (for example 10.0.0.0/8 or 192.168.1.5): %w", entry, err)
+		}
+		addr = addr.Unmap()
+		out = append(out, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("PIHOLE_TRUSTED_PROXIES must contain at least one IP address or CIDR block, or be unset")
+	}
+	return out, nil
 }

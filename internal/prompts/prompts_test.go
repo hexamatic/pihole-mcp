@@ -2,9 +2,13 @@ package prompts
 
 import (
 	"context"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/hexamatic/pihole-mcp/internal/pihole"
+	"github.com/hexamatic/pihole-mcp/internal/tools"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -134,4 +138,65 @@ func TestWeeklyTrends_WeeksBackDefault(t *testing.T) {
 func TestRegisterAll(t *testing.T) {
 	s := server.NewMCPServer("test", "0.0.0", server.WithPromptCapabilities(false))
 	RegisterAll(s) // must not panic; registration is the only observable effect
+}
+
+// TestPromptsReferenceOnlyReadOnlyTools pins a fact that is true today and
+// would be invisible if it stopped being true.
+//
+// Prompts are not filtered in read-only mode, and the reason is simply that
+// none of them instructs a write: every pihole_* name across all nine prompt
+// handlers is a read-only tool. That makes filtering unnecessary rather than
+// merely inconvenient. The day someone writes a prompt that says "then call
+// pihole_domains_add", a read-only deployment would start steering models into
+// a rejected call, so this fails and forces the decision then, when there is a
+// real case to design against. mcp-go's server.WithPromptFilter is the seam if
+// it is ever needed.
+func TestPromptsReferenceOnlyReadOnlyTools(t *testing.T) {
+	srv := server.NewMCPServer("test", "0.0.0")
+	tools.ResetCatalogue()
+	tools.RegisterAll(srv, pihole.NewRegistry([]pihole.InstanceConfig{
+		{Name: "primary", URL: "http://127.0.0.1:1", Password: "x"},
+	}))
+
+	readOnly := map[string]bool{}
+	for _, tool := range tools.Catalogue() {
+		readOnly[tool.Name] = tools.IsReadOnly(tool)
+	}
+	if len(readOnly) == 0 {
+		t.Fatal("no tools registered")
+	}
+
+	names := regexp.MustCompile(`pihole_[a-z0-9_]+`)
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("reading the package directory: %v", err)
+	}
+
+	checked := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		//nolint:gosec // G304: name comes from reading this package's own directory, never from input
+		source, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("reading %s: %v", name, err)
+		}
+		for _, tool := range names.FindAllString(string(source), -1) {
+			ro, known := readOnly[tool]
+			if !known {
+				t.Errorf("%s names %s, which is not a registered tool", name, tool)
+				continue
+			}
+			checked++
+			if !ro {
+				t.Errorf("%s instructs the model to call %s, which read-only mode rejects. "+
+					"Either keep prompts read-only, or filter them with server.WithPromptFilter.", name, tool)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Error("no tool names were found in the prompt sources; this test is no longer checking anything")
+	}
 }

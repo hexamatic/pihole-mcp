@@ -80,9 +80,10 @@ func TestDHCPLeases_CSV(t *testing.T) {
 }
 
 func TestDHCPDeleteLease_Success(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
+	rec := piholeHandler(map[string]any{
 		"/dhcp/leases/192.168.1.10": nil,
-	}))
+	})
+	c := newTestClient(t, rec)
 
 	text := callTool(t, dhcpDeleteLeaseHandler, c, map[string]any{
 		"ip": "192.168.1.10",
@@ -93,4 +94,24 @@ func TestDHCPDeleteLease_Success(t *testing.T) {
 	if !strings.Contains(text, "192.168.1.10") {
 		t.Errorf("expected IP in response, got: %s", text)
 	}
+
+	// Both assertions above are built from the tool's own ip argument, so they
+	// stay green whatever went onto the wire, including a POST that deleted
+	// nothing. The address goes into the path, so pin the path as well: a
+	// DELETE of /dhcp/leases with no ip is the whole lease table.
+	req := rec.Only(t, "DELETE", "/dhcp/leases/192.168.1.10")
+	req.AssertRawPath(t, "/dhcp/leases/192.168.1.10")
+	req.AssertNoBody(t)
+	req.AssertNoQueryString(t)
+}
+
+// A missing ip must fail before anything is sent. Deleting the whole lease
+// table because an argument was absent is the worst outcome this tool has.
+func TestDHCPDeleteLease_MissingIPNeverReachesTheAPI(t *testing.T) {
+	rec := piholeHandler(map[string]any{})
+	c := newTestClient(t, rec)
+
+	callToolExpectError(t, dhcpDeleteLeaseHandler, c, nil)
+
+	rec.AssertNone(t, "", "")
 }

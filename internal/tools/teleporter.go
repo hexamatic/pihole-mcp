@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,11 +15,46 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+// staleBackupAge is how long a teleporter export or sync snapshot is kept in
+// the system temp directory before it is reaped. Both file families are the
+// caller's to collect promptly (see pihole_teleporter_export's description),
+// so this is a safety net against an unbounded temp directory, not the
+// primary cleanup path.
+const staleBackupAge = 24 * time.Hour
+
+// backupFileGlobs are the two filename patterns a backup lands under: an
+// on-demand teleporter export, and the rollback snapshot pihole_instance_sync
+// takes of the target before it applies (sync.go's exportSnapshot).
+var backupFileGlobs = []string{"pihole-backup-*.zip", "pihole-*-snapshot-*.zip"}
+
+// reapStaleBackups deletes files older than staleBackupAge matching
+// backupFileGlobs from the system temp directory. Best-effort: a failure to
+// glob, stat or remove one file is skipped rather than failing the caller —
+// this runs ahead of every new export, and a full temp directory is a worse
+// failure mode to compound than a few stale files left behind.
+func reapStaleBackups() {
+	cutoff := time.Now().Add(-staleBackupAge)
+	for _, pattern := range backupFileGlobs {
+		matches, err := filepath.Glob(filepath.Join(os.TempDir(), pattern))
+		if err != nil {
+			continue
+		}
+		for _, m := range matches {
+			info, statErr := os.Stat(m)
+			if statErr != nil || info.ModTime().After(cutoff) {
+				continue
+			}
+			_ = os.Remove(m)
+		}
+	}
+}
+
 // RegisterTeleporter registers teleporter export and import tools.
 func RegisterTeleporter(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_teleporter_export",
 		mcp.WithTitleAnnotation("Export Backup"),
-		mcp.WithDescription("Export a full Pi-hole configuration backup as a zip archive. Returns the saved file path and size."),
+		mcp.WithDescription("Export a full Pi-hole configuration backup as a zip archive. Returns the saved file path and size. The file persists on disk after the call returns and is the caller's to move or delete; under Docker it is written inside the container unless output_path points at a mounted volume."),
+		mcp.WithString("output_path", mcp.Description("Absolute path to save the backup to. Defaults to a system temp file.")),
 		mcp.WithReadOnlyHintAnnotation(true),
 	), teleporterExportHandler(r))
 
@@ -39,19 +75,38 @@ func teleporterExportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+
+		outputPath := req.GetString("output_path", "")
+		if outputPath != "" && !filepath.IsAbs(outputPath) {
+			return mcp.NewToolResultError("Invalid output_path: must be an absolute path"), nil
+		}
+
+		reapStaleBackups()
+
 		resp, err := c.DoRaw(ctx, "GET", "/teleporter", nil)
 		if err != nil {
 			return toolError("export backup", err), nil
 		}
 		defer func() { _ = resp.Body.Close() }()
 
-		tmpFile, err := os.CreateTemp("", "pihole-backup-*.zip")
+		// 0600, matching what os.CreateTemp gives the default path. The archive
+		// holds the admin password's hash in pihole.toml, every DHCP lease and
+		// the long-term query database; os.Create would have made it 0644 under
+		// the usual umask, readable by every account on the host. The mode only
+		// applies when the file is created, so a path the caller prepared with
+		// its own permissions keeps them.
+		var out *os.File
+		if outputPath != "" {
+			out, err = os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // output_path is a user-provided MCP tool parameter, validated absolute above
+		} else {
+			out, err = os.CreateTemp("", "pihole-backup-*.zip")
+		}
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to create temp file: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to create backup file: %v", err)), nil
 		}
 
-		n, err := io.Copy(tmpFile, resp.Body)
-		if closeErr := tmpFile.Close(); closeErr != nil && err == nil {
+		n, err := io.Copy(out, resp.Body)
+		if closeErr := out.Close(); closeErr != nil && err == nil {
 			err = closeErr
 		}
 		if err != nil {
@@ -59,8 +114,8 @@ func teleporterExportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 
 		return mcp.NewToolResultText(fmt.Sprintf(
-			"**Backup saved.** File: %s (%s bytes, %s)",
-			tmpFile.Name(), format.Number(int(n)),
+			"**Backup saved.** File: %s (%s bytes, %s). The file persists on disk; deleting it is your responsibility.",
+			out.Name(), format.Number(int(n)),
 			format.Timestamp(float64(time.Now().Unix())))), nil
 	}
 }
@@ -74,6 +129,9 @@ func teleporterImportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		filePath, err := req.RequireString("file_path")
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'file_path' is required"), nil
+		}
+		if err := validateBackupFilePath(filePath); err != nil {
+			return mcp.NewToolResultError("Invalid file_path: " + err.Error()), nil
 		}
 
 		importConfig := req.GetBool("config", true)

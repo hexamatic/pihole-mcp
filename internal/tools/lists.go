@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/hexamatic/pihole-mcp/internal/format"
@@ -15,8 +16,10 @@ import (
 func RegisterLists(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_lists_list",
 		mcp.WithTitleAnnotation("List Blocklists"),
-		mcp.WithDescription("List configured blocklists and allowlists with domain counts and update status. Filter by type (allow/block)."),
+		mcp.WithDescription("List configured blocklists and allowlists with domain counts and update status. Filter by type (allow/block), page with limit/offset."),
 		mcp.WithString("type", mcp.Description("Filter: 'allow' or 'block'."), mcp.Enum("allow", "block")),
+		limitParam,
+		offsetParam,
 		detailParam,
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -34,7 +37,7 @@ func RegisterLists(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_lists_update",
 		mcp.WithTitleAnnotation("Update List"),
-		mcp.WithDescription("Update a blocklist or allowlist entry's comment, enabled status, or group assignments."),
+		mcp.WithDescription("Update a blocklist or allowlist entry's comment or enabled status."),
 		mcp.WithString("address", mcp.Required(), mcp.Description("URL of the list.")),
 		mcp.WithString("type", mcp.Required(), mcp.Description("'allow' or 'block'."), mcp.Enum("allow", "block")),
 		mcp.WithString("comment", mcp.Description("Updated comment.")),
@@ -65,6 +68,13 @@ func listsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		// Validate paging before the request: a bad parameter is a bad
+		// parameter whether or not the collection turns out to be empty,
+		// and an empty list is not an answer to limit=-5.
+		limit, offset, err := getPage(req, maxPageLimit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		path := "/lists"
 		if t := req.GetString("type", ""); t != "" {
 			path += "?type=" + t
@@ -81,22 +91,26 @@ func listsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		detail := getDetail(req)
 
+		total := len(result.Lists)
 		if detail == "minimal" {
-			return mcp.NewToolResultText(fmt.Sprintf("%d lists.", len(result.Lists))), nil
+			return mcp.NewToolResultText(fmt.Sprintf("%d lists.", total)), nil
 		}
+
+		start, end := pageBounds(total, limit, offset)
+		page := result.Lists[start:end]
 
 		if wantCSV(req) {
 			headers := []string{"Address", "Type", "Domains", "Enabled", "Comment"}
-			rows := make([][]string, 0, len(result.Lists))
-			for _, l := range result.Lists {
+			rows := make([][]string, 0, len(page))
+			for _, l := range page {
 				rows = append(rows, []string{l.Address, l.Type, format.Number(l.Number), format.Bool(l.Enabled), l.Comment})
 			}
-			return mcp.NewToolResultText(format.CSV(headers, rows)), nil
+			return mcp.NewToolResultText(format.CSV(headers, rows) + format.Truncate(len(page), total)), nil
 		}
 
 		var b strings.Builder
-		fmt.Fprintf(&b, "**%d lists:**\n", len(result.Lists))
-		for _, l := range result.Lists {
+		b.WriteString(pageHeading("lists", len(page), total))
+		for _, l := range page {
 			status := "enabled"
 			if !l.Enabled {
 				status = "disabled"
@@ -121,25 +135,22 @@ func listsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		address, _ := req.RequireString("address")
-		t, _ := req.RequireString("type")
+		vals, err := requireStrings(req, "address", "type")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		address, t := vals[0], vals[1]
 
 		if err := validateURL(address); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid address: %v", err)), nil
 		}
 
-		body := map[string]any{"address": address}
-		if comment := req.GetString("comment", ""); comment != "" {
-			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
-				return mcp.NewToolResultError("Invalid " + err.Error()), nil
-			}
-			body["comment"] = comment
-		}
-		if !req.GetBool("enabled", true) {
-			body["enabled"] = false
+		body, err := crudAddBody(req, "address", address)
+		if err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
-		path := "/lists?type=" + t
+		path := "/lists?type=" + url.QueryEscape(t)
 		var result pihole.ListsResponse
 		if err := c.Post(ctx, path, body, &result); err != nil {
 			return toolError("add list", err), nil
@@ -155,26 +166,37 @@ func listsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		address, _ := req.RequireString("address")
-		t, _ := req.RequireString("type")
+		vals, err := requireStrings(req, "address", "type")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		address, t := vals[0], vals[1]
 
 		if err := validateURL(address); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid address: %v", err)), nil
 		}
 
-		body := make(map[string]any)
-		if comment := req.GetString("comment", ""); comment != "" {
-			if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
-				return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		path := "/lists/" + pihole.EscapePathSegment(address) + "?type=" + url.QueryEscape(t)
+
+		// The PUT replaces comment and enabled together, so whichever the
+		// caller left out has to come from the entry as it stands.
+		current := newEntryFields()
+		if needsCurrentEntry(req) {
+			var existing pihole.ListsResponse
+			if err := c.Get(ctx, path, &existing); err != nil {
+				return toolError("read the list before updating it", err), nil
 			}
-			body["comment"] = comment
+			if len(existing.Lists) > 0 {
+				current = entryFields{comment: existing.Lists[0].Comment, enabled: existing.Lists[0].Enabled}
+			}
 		}
-		if enabled := req.GetBool("enabled", true); !enabled {
-			body["enabled"] = false
+
+		body, err := crudUpdateBody(req, current)
+		if err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 		body["type"] = t
 
-		path := "/lists/" + address + "?type=" + t
 		var result pihole.ListsResponse
 		if err := c.Put(ctx, path, body, &result); err != nil {
 			return toolError("update list", err), nil
@@ -190,14 +212,17 @@ func listsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		address, _ := req.RequireString("address")
-		t, _ := req.RequireString("type")
+		vals, err := requireStrings(req, "address", "type")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		address, t := vals[0], vals[1]
 
 		if err := validateURL(address); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid address: %v", err)), nil
 		}
 
-		path := "/lists/" + address + "?type=" + t
+		path := "/lists/" + pihole.EscapePathSegment(address) + "?type=" + url.QueryEscape(t)
 		if err := c.Delete(ctx, path); err != nil {
 			return toolError("delete list", err), nil
 		}
@@ -207,20 +232,5 @@ func listsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 }
 
 func listsBatchDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		c, err := getInstance(req, r)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		items, err := req.RequireString("items")
-		if err != nil {
-			return mcp.NewToolResultError("Parameter 'items' is required (JSON array)"), nil
-		}
-
-		if err := c.Post(ctx, "/lists:batchDelete", rawJSON(items), nil); err != nil {
-			return toolError("batch delete lists", err), nil
-		}
-
-		return mcp.NewToolResultText("**Batch delete completed.**"), nil
-	}
+	return batchDeleteHandler(r, "lists")
 }
