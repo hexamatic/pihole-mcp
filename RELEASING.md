@@ -8,7 +8,7 @@ Releases are tag-driven and fully automated. CI validates every push, so by the 
 2. Decide the version (semver: `vMAJOR.MINOR.PATCH`).
 3. Update `CHANGELOG.md`:
    - Move entries from the `[Unreleased]` section to a new `## [vX.Y.Z] - YYYY-MM-DD` heading.
-   - Write a **Highlights** paragraph in prose summarising why this release matters. Aim for the polish of the v0.1.0 release body — that's the bar for every release.
+   - Write a **Highlights** paragraph in prose summarising why this release matters. Aim for the polish of the v0.1.0 release body: that's the bar for every release.
    - Update the reference link list at the bottom (`[Unreleased]` compare URL, new `[vX.Y.Z]` compare URL).
    - Preview exactly what will appear on the GitHub release page:
      ```sh
@@ -25,7 +25,7 @@ Releases are tag-driven and fully automated. CI validates every push, so by the 
    - Builds 6 binary archives (linux/darwin/windows × amd64/arm64).
    - Builds and pushes the `ghcr.io/hexamatic/pihole-mcp:X.Y.Z` and `:latest` Docker images (linux/amd64 + linux/arm64).
    - Generates SHA256 checksums.
-   - Publishes the GitHub release directly — no manual draft step (see `.goreleaser.yaml` `release.draft: false`).
+   - Publishes the GitHub release directly, with no manual draft step (see `.goreleaser.yaml` `release.draft: false`).
 
    The workflow then attests build provenance for the archives and for both container images, and
    uploads the attestation bundle a second time as `pihole-mcp_X.Y.Z_SHA256SUMS.intoto.jsonl`. That
@@ -54,7 +54,7 @@ just release-notes vX.Y.Z > /tmp/notes.md
 gh release edit vX.Y.Z --repo hexamatic/pihole-mcp --notes-file /tmp/notes.md
 ```
 
-This only updates the release body — the tag, binaries, Docker images, and SHA256SUMS remain untouched.
+This only updates the release body. The tag, binaries, Docker images, and SHA256SUMS remain untouched.
 
 ## Verifying a release
 
@@ -102,13 +102,13 @@ How it works:
   of v0.8.0's four follow-ups were registry-side rejections found only after a tag had gone out.
 - Authentication is GitHub Actions OIDC (`mcp-publisher login github-oidc`), which grants the
   `io.github.hexamatic/*` namespace. No token or secret is required.
-- The image must be public for the registry to inspect it anonymously — verify with
+- The image must be public for the registry to inspect it anonymously. Verify with
   `gh api orgs/hexamatic/packages/container/pihole-mcp --jq .visibility`.
 
 **It checks out the default branch, not the tag, and takes the version as an input.** That is
 deliberate. v0.8.0's first publish attempt was rejected with a 422 for a 138-character
 `description` against a documented 100-character cap. Had the publish lived inside `release.yml`,
-correcting it would have meant moving the tag — which is not acceptable, because the release's
+correcting it would have meant moving the tag, which is not acceptable, because the release's
 cosign signatures and SLSA attestations reference the exact commit that was built, so moving the
 tag breaks the provenance chain the release exists to provide.
 
@@ -165,13 +165,13 @@ just release-dry     # snapshot into dist/, uploads nothing
 mode: keyless cosign wants the CI OIDC identity and would open a browser here, and syft may not be
 installed. Both pipes do run under a bare `--snapshot`, which is exactly what the rehearsal workflow
 exercises. **If you are changing the signing or SBOM blocks, `just release-dry` will not tell you
-whether they work** — open a pull request and read the rehearsal. After the release publishes, run
+whether they work.** Open a pull request and read the rehearsal. After the release publishes, run
 the verification commands in [SECURITY.md](SECURITY.md#verifying-release-artefacts) against the live
 artefacts.
 
 ## Homebrew tap
 
-The `homebrew_casks:` block in `.goreleaser.yaml` targets a separate `hexamatic/homebrew-tap` repository, writing `Casks/pihole-mcp.rb`. The tap repo must exist and be writable by `TAP_GITHUB_TOKEN` before the first release that publishes to it. If the tap is not yet configured, goreleaser logs a warning but does not fail the release — binaries and Docker images publish as normal.
+The `homebrew_casks:` block in `.goreleaser.yaml` targets a separate `hexamatic/homebrew-tap` repository, writing `Casks/pihole-mcp.rb`. The tap repo must exist and be writable by `TAP_GITHUB_TOKEN` before the first release that publishes to it. If the tap is not yet configured, goreleaser logs a warning but does not fail the release: binaries and Docker images publish as normal.
 
 This was a `brews:` (formula) block until v0.8.0. goreleaser deprecated formulae in v2.10, and the generated cask covers both macOS and Linux because its only artefact is a portable `binary` stanza. Two one-off steps go with the migration, in this order:
 

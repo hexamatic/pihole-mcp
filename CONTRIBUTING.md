@@ -6,7 +6,7 @@ Thanks for your interest in contributing. This document covers how to get starte
 
 - [Go 1.26+](https://go.dev/dl/)
 - [Docker](https://docs.docker.com/get-docker/) (for local Pi-hole testing)
-- [mise](https://mise.jdx.dev/) (required — manages tool versions)
+- [mise](https://mise.jdx.dev/) (required: manages tool versions)
 - [just](https://just.systems/) (task runner)
 
 ## Quick Start
@@ -30,7 +30,7 @@ just check
 
 1. **Create a branch** from `main` for your change
 2. **Start the dev environment:** `just dev-up` (Pi-hole at http://localhost:8081). If something else on your machine already holds that port, set `PIHOLE_DEV_PORT` and every recipe follows it: `PIHOLE_DEV_PORT=8091 just dev-up`. `PIHOLE_DEV_PORT_2` does the same for the secondary instance used by `just dev-up-multi`.
-3. **Make your changes** — one logical change per PR
+3. **Make your changes**, one logical change per PR
 4. **Run quality checks:** `just check` (format, lint, test)
 5. **Test against live Pi-hole:** `just integration`
 6. **Submit a pull request** with a clear description of the change
@@ -38,16 +38,16 @@ just check
 ## Code Standards
 
 - **Australian English** spelling in all public-facing text (commit messages, PR descriptions, comments, docs). Use "colour", "behaviour", "organisation", "analyse", etc.
-- **Go conventions** — follow existing patterns in the codebase. Run `just fmt` before committing.
+- **Go conventions.** Follow existing patterns in the codebase. Run `just fmt` before committing.
 - **Tool descriptions** should be 15-25 words, front-loaded with purpose.
-- **Response formatting** — use `format.` helpers from `internal/format/`. Prefer compact text over Markdown headings.
-- **Error handling** — return `mcp.NewToolResultError()` for domain errors, not Go errors.
+- **Response formatting.** Use `format.` helpers from `internal/format/`. Prefer compact text over Markdown headings.
+- **Error handling.** Return `mcp.NewToolResultError()` for domain errors, not Go errors.
 
 ## Testing
 
-- **Unit tests:** `just test` — uses `httptest.Server` with mocked API responses
-- **Integration tests:** `just integration` — requires `just dev-up` running
-- **Linting:** `just lint` — uses golangci-lint with strict config (UK spelling enforced)
+- **Unit tests:** `just test`, using `httptest.Server` with mocked API responses
+- **Integration tests:** `just integration`, which requires `just dev-up` running
+- **Linting:** `just lint`, using golangci-lint with strict config (UK spelling enforced)
 
 Every tool handler should have corresponding unit tests in a `_test.go` file.
 
@@ -62,23 +62,23 @@ docs: update README integration guide for Cursor
 test: add unit tests for stats handlers
 ```
 
-Allowed types: `feat`, `fix`, `docs`, `test`, `ci`, `chore`, `refactor`, `perf`, `build`, `style`, `revert`. Scopes are unrestricted — Dependabot's `build(deps):` / `chore(deps):` / `ci(deps):` all pass without further config.
+Allowed types: `feat`, `fix`, `docs`, `test`, `ci`, `chore`, `refactor`, `perf`, `build`, `style`, `revert`. Scopes are unrestricted, so Dependabot's `build(deps):` / `chore(deps):` / `ci(deps):` all pass without further config.
 
 **Enforcement:**
-- **Locally:** the lefthook `commit-msg` hook validates every commit subject against the Conventional Commits regex *before the commit is created*. Rejected commits never enter history. Zero external dependencies — pure shell.
+- **Locally:** the lefthook `commit-msg` hook validates every commit subject against the Conventional Commits regex *before the commit is created*. Rejected commits never enter history. Zero external dependencies, pure shell.
 - **In CI:** [`wagoid/commitlint-github-action`](https://github.com/wagoid/commitlint-github-action) runs on every PR (`.github/workflows/commitlint.yml`) and blocks the merge if any commit fails. Configuration lives in `commitlint.config.mjs` (extends `@commitlint/config-conventional`). The CI check is stricter than the local regex (validates body/footer rules in addition to the subject).
 
-The release pipeline also depends on these prefixes — `feat:` lands under "Features" in goreleaser's fallback changelog, `fix:` under "Bug Fixes", `docs:`/`test:`/`ci:`/`chore:` are filtered out. Plain-sentence subjects fall into a generic "Other" group that produces unhelpful release notes.
+The release pipeline also depends on these prefixes: `feat:` lands under "Features" in goreleaser's fallback changelog, `fix:` under "Bug Fixes", `docs:`/`test:`/`ci:`/`chore:` are filtered out. Plain-sentence subjects fall into a generic "Other" group that produces unhelpful release notes.
 
 ## Updating the Changelog
 
 Every user-visible change adds a line to the `[Unreleased]` section of [`CHANGELOG.md`](CHANGELOG.md) in the same PR, under the appropriate Keep-a-Changelog subsection (`Added` / `Changed` / `Fixed` / `Removed` / `Security` / `Dependencies`). Australian English, no AI mentions.
 
-**What counts as user-visible?** Anything a consumer of this MCP server would notice — new tools, changed tool behaviour, new flags or env vars, bug fixes, breaking changes, or removed features. Internal-only changes (refactors, tests, CI, build/dev tooling, no-op dependency bumps) do **not** need an entry — apply the `Skip-Changelog` label to the PR instead.
+**What counts as user-visible?** Anything a consumer of this MCP server would notice: new tools, changed tool behaviour, new flags or env vars, bug fixes, breaking changes, or removed features. Internal-only changes (refactors, tests, CI, build/dev tooling, no-op dependency bumps) do **not** need an entry. Apply the `Skip-Changelog` label to the PR instead.
 
 **Enforcement:** [`dangoslen/changelog-enforcer`](https://github.com/dangoslen/changelog-enforcer) runs on every PR (`.github/workflows/changelog.yml`) and blocks the merge if `CHANGELOG.md` is unchanged and the `Skip-Changelog` label is not applied.
 
-The maintainer rolls `[Unreleased]` to a versioned heading at release time and writes the **Highlights** prose paragraph that opens the release body — see [RELEASING.md](RELEASING.md). The release body on GitHub is sourced from `CHANGELOG.md` (not auto-generated by goreleaser), so the polish of the entry directly determines what users see.
+The maintainer rolls `[Unreleased]` to a versioned heading at release time and writes the **Highlights** prose paragraph that opens the release body. See [RELEASING.md](RELEASING.md). The release body on GitHub is sourced from `CHANGELOG.md` (not auto-generated by goreleaser), so the polish of the entry directly determines what users see.
 
 Reference: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
 
@@ -131,7 +131,7 @@ request, designed around the actual case.
 
 ## Releasing
 
-Releases are tag-driven and publish automatically — no manual draft step. See [RELEASING.md](RELEASING.md) for the full runbook.
+Releases are tag-driven and publish automatically, with no manual draft step. See [RELEASING.md](RELEASING.md) for the full runbook.
 
 ## Licence
 

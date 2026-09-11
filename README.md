@@ -16,7 +16,7 @@ A production-grade [MCP](https://modelcontextprotocol.io/) server for [Pi-hole](
 
 </div>
 
-Gives AI assistants full control over your Pi-hole instance — DNS blocking, domain management, query analysis, statistics, network devices, DHCP, and system administration. Compatible with the Pi-hole v6 REST API.
+Gives AI assistants full control over your Pi-hole instance: DNS blocking, domain management, query analysis, statistics, network devices, DHCP, and system administration. Compatible with the Pi-hole v6 REST API.
 
 ## Why this one
 
@@ -125,7 +125,7 @@ sudo rpm -i pihole-mcp_X.Y.Z_linux_amd64.rpm
 
 Pre-built binaries for Linux, macOS, and Windows (amd64 and arm64) are available on the [Releases](https://github.com/hexamatic/pihole-mcp/releases) page.
 
-Releases are checksummed, signed with keyless cosign, and ship SPDX SBOMs and SLSA build provenance — see [SECURITY.md](SECURITY.md#verifying-release-artefacts) for the verification commands.
+Releases are checksummed, signed with keyless cosign, and ship SPDX SBOMs and SLSA build provenance. See [SECURITY.md](SECURITY.md#verifying-release-artefacts) for the verification commands.
 
 ### Check your setup
 
@@ -149,23 +149,23 @@ It exits non-zero if any instance fails, and prints what to change. Worth runnin
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `PIHOLE_URL` | Yes | — | Pi-hole base URL (e.g. `http://192.168.1.2`) |
-| `PIHOLE_PASSWORD` | Yes | — | Admin password or [application password](https://docs.pi-hole.net/api/auth/) |
+| `PIHOLE_URL` | Yes | - | Pi-hole base URL (e.g. `http://192.168.1.2`) |
+| `PIHOLE_PASSWORD` | Yes | - | Admin password or [application password](https://docs.pi-hole.net/api/auth/) |
 | `PIHOLE_READ_ONLY` | No | `false` | Expose only tools that cannot change Pi-hole. See [Scoping the tool surface](#scoping-the-tool-surface). |
 | `PIHOLE_TOOLSETS` | No | all | Comma-separated toolset names to expose, e.g. `dashboard,domains`. Unset or `all` exposes everything. |
 | `PIHOLE_REQUEST_TIMEOUT` | No | `30s` | HTTP request timeout |
 | `PIHOLE_MAX_RETRIES` | No | `3` | Retries after a failed Pi-hole API call. `0` disables. |
 | `PIHOLE_RETRY_MAX_DELAY` | No | `8s` | Upper bound on a single backoff wait. |
-| `PIHOLE_HTTP_AUTH_TOKEN` | No | — | Shared bearer token required on every HTTP/SSE request. Minimum 16 characters. Unset means no authentication. |
-| `PIHOLE_HTTP_AUTH_TOKEN_FILE` | No | — | Path to a file holding the bearer token, so it stays out of `ps`. Mutually exclusive with `PIHOLE_HTTP_AUTH_TOKEN`. |
+| `PIHOLE_HTTP_AUTH_TOKEN` | No | - | Shared bearer token required on every HTTP/SSE request. Minimum 16 characters. Unset means no authentication. |
+| `PIHOLE_HTTP_AUTH_TOKEN_FILE` | No | - | Path to a file holding the bearer token, so it stays out of `ps`. Mutually exclusive with `PIHOLE_HTTP_AUTH_TOKEN`. |
 | `PIHOLE_RATE_LIMIT` | No | `120` | Per-session requests-per-minute cap on the HTTP/SSE transports, under a per-address ceiling of four times that. `0` disables. |
 | `PIHOLE_ALLOWED_ORIGINS` | No | `localhost,127.0.0.1,[::1]` | Comma-separated Origin/Host allowlist for HTTP/SSE transports. The literal `*` disables enforcement (unsafe). Not authentication. |
-| `PIHOLE_TRUSTED_PROXIES` | No | — | Comma-separated IPs or CIDR blocks whose `X-Forwarded-For` the rate limiter believes. Unset means the header is ignored. |
-| `PIHOLE_TLS_SKIP_VERIFY` | No | `false` | Disable TLS certificate verification for Pi-hole connections. Only for instances serving self-signed certificates — prefer a trusted certificate where possible. |
+| `PIHOLE_TRUSTED_PROXIES` | No | - | Comma-separated IPs or CIDR blocks whose `X-Forwarded-For` the rate limiter believes. Unset means the header is ignored. |
+| `PIHOLE_TLS_SKIP_VERIFY` | No | `false` | Disable TLS certificate verification for Pi-hole connections. Only for instances serving self-signed certificates. A trusted certificate is preferable where possible. |
 | `TZ` | No | System timezone (UTC in Docker) | IANA timezone for rendered timestamps (e.g. `Australia/Adelaide`). Timezone data is embedded in the binary, so this works in the Docker image out of the box. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OpenTelemetry collector endpoint. Setting it enables tracing; ignored in slim builds. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | - | OpenTelemetry collector endpoint. Setting it enables tracing; ignored in slim builds. |
 
-Application passwords are recommended for automation — they bypass TOTP 2FA and can be revoked independently.
+Application passwords are recommended for automation: they bypass TOTP 2FA and can be revoked independently.
 
 `PIHOLE_HTTP_AUTH_TOKEN`, `PIHOLE_HTTP_AUTH_TOKEN_FILE`, `PIHOLE_RATE_LIMIT`, `PIHOLE_ALLOWED_ORIGINS` and `PIHOLE_TRUSTED_PROXIES` only apply to the `http` and `sse` transports; stdio is a single-process, single-user channel by definition and isn't gated. See [Security](#security-http-and-sse-transports) before exposing either transport beyond loopback.
 
@@ -233,19 +233,19 @@ To manage more than one Pi-hole, configure numbered instances instead of `PIHOLE
 }
 ```
 
-Every tool then accepts an optional `instance` argument, and every result is labelled with the instance it came from. Omit the argument to target the first instance; pass a name to target a specific one; pass `instance=all` on a read-only tool (e.g. `pihole_padd`, `pihole_stats_summary`) to query every instance concurrently and get back a single structured aggregate (per-instance results plus a success/failure summary — one slow or unreachable instance no longer fails the whole call). State-changing tools require a single named instance. `PIHOLE_URL` and `PIHOLE_1_URL` are mutually exclusive.
+Every tool then accepts an optional `instance` argument, and every result is labelled with the instance it came from. Omit the argument to target the first instance; pass a name to target a specific one; pass `instance=all` on a read-only tool (e.g. `pihole_padd`, `pihole_stats_summary`) to query every instance concurrently and get back a single structured aggregate (per-instance results plus a success/failure summary, so one slow or unreachable instance no longer fails the whole call). State-changing tools require a single named instance. `PIHOLE_URL` and `PIHOLE_1_URL` are mutually exclusive.
 
 ### Keeping instances in sync
 
 When you run more than one Pi-hole, two extra tools appear for keeping them aligned:
 
-- **`pihole_instance_diff`** — compare two instances and see exactly what differs across adlists/allowlists, allow/deny rules (exact and regex), groups, clients, local DNS A/AAAA records, and CNAME records. It is read-only and writes nothing.
-- **`pihole_instance_sync`** — push a source instance's configuration onto a target. It is deliberately cautious:
+- **`pihole_instance_diff`**: compare two instances and see exactly what differs across adlists/allowlists, allow/deny rules (exact and regex), groups, clients, local DNS A/AAAA records, and CNAME records. It is read-only and writes nothing.
+- **`pihole_instance_sync`**: push a source instance's configuration onto a target. It is deliberately cautious:
   - **One direction only.** You name the `source` of truth and the `target`; only the target is ever written to.
   - **Dry-run first.** It returns a plan and a `confirm_token` by default; nothing changes until you re-run with `mode=apply` and that token. If the configuration drifts between planning and applying, the token no longer matches and the apply is refused.
   - **Add/update by default.** Entries on the target but not the source are left alone unless you pass `prune=true`.
   - **Backed up.** A teleporter backup of the target is taken before any change (disable with `snapshot=false`).
-  - **Safe by omission.** Host-specific and identity settings — DHCP, interface bindings, passwords, TLS certificates, sessions, 2FA — are never synced. Group *membership* associations are not synced either, because Pi-hole group IDs are local to each instance.
+  - **Safe by omission.** Host-specific and identity settings (DHCP, interface bindings, passwords, TLS certificates, sessions, 2FA) are never synced. Group *membership* associations are not synced either, because Pi-hole group IDs are local to each instance.
 
 Example: preview what the `upstairs` Pi-hole is missing relative to `downstairs`, then apply it.
 
@@ -550,8 +550,8 @@ The tables below are a summary; the full generated reference with every paramete
 
 Some tools accept optional parameters for controlling output:
 
-- **`detail`** (`minimal` | `normal` | `full`) — Controls response depth. Default: `normal`. Use `minimal` for one-line summaries, `full` for complete API data. Available on 15 tools.
-- **`format`** (`text` | `csv`) — Output format for tabular data. Default: `text`. CSV saves roughly 8–23% tokens over the default text rendering, depending on the tool and row count. Available on 22 tools: `pihole_domains_list`, `pihole_groups_list`, `pihole_lists_list`, `pihole_clients_list`, `pihole_queries_search`, `pihole_network_devices`, `pihole_dhcp_leases`, `pihole_config_properties`, `pihole_local_dns_list`, `pihole_local_cname_list`, `pihole_stats_top_domains`, `pihole_stats_top_clients`, `pihole_stats_upstreams`, `pihole_stats_query_types`, `pihole_stats_recent_blocked`, `pihole_stats_database_top_domains`, `pihole_stats_database_top_clients`, `pihole_stats_database_upstreams`, `pihole_history_graph`, `pihole_history_clients`, `pihole_history_database`, and `pihole_history_database_clients`.
+- **`detail`** (`minimal` | `normal` | `full`): controls response depth. Default: `normal`. Use `minimal` for one-line summaries, `full` for complete API data. Available on 15 tools.
+- **`format`** (`text` | `csv`): output format for tabular data. Default: `text`. CSV saves roughly 8–23% tokens over the default text rendering, depending on the tool and row count. Available on 22 tools: `pihole_domains_list`, `pihole_groups_list`, `pihole_lists_list`, `pihole_clients_list`, `pihole_queries_search`, `pihole_network_devices`, `pihole_dhcp_leases`, `pihole_config_properties`, `pihole_local_dns_list`, `pihole_local_cname_list`, `pihole_stats_top_domains`, `pihole_stats_top_clients`, `pihole_stats_upstreams`, `pihole_stats_query_types`, `pihole_stats_recent_blocked`, `pihole_stats_database_top_domains`, `pihole_stats_database_top_clients`, `pihole_stats_database_upstreams`, `pihole_history_graph`, `pihole_history_clients`, `pihole_history_database`, and `pihole_history_database_clients`.
 
 ## Prompts
 
@@ -581,7 +581,7 @@ Read-only context an MCP client can pull in without calling a tool:
 | `pihole://domains/{type}/{kind}` | Domains on a list, e.g. `deny/exact` |
 | `pihole://lists/{address}` | Details of one blocklist or allowlist |
 
-With more than one Pi-hole configured, each instance is also addressable directly — `pihole://instances` lists them, and `pihole://<instance>/status` and `pihole://<instance>/summary` read a named one. The unprefixed URIs above always read the first-declared instance.
+With more than one Pi-hole configured, each instance is also addressable directly: `pihole://instances` lists them, and `pihole://<instance>/status` and `pihole://<instance>/summary` read a named one. The unprefixed URIs above always read the first-declared instance.
 
 ## Advanced Configuration
 
@@ -596,7 +596,7 @@ pihole-mcp
 # HTTP transport (for web-based MCP clients)
 pihole-mcp -transport http -address localhost:8080
 
-# SSE transport (deprecated — see below)
+# SSE transport (deprecated, see below)
 pihole-mcp -transport sse -address localhost:8080
 ```
 
@@ -716,12 +716,12 @@ pihole-mcp
 
 All tool calls are automatically traced with tool name, duration, and error status.
 
-If you don't need tracing, the slim build strips the OpenTelemetry SDK, gRPC, protobuf and grpc-gateway dependencies entirely — a little over 40% smaller:
+If you don't need tracing, the slim build strips the OpenTelemetry SDK, gRPC, protobuf and grpc-gateway dependencies entirely. The result is 44% smaller:
 
 | linux/amd64 binary | Size |
 |---|---|
-| Default | 18.0 MB |
-| Slim | 10.3 MB (42% smaller) |
+| Default | 17.5 MB |
+| Slim | 9.8 MB (44% smaller) |
 
 Measured from a local build; see the [Releases](https://github.com/hexamatic/pihole-mcp/releases) page for the exact archive and Docker image sizes of a given tag.
 
@@ -740,7 +740,7 @@ The slim binary is functionally identical apart from `OTEL_EXPORTER_OTLP_ENDPOIN
 
 ### "Pi-hole rejected the login: its API session pool is full"
 
-Pi-hole allows a limited number of concurrent API sessions — `webserver.api.max_sessions`, **16 by default** — and every client that logs in takes a seat: the web interface, PADD, Home Assistant, any other integration, and pihole-mcp. When they are all taken, Pi-hole answers `429` and refuses further logins, including from its own web interface.
+Pi-hole allows a limited number of concurrent API sessions (`webserver.api.max_sessions`, **16 by default**), and every client that logs in takes a seat: the web interface, PADD, Home Assistant, any other integration, and pihole-mcp. When they are all taken, Pi-hole answers `429` and refuses further logins, including from its own web interface.
 
 pihole-mcp releases its seat on shutdown, but a session left behind by a process that was killed rather than stopped will hold one until it expires. Three ways out, in order of preference:
 
@@ -749,13 +749,13 @@ pihole-mcp releases its seat on shutdown, but a session left behind by a process
    ```bash
    pihole-FTL --config webserver.api.max_sessions 32
    ```
-3. **Wait.** Seats release themselves after `webserver.session.timeout` — 30 minutes by default.
+3. **Wait.** Seats release themselves after `webserver.session.timeout` (30 minutes by default).
 
 Retrying will not help, so pihole-mcp does not: it reports the problem instead of silently stalling.
 
 ### Authentication fails with a correct password
 
-Pi-hole rate-limits repeated failed logins, and the limiter does not distinguish between "wrong password" and "the password you just fixed". Wait a few seconds and try again. If it persists, confirm you are using the admin password or an [application password](https://docs.pi-hole.net/api/auth/) — not the web interface's TOTP code.
+Pi-hole rate-limits repeated failed logins, and the limiter does not distinguish between "wrong password" and "the password you just fixed". Wait a few seconds and try again. If it persists, confirm you are using the admin password or an [application password](https://docs.pi-hole.net/api/auth/), not the web interface's TOTP code.
 
 ### Docker: "connection refused" reaching Pi-hole
 
@@ -763,7 +763,7 @@ Pi-hole rate-limits repeated failed logins, and the limiter does not distinguish
 
 ### Timestamps are shown in UTC
 
-Every timestamp in tool output carries an explicit zone marker (e.g. `19 Jul 2026, 9:41 AM UTC`), so responses are unambiguous whatever the zone. Which zone is used depends on where the server runs: native binaries use the system timezone, while the Docker image defaults to UTC. To get local times from the container, set `TZ` on the *pihole-mcp* container (not just the Pi-hole one) — timezone data is embedded in the binary, so no extra packages or volume mounts are needed:
+Every timestamp in tool output carries an explicit zone marker (e.g. `19 Jul 2026, 9:41 AM UTC`), so responses are unambiguous whatever the zone. Which zone is used depends on where the server runs: native binaries use the system timezone, while the Docker image defaults to UTC. To get local times from the container, set `TZ` on the *pihole-mcp* container (not just the Pi-hole one). Timezone data is embedded in the binary, so no extra packages or volume mounts are needed:
 
 ```yaml
 environment:
@@ -774,7 +774,7 @@ An unrecognised `TZ` value logs a warning at startup and falls back to UTC rathe
 
 ### "x509: certificate signed by unknown authority"
 
-Your Pi-hole is serving HTTPS with a self-signed certificate, which fails standard TLS verification. The right fix is a trusted certificate on the Pi-hole (for example via its built-in domain settings or a reverse proxy with Let's Encrypt). If that isn't practical, set `PIHOLE_TLS_SKIP_VERIFY=true` to disable verification — connections are still encrypted, but the server's identity is no longer checked, so only use this on a network you control.
+Your Pi-hole is serving HTTPS with a self-signed certificate, which fails standard TLS verification. The right fix is a trusted certificate on the Pi-hole (for example via its built-in domain settings or a reverse proxy with Let's Encrypt). If that isn't practical, set `PIHOLE_TLS_SKIP_VERIFY=true` to disable verification. Connections are still encrypted, but the server's identity is no longer checked, so only use this on a network you control.
 
 ### Occasional dropped connections
 
