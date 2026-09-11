@@ -57,8 +57,15 @@ jobs:
             exit 1
           fi
           scripts/release-notes.sh "$version" > /dev/null
-          scripts/release-notes.sh Unreleased > /dev/null
-          echo "release body extracts cleanly for ${version} and [Unreleased]"
+          # [Unreleased] is checked for its heading only. It is legitimately
+          # empty straight after a release, and release-notes.sh cannot tell an
+          # empty section from a missing one, so running it here failed every
+          # pull request opened between a release and the next changelog entry.
+          if ! grep -q '^## \[Unreleased\]$' CHANGELOG.md; then
+            echo "::error file=CHANGELOG.md::no '## [Unreleased]' heading for the next release to promote"
+            exit 1
+          fi
+          echo "release body extracts cleanly for ${version}; [Unreleased] heading present"
 
       - name: Vet
         run: go vet ./...

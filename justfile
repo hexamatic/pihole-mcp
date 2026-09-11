@@ -188,7 +188,7 @@ ci: fmt-check lint test e2e-coverage
     go run ./cmd/toolsdoc
     git diff --exit-code docs/TOOLS.md
     scripts/release-notes.sh "$(grep -m1 -oE '^## \[v[0-9]+\.[0-9]+\.[0-9]+\]' CHANGELOG.md | tr -d '#[] ')" > /dev/null
-    scripts/release-notes.sh Unreleased > /dev/null
+    grep -q '^## \[Unreleased\]$' CHANGELOG.md
     go build -o /dev/null ./cmd/pihole-mcp
     go build -tags slim -o /dev/null ./cmd/pihole-mcp
     goreleaser check
