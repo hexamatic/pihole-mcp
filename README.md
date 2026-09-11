@@ -716,14 +716,14 @@ pihole-mcp
 
 All tool calls are automatically traced with tool name, duration, and error status.
 
-If you don't need tracing, the slim build strips the OpenTelemetry SDK, gRPC, protobuf and grpc-gateway dependencies entirely. The result is 44% smaller:
+If you don't need tracing, the slim build strips the OpenTelemetry SDK, gRPC, protobuf and grpc-gateway dependencies entirely. The binary is 43% smaller:
 
-| linux/amd64 binary | Size |
-|---|---|
-| Default | 17.5 MB |
-| Slim | 9.8 MB (44% smaller) |
+| Variant | Binary (linux/amd64) | Download (linux/amd64 `.tar.gz`) | Docker image (linux/arm64) |
+|---|---|---|---|
+| Default | 17.9 MB | 6.8 MB | 19.0 MB |
+| Slim | 10.3 MB | 4.1 MB | 11.8 MB |
 
-Measured from a local build; see the [Releases](https://github.com/hexamatic/pihole-mcp/releases) page for the exact archive and Docker image sizes of a given tag.
+Measured from the v0.9.0 release assets. MB here is a million bytes, and the image figure is the unpacked size `docker images` reports for the linux/arm64 image, the one a Raspberry Pi pulls.
 
 ```bash
 just build-slim
