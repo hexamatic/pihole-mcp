@@ -9,12 +9,12 @@
 # Keep these in step with the versions CI uses:
 #   go                -> go.mod's `toolchain` line, Dockerfile FROM
 #   golangci-lint     -> .github/workflows/ci.yml `version:`
-#   goreleaser        -> whatever `~> v2` currently resolves to
+#   goreleaser        -> whatever `~> v2` currently resolves to (2.18.1 on 11 Sep 2026)
 #   gitleaks          -> .github/workflows/security.yml GITLEAKS_VERSION
 [tools]
 go = "1.26.7"
 "go:golang.org/x/tools/cmd/goimports" = "0.44.0"
 "go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint" = "2.12.2"
-"go:github.com/goreleaser/goreleaser/v2" = "2.18.0"
+"go:github.com/goreleaser/goreleaser/v2" = "2.18.1"
 lefthook = "2.1.12"
 gitleaks = "8.30.1"
