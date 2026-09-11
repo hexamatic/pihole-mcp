@@ -8,6 +8,12 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ## [Unreleased]
 
+## [v0.9.0] - 2026-09-11
+
+### Highlights
+
+Upgrade from any earlier release. Every binary and container image from v0.6.0 to v0.8.1 was built with a Go toolchain carrying six reachable standard-library advisories, which the vulnerability scan missed because it was checking a different Go release; the HTTP and SSE transports accepted any request that reached them; and `pihole_config_get` handed the admin password's hash to the model. All three are fixed, along with more than thirty other defects, most of them tools that reported success while changing something else or nothing, or returned a count where they promised data. This release also lets you decide what the model can touch: `PIHOLE_READ_ONLY=true` exposes only the tools that change nothing, and `PIHOLE_TOOLSETS` narrows the server to the families you name, both enforced on every call rather than only hidden from the listing. Six new tools manage local DNS and CNAME records, bringing the total to 84, or 82 with a single Pi-hole. And the release itself is sturdier: signing and SBOM generation now run on pull requests before they run on a tag, and container images carry build provenance.
+
 ### Security
 
 - **The published binaries were built with a Go toolchain carrying six reachable standard-library advisories.** `go.mod` pinned `toolchain go1.26.5`, and because `actions/setup-go` resolves the toolchain line rather than the `go` line, that pin is what compiled every downloadable artefact and container image. Scanning the module with that toolchain selected reports GO-2026-5026, GO-2026-5972, GO-2026-6089, GO-2026-6090, GO-2026-6091 and GO-2026-6218 as reachable from this code, all of them fixed upstream in go1.26.6. The pin has been raised to `go1.26.7`, against which the same scan reports no vulnerabilities. Present since v0.6.0 (12 July 2026) and shipped in every release from v0.6.0 through v0.8.1.
@@ -18,19 +24,6 @@ The release body on GitHub for each tagged version is sourced from the matching 
 - **`mcp-publisher` and `gitleaks` were downloaded into CI and executed without their contents being checked.** Both were version-pinned, which fixes which release is fetched but says nothing about whether the bytes in that release are still the ones upstream built, and a GitHub release is mutable. The `mcp-publisher` download is the more serious of the two because that job holds an OIDC token granting the `io.github.hexamatic/*` registry namespace. It is now verified with `cosign verify-blob` against the Sigstore bundle the registry publishes, pinned to the exact workflow identity and tag that produced it. `gitleaks` is verified against a SHA-256 digest committed to this repository rather than the checksums file in its own release, which an attacker able to replace the tarball could replace as well. Present since each download was introduced, in v0.7.0 and v0.8.0 respectively.
 - **Releases now carry a `pihole-mcp_X.Y.Z_SHA256SUMS.intoto.jsonl` asset.** This is the same build provenance already published to GitHub's attestation store, uploaded a second time under a name OpenSSF Scorecard's Signed-Releases probe recognises, since it suffix-matches that extension and nothing else. It is score mechanics rather than added assurance: the provenance that actually verifies is still the one `gh attestation verify` resolves, and nothing about the release is more trustworthy for the file existing.
 - **`pihole_config_get` handed the admin password's hash to the model, and `pihole_config_set` handed it back after every write.** Pi-hole's configuration API masks the password and the TOTP secret but returns `webserver.api.pwhash` in full, and it answers a configuration write with the entire configuration, which `pihole_config_set` echoed. None of the configuration tools filtered it, so any request touching the `webserver` section, and every successful configuration write, passed the hash to whatever model the client was using. It is a memory-hard BALLOON-SHA256 hash rather than the password, but a weak password can be guessed against it offline. The configuration tools now withhold `webserver.api.pwhash` and `webserver.api.app_pwhash` from everything they return and say what they left out. They also refuse to write either, because Pi-hole accepts a write to both and whatever is written replaces the credential outright; to change the password, set `webserver.api.password` and Pi-hole hashes it. The hashes are omitted rather than masked, so a section read and written back unchanged leaves the stored hash alone. SECURITY.md has a new Data Handling section covering this alongside everything else the server returns about the people and devices on a network, and how to withhold each category with `PIHOLE_TOOLSETS`. Present in `pihole_config_get` since v0.1.0, and in `pihole_config_set`'s reply since v0.8.1, the first release in which its writes succeeded.
-
-### Changed
-
-- **`tools/list` is substantially smaller with more than one Pi-hole configured.** Two things were repeated into every tool. The optional `instance` parameter carried a prose description naming every configured instance, restated on all 76 tools that accept it, and the aggregate output schema was copied whole into each of the seven tools that declare one. The instance names are now an enum, which is what a client needs to offer a valid choice and a fraction of the size, and the readable enumeration lives once each in the server instructions and the `pihole://instances` resource. The aggregate schema branch is trimmed to the fields a client reads. Multi-instance mode now adds about 35% to the listing rather than about 56%.
-- **The server instructions no longer claim every tool accepts `detail` and `format`.** 15 tools accept `detail` and 22 accept `format`, out of 84, and that sentence was injected into every conversation as an unqualified statement. It now says "some tools".
-- **The `pihole_config_*` descriptions name `dns.hosts` and `dns.cnameRecords`** alongside `dns.upstreams`, and point at the dedicated local DNS tools as the better route to either.
-- **Tool results are now validated against the output schemas they declare.** The schemas are generated from the Go types the handlers return, so a result that contradicts one is a genuine defect rather than an approximate schema, and it fails silently: the client deserialises into the declared shape and reads zero values. Such a result is now refused rather than returned. Input validation is deliberately not enabled alongside it, because the SDK currently accepts a numeric argument sent as a string, which is common from model clients, and rejecting those would break calls that work today.
-- **`docs/TOOLS.md` now shows the numeric bounds each parameter declares.** The generated reference rendered enum options but not `minimum` or `maximum`, so a bound the schema enforces was visible only as prose in the description, indistinguishable from advice. Bounded parameters now read as `number (1 to 50)` beside the type.
-- **`pihole_history_database` and `pihole_stats_database` now say what separates them.** Both read the long-term database over a date range, and their descriptions were close enough that the choice between them was arbitrary. One returns a time series with a bucket per slot, the other a single set of totals for the whole range, and each description now says so and points at the other.
-- **`pihole_stats_recent_blocked` caps `count` at 50**, matching the other ranked statistics tools. It previously passed the value straight through.
-- **Dependabot now watches the Pi-hole image pinned in the Compose files.** `docker-compose.dev.yml` and `.github/docker-compose.ci.yml` pin a `pihole/pihole` tag, but Dependabot's `docker` ecosystem reads Dockerfiles only and rejects YAML, so that pin drifted with nothing tracking it while local development and the integration job tested against a Pi-hole release nobody had chosen. A `docker-compose` ecosystem now covers both directories. Base-image updates are grouped so the distroless digest, which appears in both `Dockerfile` and `Dockerfile.goreleaser` and must match, can no longer land in one file and not the other. Action pins move from a weekly to a monthly cadence.
-- **`pihole_domains_add`, `pihole_groups_add`, `pihole_clients_add`, `pihole_lists_add` and `pihole_config_add_value` no longer carry a destructive hint.** Each only ever creates a new row or appends a config value, and mcp-go's tool builder defaults `destructiveHint` to true unless a tool overrides it, so all five were flagged the same as the update and delete tools that overwrite or remove one. A client picking which write to confirm before running had no way to tell an addition from an overwrite.
-- **`pihole_domains_update` and `pihole_lists_update` no longer promise a capability they do not have.** `pihole_domains_update` said it could "move" a domain between the allow and deny lists; changing `type` or `kind` creates a duplicate entry rather than moving the original, verified against a live Pi-hole. `pihole_lists_update` said it could change group assignments; it has no parameter for one. Both descriptions now say only what the tool does.
 
 ### Added
 
@@ -48,6 +41,19 @@ The release body on GitHub for each tagged version is sourced from the matching 
 - **`pihole_info_database` reports how far back the stored queries reach**, both in the database as a whole and on disk. That figure decides whether a historical query search can succeed at all, so it is worth knowing before the search rather than after it comes back empty.
 - **`pihole_config_set` accepts a `restart` parameter**, matching its two sibling configuration-array tools. Every write previously restarted FTL's DNS resolver immediately, so chaining several `config_set` calls to build up a configuration cost one DNS interruption per call rather than one at the end.
 - **`pihole_teleporter_export` accepts an `output_path` parameter**, and its description now says plainly that the exported file persists on disk and is the caller's to move or delete. Under the documented Docker install the file was written inside a container that `--rm` deletes on exit with nothing in the tool's own output to warn of it; the README's Docker block now documents a volume mount to keep the backup on the host. A file created at `output_path` is readable by its owner only, the same as the temp-directory default, because the archive holds the admin password's hash, every DHCP lease and the long-term query database.
+
+### Changed
+
+- **`tools/list` is substantially smaller with more than one Pi-hole configured.** Two things were repeated into every tool. The optional `instance` parameter carried a prose description naming every configured instance, restated on all 76 tools that accept it, and the aggregate output schema was copied whole into each of the seven tools that declare one. The instance names are now an enum, which is what a client needs to offer a valid choice and a fraction of the size, and the readable enumeration lives once each in the server instructions and the `pihole://instances` resource. The aggregate schema branch is trimmed to the fields a client reads. Multi-instance mode now adds about 35% to the listing rather than about 56%.
+- **The server instructions no longer claim every tool accepts `detail` and `format`.** 15 tools accept `detail` and 22 accept `format`, out of 84, and that sentence was injected into every conversation as an unqualified statement. It now says "some tools".
+- **The `pihole_config_*` descriptions name `dns.hosts` and `dns.cnameRecords`** alongside `dns.upstreams`, and point at the dedicated local DNS tools as the better route to either.
+- **Tool results are now validated against the output schemas they declare.** The schemas are generated from the Go types the handlers return, so a result that contradicts one is a genuine defect rather than an approximate schema, and it fails silently: the client deserialises into the declared shape and reads zero values. Such a result is now refused rather than returned. Input validation is deliberately not enabled alongside it, because the SDK currently accepts a numeric argument sent as a string, which is common from model clients, and rejecting those would break calls that work today.
+- **`docs/TOOLS.md` now shows the numeric bounds each parameter declares.** The generated reference rendered enum options but not `minimum` or `maximum`, so a bound the schema enforces was visible only as prose in the description, indistinguishable from advice. Bounded parameters now read as `number (1 to 50)` beside the type.
+- **`pihole_history_database` and `pihole_stats_database` now say what separates them.** Both read the long-term database over a date range, and their descriptions were close enough that the choice between them was arbitrary. One returns a time series with a bucket per slot, the other a single set of totals for the whole range, and each description now says so and points at the other.
+- **`pihole_stats_recent_blocked` caps `count` at 50**, matching the other ranked statistics tools. It previously passed the value straight through.
+- **Dependabot now watches the Pi-hole image pinned in the Compose files.** `docker-compose.dev.yml` and `.github/docker-compose.ci.yml` pin a `pihole/pihole` tag, but Dependabot's `docker` ecosystem reads Dockerfiles only and rejects YAML, so that pin drifted with nothing tracking it while local development and the integration job tested against a Pi-hole release nobody had chosen. A `docker-compose` ecosystem now covers both directories. Base-image updates are grouped so the distroless digest, which appears in both `Dockerfile` and `Dockerfile.goreleaser` and must match, can no longer land in one file and not the other. Action pins move from a weekly to a monthly cadence.
+- **`pihole_domains_add`, `pihole_groups_add`, `pihole_clients_add`, `pihole_lists_add` and `pihole_config_add_value` no longer carry a destructive hint.** Each only ever creates a new row or appends a config value, and mcp-go's tool builder defaults `destructiveHint` to true unless a tool overrides it, so all five were flagged the same as the update and delete tools that overwrite or remove one. A client picking which write to confirm before running had no way to tell an addition from an overwrite.
+- **`pihole_domains_update` and `pihole_lists_update` no longer promise a capability they do not have.** `pihole_domains_update` said it could "move" a domain between the allow and deny lists; changing `type` or `kind` creates a duplicate entry rather than moving the original, verified against a live Pi-hole. `pihole_lists_update` said it could change group assignments; it has no parameter for one. Both descriptions now say only what the tool does.
 
 ### Fixed
 
@@ -86,7 +92,63 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ### Dependencies
 
-- **`google.golang.org/grpc` 1.83.1 → 1.83.2**, clearing [GHSA-2v4p-qf9q-27wj](https://github.com/advisories/GHSA-2v4p-qf9q-27wj) (CVE-2026-84445), a crash in gRPC's xDS server when a request carries neither an `:authority` nor a `Host` header. Not reachable here: this server never runs a gRPC server of any kind, grpc is present only as an indirect dependency of the OpenTelemetry exporter, and the slim build does not contain it at all. Bumped so that no release ships a flagged version.
+- Go toolchain go1.26.5 → go1.26.7 (see Security above).
+- `google.golang.org/grpc` 1.82.1 → 1.83.2, clearing [GHSA-2v4p-qf9q-27wj](https://github.com/advisories/GHSA-2v4p-qf9q-27wj) (CVE-2026-84445), a crash in gRPC's xDS server when a request carries neither an `:authority` nor a `Host` header. The version v0.8.1 shipped was within the affected range. Not reachable in either release: this server runs no gRPC server of any kind, grpc is present only as an indirect dependency of the OpenTelemetry exporter, and the slim build does not contain it at all.
+- `github.com/mark3labs/mcp-go` 0.56.0 → 0.58.0
+- OpenTelemetry (`go.opentelemetry.io/otel`, its SDK and the OTLP HTTP exporter) 1.44.0 → 1.46.0, `github.com/santhosh-tekuri/jsonschema/v6` 6.0.2 → 6.0.3
+- `golang.org/x/net` 0.56.0 → 0.58.0, `golang.org/x/sys` 0.46.0 → 0.47.0, `golang.org/x/text` 0.39.0 → 0.41.0
+- `gcr.io/distroless/static-debian13` base image digest `9197324` → `f2ea270`
+- GitHub Actions: `actions/checkout` 7.0.1, `github/codeql-action` 4.37.9, `docker/setup-buildx-action` 4.3.0, `docker/login-action` 4.6.0, `anchore/sbom-action/download-syft` 0.24.1, `actions/attest-build-provenance` 4.2.2, `ossf/scorecard-action` 2.4.4
+
+### Installation
+
+**MCP Registry.** Add by name in any client that supports registry install:
+```
+io.github.hexamatic/pihole-mcp
+```
+
+**Homebrew (macOS and Linux):**
+```
+brew install hexamatic/tap/pihole-mcp
+```
+
+**Scoop (Windows):**
+```
+scoop bucket add hexamatic https://github.com/hexamatic/scoop-bucket
+scoop install pihole-mcp
+```
+
+**Go install:**
+```
+go install github.com/hexamatic/pihole-mcp/cmd/pihole-mcp@v0.9.0
+```
+
+**Docker (multi-arch):**
+```
+docker pull ghcr.io/hexamatic/pihole-mcp:0.9.0
+```
+
+**Binary download:** grab the archive, `.deb` or `.rpm` for your platform from the release assets. Every archive is checksummed and cosign-signed, and ships with an SPDX SBOM and SLSA build provenance; from this release the container images carry build provenance too. [SECURITY.md](https://github.com/hexamatic/pihole-mcp/blob/main/SECURITY.md#verifying-release-artefacts) has the command to verify each.
+
+### Requirements
+
+- Pi-hole v6.2 or later with the REST API enabled, verified against FTL v6.7. Two tools need more: `pihole_config_properties` requires v6.6.1 and `pihole_action_flush_network` requires v6.3. The six local DNS tools have so far been verified against v6.7 only.
+- An admin password or [application password](https://docs.pi-hole.net/api/auth/)
+- Docker, if installing through the MCP Registry listing, which points at the container image
+
+### Configuration
+
+Five new environment variables, all optional. An existing configuration needs no changes, but if you run the HTTP or SSE transport on anything other than a loopback address, set `PIHOLE_HTTP_AUTH_TOKEN`: until you do, anyone who can reach the port can use every tool.
+
+| Variable | What it does |
+|---|---|
+| `PIHOLE_READ_ONLY` | `true` exposes only the tools that change nothing. Enforced on every call, not only hidden from the listing. |
+| `PIHOLE_TOOLSETS` | A comma-separated selection of [toolsets](https://github.com/hexamatic/pihole-mcp/blob/main/docs/TOOLS.md#toolsets). Unset, empty or `all` keeps every tool. It intersects with read-only mode, and read-only wins. |
+| `PIHOLE_HTTP_AUTH_TOKEN` | Bearer token for the HTTP and SSE transports, at least 16 characters. |
+| `PIHOLE_HTTP_AUTH_TOKEN_FILE` | The same token read from a file, which keeps it out of `ps`. Set one or the other. |
+| `PIHOLE_TRUSTED_PROXIES` | Addresses or CIDR ranges whose `X-Forwarded-For` the rate limiter believes. Nothing is trusted by default. |
+
+A new `-check` flag loads the configuration, contacts every configured Pi-hole once, prints a pass or fail line for each and exits non-zero on any failure, so a first run can be diagnosed without an MCP client.
 
 ## [v0.8.1] - 2026-08-30
 
@@ -555,7 +617,8 @@ docker pull ghcr.io/hexamatic/pihole-mcp:0.1.0
 
 See the [README](https://github.com/hexamatic/pihole-mcp#readme) for client-specific setup guides (Claude Desktop, Cursor, Windsurf, VS Code, Cline).
 
-[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.9.0...HEAD
+[v0.9.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.8.1...v0.9.0
 [v0.8.1]: https://github.com/hexamatic/pihole-mcp/compare/v0.8.0...v0.8.1
 [v0.8.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.7.0...v0.8.0
 [v0.7.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.6.0...v0.7.0
