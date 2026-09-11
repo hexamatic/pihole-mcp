@@ -84,6 +84,10 @@ The release body on GitHub for each tagged version is sourced from the matching 
 - **`pihole_teleporter_import` opened whatever `file_path` it was given with no validation.** It is the only tool parameter passed straight to `os.Open`, and a relative path, a non-`.zip` file, a directory, or an arbitrarily large file all reached the open call and failed there, if they failed at all, with whatever error the filesystem happened to return. The path is now checked upfront: absolute, `.zip`, a regular file, and under a 512 MiB cap, before the multipart upload is even assembled. Present since v0.1.0 (6 April 2026).
 - **Backup files from `pihole_teleporter_export` and `pihole_instance_sync`'s pre-sync snapshot accumulated in the system temp directory forever.** Neither tool ever cleaned up after itself, so a server left running for weeks could fill its temp filesystem with backups nobody asked to keep. Both now reap files older than 24 hours matching their own naming pattern before writing a new one.
 
+### Dependencies
+
+- **`google.golang.org/grpc` 1.83.1 → 1.83.2**, clearing [GHSA-2v4p-qf9q-27wj](https://github.com/advisories/GHSA-2v4p-qf9q-27wj) (CVE-2026-84445), a crash in gRPC's xDS server when a request carries neither an `:authority` nor a `Host` header. Not reachable here: this server never runs a gRPC server of any kind, grpc is present only as an indirect dependency of the OpenTelemetry exporter, and the slim build does not contain it at all. Bumped so that no release ships a flagged version.
+
 ## [v0.8.1] - 2026-08-30
 
 ### Highlights
