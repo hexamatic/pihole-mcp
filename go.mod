@@ -1,6 +1,6 @@
 module github.com/hexamatic/pihole-mcp
 
-go 1.26
+go 1.26.0
 
 toolchain go1.26.7
 
@@ -11,7 +11,7 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.46.0
 	go.opentelemetry.io/otel/sdk v1.46.0
 	go.opentelemetry.io/otel/trace v1.46.0
-	golang.org/x/time v0.15.0
+	golang.org/x/time v0.16.0
 )
 
 require (
