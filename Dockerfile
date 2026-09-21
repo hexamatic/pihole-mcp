@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     -ldflags="-s -w -X github.com/hexamatic/pihole-mcp/internal/server.Version=${VERSION}" \
     -o /bin/pihole-mcp ./cmd/pihole-mcp
 
-FROM gcr.io/distroless/static-debian13@sha256:f2ea2709ac8db56323cbd7d014277f32cb572d9ea124b0076f7aafe5980678fe
+FROM gcr.io/distroless/static-debian13@sha256:58133991db06659feaabe0f4e97a35cebf15ef4ea08f8a4c6d2ee5f75e4aa6a0
 
 LABEL org.opencontainers.image.title="pihole-mcp"
 LABEL org.opencontainers.image.description="MCP server for Pi-hole v6"
