@@ -8,6 +8,10 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ## [Unreleased]
 
+### Fixed
+
+- Homebrew installs use declarative `postflight_steps` instead of the deprecated `postflight` hook, removing the warning printed by `brew doctor` and other Homebrew commands.
+
 ## [v0.9.0] - 2026-09-11
 
 ### Highlights
