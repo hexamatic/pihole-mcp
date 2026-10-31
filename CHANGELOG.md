@@ -8,6 +8,10 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ## [Unreleased]
 
+### Fixed
+
+- `just setup` resolves newly installed tools through `mise exec`, so the first run can install Git hooks without failing with `lefthook: command not found`.
+
 ## [v0.9.0] - 2026-09-11
 
 ### Highlights
