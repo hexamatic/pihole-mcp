@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hexamatic/pihole-mcp/internal/format"
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
@@ -278,11 +280,26 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return refuseCredentialWrite(key), nil
 		}
 
+		restart := req.GetBool("restart", true)
 		path := "/config"
-		if !req.GetBool("restart", true) {
+		if !restart {
 			path += "?restart=false"
 		}
 
+		leaves := map[string]any{}
+		configLeaves("", payload, leaves)
+		if len(leaves) == 0 {
+			return mcp.NewToolResultError(`Parameter 'config' names no setting to change, e.g. {"dns":{"blocking":{"active":true}}}`), nil
+		}
+
+		// Read the current values and FTL's flags for them first. FTL skips
+		// any key it does not recognise and still answers 200 with the whole
+		// configuration, so without this a misspelt key was reported as
+		// "Config updated". The flags say which settings make FTL restart.
+		var before pihole.ConfigResponse
+		beforeErr := c.Get(ctx, "/config?detailed=true", &before)
+
+		sent := time.Now()
 		var result pihole.ConfigResponse
 		if err := c.Do(ctx, "PATCH", path, map[string]any{"config": payload}, &result); err != nil {
 			return toolError("update config", err), nil
@@ -290,19 +307,158 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		sendLog(ctx, mcp.LoggingLevelInfo, "config", map[string]any{"instance": c.Name(), "event": "config_updated"})
 
-		// FTL answers a PATCH with the entire configuration, so without this
-		// every write of any setting handed back the admin password's hash.
-		withheld := withholdCredentials(result.Config)
-		configJSON, _ := json.MarshalIndent(result.Config, "", "  ")
+		if beforeErr != nil {
+			return mcp.NewToolResultText(fmt.Sprintf("**Config updated.** Pi-hole accepted the change. This server could not "+
+				"read the settings beforehand (%v), so it cannot say which of them changed or whether Pi-hole recognised "+
+				"them all. Check with pihole_config_get_value.", beforeErr)), nil
+		}
 
+		report := compareConfigWrite(before.Config, result.Config, leaves)
 		var b strings.Builder
-		b.WriteString("**Config updated.**\n```json\n")
-		b.Write(configJSON)
-		b.WriteString("\n```")
-		b.WriteString(withheldNote(withheld))
+		switch {
+		case len(report.unknown) > 0:
+			fmt.Fprintf(&b, "**Pi-hole does not recognise %s, so it ignored %s.** FTL skips unknown keys without an error. "+
+				"Check the spelling against pihole_config_get.\n", strings.Join(report.unknown, ", "), pluralIt(len(report.unknown)))
+		case len(report.changed) == 0:
+			b.WriteString("**No setting changed.** Every value was already as requested.\n")
+		default:
+			b.WriteString("**Config updated.**\n")
+		}
+		if len(report.changed) > 0 {
+			b.WriteString("Changed:\n")
+			for _, ch := range report.changed {
+				if ch.masked {
+					fmt.Fprintf(&b, "- %s: updated (write-only, so Pi-hole does not show it)\n", ch.key)
+					continue
+				}
+				fmt.Fprintf(&b, "- %s: %s → %s\n", ch.key, renderLeaf(ch.from), renderLeaf(ch.to))
+			}
+		}
+		if len(report.unchanged) > 0 {
+			fmt.Fprintf(&b, "Already set: %s\n", strings.Join(report.unchanged, ", "))
+		}
+		if report.endsSessions {
+			b.WriteString("Pi-hole ends every API session when this setting changes, this server's included. It logs in again " +
+				"on its next call using PIHOLE_PASSWORD, so if the admin password changed, update PIHOLE_PASSWORD to match.\n")
+		}
+		if report.restartsWithoutAsking || (restart && report.restarts) {
+			b.WriteString(strings.TrimSpace(awaitRestartNote(ctx, c, sent)) + "\n")
+		} else if report.restarts {
+			b.WriteString("These changes take effect when FTL next restarts, since restart=false was passed.\n")
+		}
 
+		if len(report.unknown) > 0 {
+			return mcp.NewToolResultError(b.String()), nil
+		}
 		return mcp.NewToolResultText(b.String()), nil
 	}
+}
+
+// configLeaves flattens a config payload into dotted keys and the values set
+// at them. A dotted key in the payload is split the way FTL reads it.
+func configLeaves(prefix string, v any, out map[string]any) {
+	m, ok := v.(map[string]any)
+	if !ok || len(m) == 0 {
+		if prefix != "" {
+			out[prefix] = v
+		}
+		return
+	}
+	for k, child := range m {
+		key := k
+		if prefix != "" {
+			key = prefix + "." + k
+		}
+		configLeaves(key, child, out)
+	}
+}
+
+type configChange struct {
+	key      string
+	from, to any
+	// masked is set for a write-only setting, whose values FTL never shows.
+	masked bool
+}
+
+type configWriteReport struct {
+	changed   []configChange
+	unchanged []string
+	unknown   []string
+	// restarts is set when a changed setting makes FTL restart.
+	restarts bool
+	// restartsWithoutAsking is set when FTL restarts whatever restart says:
+	// it always does when the privacy level is lowered.
+	restartsWithoutAsking bool
+	// endsSessions is set when a changed setting logs every session out.
+	endsSessions bool
+}
+
+// maskedValue is how FTL reads back a write-only setting such as a password.
+const maskedValue = "********"
+
+// compareConfigWrite sorts the requested keys into changed, unchanged and
+// unknown, from a detailed read taken before the write and the configuration
+// FTL returned after it.
+func compareConfigWrite(before, after map[string]any, leaves map[string]any) configWriteReport {
+	var r configWriteReport
+	keys := make([]string, 0, len(leaves))
+	for k := range leaves {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		item, ok := pihole.DetailedConfigItem(before, key)
+		if !ok {
+			r.unknown = append(r.unknown, key)
+			continue
+		}
+		now, _ := configValueAt(after, key)
+		// FTL reads a write-only setting such as the password back as
+		// "********" before and after, so a new value looks unchanged. Any
+		// value other than the placeholder itself is a change.
+		masked := item.Value == maskedValue && now == maskedValue && leaves[key] != maskedValue
+		if !masked && reflect.DeepEqual(item.Value, now) {
+			r.unchanged = append(r.unchanged, key)
+			continue
+		}
+		r.changed = append(r.changed, configChange{key: key, from: item.Value, to: now, masked: masked})
+		if item.EndsSessions {
+			r.endsSessions = true
+		}
+		if item.RestartsFTL {
+			r.restarts = true
+		}
+		if key == "misc.privacylevel" {
+			from, _ := item.Value.(float64)
+			to, _ := now.(float64)
+			if to < from {
+				r.restartsWithoutAsking = true
+			}
+		}
+	}
+	return r
+}
+
+// configValueAt returns the value at a dotted key in a plain config tree.
+func configValueAt(cfg map[string]any, key string) (any, bool) {
+	var node any = cfg
+	for _, part := range strings.Split(key, ".") {
+		m, ok := node.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		if node, ok = m[part]; !ok {
+			return nil, false
+		}
+	}
+	return node, true
+}
+
+func pluralIt(n int) string {
+	if n == 1 {
+		return "it"
+	}
+	return "them"
 }
 
 func configGetValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
@@ -389,16 +545,23 @@ func configAddValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		path := "/config/" + escapeConfigElement(element) + "/" + pihole.EscapePathSegment(value)
 
-		if !req.GetBool("restart", true) {
+		restart := req.GetBool("restart", true)
+		if !restart {
 			path += "?restart=false"
 		}
+		waits := restartsFor(ctx, c, element, restart)
 
+		sent := time.Now()
 		var result pihole.ConfigResponse
 		if err := c.Put(ctx, path, nil, &result); err != nil {
 			return toolError("add config value", err), nil
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf("**Added** `%s` to `%s`.", value, element)), nil
+		text := fmt.Sprintf("**Added** `%s` to `%s`.", value, element)
+		if waits {
+			text += awaitRestartNote(ctx, c, sent)
+		}
+		return mcp.NewToolResultText(text), nil
 	}
 }
 
@@ -428,15 +591,22 @@ func configRemoveValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		path := "/config/" + escapeConfigElement(element) + "/" + pihole.EscapePathSegment(value)
 
-		if !req.GetBool("restart", true) {
+		restart := req.GetBool("restart", true)
+		if !restart {
 			path += "?restart=false"
 		}
+		waits := restartsFor(ctx, c, element, restart)
 
+		sent := time.Now()
 		if err := c.Do(ctx, "DELETE", path, nil, nil); err != nil {
 			return toolError("remove config value", err), nil
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf("**Removed** `%s` from `%s`.", value, element)), nil
+		text := fmt.Sprintf("**Removed** `%s` from `%s`.", value, element)
+		if waits {
+			text += awaitRestartNote(ctx, c, sent)
+		}
+		return mcp.NewToolResultText(text), nil
 	}
 }
 

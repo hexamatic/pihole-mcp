@@ -186,6 +186,7 @@ func teleporterImportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			},
 		}
 
+		sent := time.Now()
 		var result pihole.TeleporterImportResponse
 		if err := c.PostMultipart(ctx, "/teleporter", filePath, importOptions, &result); err != nil {
 			return toolError("import backup", err), nil
@@ -198,10 +199,12 @@ func teleporterImportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 
 		var b strings.Builder
-		fmt.Fprintf(&b, "**Import complete.** Pi-hole imported %d item(s) and restarts to apply them:\n", len(imported))
+		fmt.Fprintf(&b, "**Import complete.** Pi-hole imported %d item(s):\n", len(imported))
 		for _, item := range imported {
 			fmt.Fprintf(&b, "- %s\n", item)
 		}
+		// FTL always restarts after an import (src/api/teleporter.c).
+		b.WriteString(strings.TrimSpace(awaitRestartNote(ctx, c, sent)) + "\n")
 
 		return mcp.NewToolResultText(b.String()), nil
 	}

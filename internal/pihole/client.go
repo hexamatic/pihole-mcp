@@ -25,8 +25,10 @@ type Client struct {
 	password   string
 	httpClient *http.Client
 	retry      RetryPolicy
-	mu         sync.RWMutex
-	sid        string
+	// restartWait bounds AwaitRestart; zero means restartWaitTimeout.
+	restartWait time.Duration
+	mu          sync.RWMutex
+	sid         string
 }
 
 // Option configures the Pi-hole client.
@@ -100,7 +102,18 @@ func New(baseURL, password string, opts ...Option) *Client {
 // Transient failures are retried with backoff (see retry.go); a 401 refreshes
 // the session and replays the request once, regardless of method — a rejected
 // request was never processed, so replaying it is always safe.
+//
+// A change request that was sent but got no reply returns an *UncertainError,
+// since Pi-hole may already have applied it.
 func (c *Client) Do(ctx context.Context, method, path string, body, result any) error {
+	err := c.do(ctx, method, path, body, result)
+	if !idempotentMethod(method) && mayHaveApplied(err) {
+		return &UncertainError{err}
+	}
+	return err
+}
+
+func (c *Client) do(ctx context.Context, method, path string, body, result any) error {
 	return c.withRetry(ctx, idempotentMethod(method), func() error {
 		sid, err := c.ensureAuth(ctx)
 		if err != nil {
@@ -160,7 +173,7 @@ func (c *Client) PostMultipart(ctx context.Context, path, filePath string, impor
 		return err
 	}
 
-	return c.withRetry(ctx, false, func() error {
+	err = c.withRetry(ctx, false, func() error {
 		sid, err := c.ensureAuth(ctx)
 		if err != nil {
 			return err
@@ -180,6 +193,10 @@ func (c *Client) PostMultipart(ctx context.Context, path, filePath string, impor
 		}
 		return c.sendMultipart(ctx, path, newSID, body, contentType, result)
 	})
+	if mayHaveApplied(err) {
+		return &UncertainError{err}
+	}
+	return err
 }
 
 // sendMultipart sends one encoded multipart body and decodes the reply.

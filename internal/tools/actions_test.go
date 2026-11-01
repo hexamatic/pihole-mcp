@@ -41,19 +41,41 @@ func TestActionGravity_Success(t *testing.T) {
 func TestActionRestartDNS_Success(t *testing.T) {
 	rec := piholeHandler(map[string]any{
 		"/action/restartdns": map[string]any{"success": true},
+		// An uptime of zero is a process that has just started.
+		"/info/ftl": map[string]any{"ftl": map[string]any{"uptime": 0}},
 	})
 	c := newTestClient(t, rec)
 
 	text := callTool(t, actionRestartDNSHandler, c, nil)
-	if !strings.Contains(text, "DNS restarted") {
-		t.Errorf("expected 'DNS restarted' message, got: %s", text)
+	if !strings.Contains(text, "DNS restarted") || !strings.Contains(text, "answering again") {
+		t.Errorf("expected the reply to confirm Pi-hole came back, got: %s", text)
 	}
 
 	// Restarting DNS interrupts resolution for every client on the network, so
 	// this must be exactly one POST to the restart endpoint: a duplicate is a
-	// second outage the reply would never mention.
+	// second outage the reply would never mention. The GETs that follow are the
+	// wait for FTL to come back.
 	rec.Only(t, "POST", "/action/restartdns").AssertNoQueryString(t)
-	rec.AssertCount(t, "", "", 1)
+	rec.AssertCount(t, "POST", "", 1)
+	if rec.Count("GET", "/info/ftl") == 0 {
+		t.Error("the tool reported the restart without checking that FTL came back")
+	}
+}
+
+func TestActionRestartDNS_NotBackInTimeIsAnError(t *testing.T) {
+	// FTL answers before it restarts. An uptime that never resets is a
+	// restart that has not happened, or has not finished.
+	srv := httptest.NewServer(piholeHandler(map[string]any{
+		"/action/restartdns": map[string]any{"success": true},
+		"/info/ftl":          map[string]any{"ftl": map[string]any{"uptime": 3_600_000}},
+	}))
+	t.Cleanup(srv.Close)
+	c := pihole.New(srv.URL, "test", pihole.WithRestartWait(300*time.Millisecond))
+
+	text := callToolExpectError(t, actionRestartDNSHandler, c, nil)
+	if !strings.Contains(text, "had not finished restarting") {
+		t.Errorf("a restart that never completes should say so, got: %s", text)
+	}
 }
 
 func TestActionFlushLogs_Success(t *testing.T) {

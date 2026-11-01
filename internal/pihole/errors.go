@@ -3,10 +3,14 @@
 package pihole
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -135,4 +139,40 @@ func parseRetryAfter(h http.Header) time.Duration {
 		}
 	}
 	return 0
+}
+
+// UncertainError marks a change request that was sent but got no reply: the
+// connection dropped or timed out after the request went out. Pi-hole may or
+// may not have applied it, so the caller must check before trying again.
+//
+// The usual cause is a write landing just as FTL restarts to apply an earlier
+// change. FTL applies the write and then exits before answering, the caller
+// sees EOF, and a retry fails with "already present", which reads as though
+// the first attempt had done nothing.
+type UncertainError struct{ Err error }
+
+func (e *UncertainError) Error() string { return e.Err.Error() }
+func (e *UncertainError) Unwrap() error { return e.Err }
+
+// mayHaveApplied reports whether err leaves it unknown whether a sent request
+// was processed: the connection ended or timed out with the request already
+// sent. A refused connection or a failed login means nothing was sent.
+func mayHaveApplied(err error) bool {
+	if err == nil {
+		return false
+	}
+	var le *loginError
+	if errors.As(err, &le) || errors.Is(err, syscall.ECONNREFUSED) {
+		return false
+	}
+	switch {
+	case errors.Is(err, io.EOF),
+		errors.Is(err, io.ErrUnexpectedEOF),
+		errors.Is(err, syscall.ECONNRESET),
+		errors.Is(err, syscall.ECONNABORTED),
+		errors.Is(err, syscall.EPIPE):
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }

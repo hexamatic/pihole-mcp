@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 )
@@ -38,6 +39,11 @@ type Fake struct {
 	cnames       []string
 	summaryTotal int
 	nextID       int
+
+	// started is when the emulated FTL last started; /info/ftl reports the
+	// time since as its uptime, which is how a client sees a restart.
+	started  time.Time
+	restarts int
 }
 
 // New starts a new fake Pi-hole and returns it. Call Close when done (or use
@@ -51,6 +57,7 @@ func New() *Fake {
 		clients:      make(map[string]pihole.ClientEntry),
 		summaryTotal: 0,
 		nextID:       1,
+		started:      time.Now().Add(-time.Hour),
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.handle))
 	return f
@@ -123,6 +130,22 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 		f.handleStats(w, r, rest[1:])
 	case "teleporter":
 		f.handleTeleporter(w, r)
+	case "info":
+		if len(rest) == 2 && rest[1] == "ftl" && r.Method == http.MethodGet {
+			writeJSON(w, http.StatusOK, map[string]any{"ftl": map[string]any{
+				// FTL reports uptime in milliseconds.
+				"uptime": float64(time.Since(f.started)) / float64(time.Millisecond),
+			}})
+			return
+		}
+		http.NotFound(w, r)
+	case "action":
+		if len(rest) == 2 && rest[1] == "restartdns" && r.Method == http.MethodPost {
+			f.restart()
+			writeJSON(w, http.StatusOK, map[string]any{"success": true})
+			return
+		}
+		http.NotFound(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -543,6 +566,27 @@ func (f *Fake) handleConfig(w http.ResponseWriter, r *http.Request, p []string) 
 		return
 	}
 
+	// GET /config/dns/{field}, optionally ?detailed=true, which wraps the
+	// value with the flags FTL publishes for it. Of the two emulated arrays
+	// only cnameRecords carries FLAG_RESTART_FTL (src/config/config.c, v6.7
+	// and v6.8).
+	if len(p) == 2 && r.Method == http.MethodGet {
+		target := f.fieldSlice(p[1])
+		if target == nil {
+			writeAPIError(w, http.StatusNotFound, "not_found", "unknown config item")
+			return
+		}
+		var value any = toAnySlice(*target)
+		if r.URL.Query().Get("detailed") == "true" {
+			value = map[string]any{
+				"value": value,
+				"flags": map[string]any{"restart_dnsmasq": p[1] == "cnameRecords", "session_reset": false, "env_var": false},
+			}
+		}
+		writeJSON(w, http.StatusOK, pihole.ConfigResponse{Config: map[string]any{"dns": map[string]any{p[1]: value}}})
+		return
+	}
+
 	// /config/dns/{field}/{value} add (PUT) or remove (DELETE).
 	if len(p) < 3 {
 		writeAPIError(w, http.StatusBadRequest, "bad_request", "field and value required")
@@ -554,17 +598,41 @@ func (f *Fake) handleConfig(w http.ResponseWriter, r *http.Request, p []string) 
 		writeAPIError(w, http.StatusBadRequest, "bad_request", "unsupported config array")
 		return
 	}
+	// FTL restarts after a change to a setting flagged for it unless the
+	// request says restart=false.
+	restarts := field == "cnameRecords" && r.URL.Query().Get("restart") != "false"
 	switch r.Method {
 	case http.MethodPut:
 		// FTL answers 201 with no content when an array item is added.
 		f.setFieldSlice(field, appendUnique(*target, value))
+		if restarts {
+			f.restart()
+		}
 		w.WriteHeader(http.StatusCreated)
 	case http.MethodDelete:
 		f.setFieldSlice(field, removeValue(*target, value))
+		if restarts {
+			f.restart()
+		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// restart records an emulated FTL restart. The real one takes a couple of
+// seconds; this one is instant, so a client that waits for it sees the new
+// uptime on its first check. Caller holds f.mu.
+func (f *Fake) restart() {
+	f.started = time.Now()
+	f.restarts++
+}
+
+// Restarts reports how many times the emulated FTL has restarted.
+func (f *Fake) Restarts() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.restarts
 }
 
 func (f *Fake) fieldSlice(field string) *[]string {
@@ -614,6 +682,8 @@ func (f *Fake) handleTeleporter(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// FTL restarts after every import (src/api/teleporter.c).
+	f.restart()
 	// FTL lists what it imported under "files", not the "processed" its own
 	// spec documents (src/api/teleporter.c, v6.7 and v6.8). The fake used to
 	// send "processed", which is why an import that rendered an empty list

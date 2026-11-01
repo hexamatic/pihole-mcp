@@ -19,8 +19,16 @@ ERRORS=()
 # tool outcome. Spawning one short-lived process per call hammers the local
 # Pi-hole's API socket, so the occasional connection reset is expected under
 # load and is retried rather than reported as a tool failure.
+#
+# A write that was sent but got no reply is the exception. The server reports
+# it as "may already have made this change", and resending it can only fail
+# with "already present" or delete something twice, which hides what happened.
+# That outcome is reported as it stands. It used to be resent, which is how an
+# FTL restart racing the next write surfaced in CI as a duplicate-item error.
 is_transient() {
     case "$1" in
+        *"may already have made this change"*)
+            return 1 ;;
         ""|*"read tcp"*|*"connection refused"*|*"sending auth request"*|*"i/o timeout"*|*"connection reset"*|*"Parse error"*|*"EOF"*)
             return 0 ;;
         *) return 1 ;;

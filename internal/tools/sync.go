@@ -48,6 +48,8 @@ type InstanceSyncOutput struct {
 	Applied      int               `json:"applied,omitempty"`
 	Failed       int               `json:"failed,omitempty"`
 	Ops          []pihole.OpResult `json:"ops,omitempty"`
+	Restarted    bool              `json:"restarted,omitempty" jsonschema:"Whether the sync restarted FTL on the target to apply CNAME changes"`
+	RestartError string            `json:"restart_error,omitempty" jsonschema:"Why changes that need an FTL restart may not have taken effect"`
 }
 
 // RegisterSync registers the multi-instance diff and sync tools. They only
@@ -268,6 +270,8 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		output.Applied = res.Applied
 		output.Failed = res.Failed
 		output.Ops = res.Ops
+		output.Restarted = res.Restarted
+		output.RestartError = res.RestartError
 
 		sendLog(ctx, mcp.LoggingLevelInfo, "sync", map[string]any{
 			"event": "instance_sync", "source": source.Name(), "target": target.Name(),
@@ -283,6 +287,12 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			if op.Err != "" {
 				fmt.Fprintf(&b, "- FAILED %s %s (%s): %s\n", op.Action, op.Category, op.Item, op.Err)
 			}
+		}
+		switch {
+		case res.RestartError != "":
+			fmt.Fprintf(&b, "FTL restart: %s. Check that %s is answering before making further changes.\n", res.RestartError, target.Name())
+		case res.Restarted:
+			fmt.Fprintf(&b, "%s restarted once to apply the CNAME changes and is answering again.\n", target.Name())
 		}
 		result := mcp.NewToolResultStructured(output, b.String())
 		if res.Failed > 0 && res.Applied == 0 {

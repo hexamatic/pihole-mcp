@@ -180,13 +180,20 @@ func actionRestartDNSHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		sent := time.Now()
 		var result pihole.ActionResponse
 		if err := c.Post(ctx, "/action/restartdns", nil, &result); err != nil {
 			return toolError("restart DNS", err), nil
 		}
 
+		// FTL answers before it restarts, so "restarted" was reported while
+		// the restart had not yet begun. Wait until it is answering again.
+		if err := c.AwaitRestart(ctx, sent); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Pi-hole accepted the restart, but %v. "+
+				"Check that it is answering before relying on it.", err)), nil
+		}
 		sendLog(ctx, mcp.LoggingLevelNotice, "actions", map[string]any{"instance": c.Name(), "event": "dns_restarted"})
-		return mcp.NewToolResultText("**DNS restarted** successfully."), nil
+		return mcp.NewToolResultText("**DNS restarted.** Pi-hole is answering again."), nil
 	}
 }
 

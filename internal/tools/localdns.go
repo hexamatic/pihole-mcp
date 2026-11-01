@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -176,7 +177,10 @@ func localDNSAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 
 		record := addr.String() + " " + hostname
-		if err := c.Put(ctx, recordPath(hostsField, record, req.GetBool("restart", true)), nil, nil); err != nil {
+		restart := req.GetBool("restart", true)
+		waits := restartsFor(ctx, c, "dns."+hostsField, restart)
+		sent := time.Now()
+		if err := c.Put(ctx, recordPath(hostsField, record, restart), nil, nil); err != nil {
 			return toolError("add local DNS record", err), nil
 		}
 
@@ -184,7 +188,8 @@ func localDNSAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if !addr.Is4() {
 			kind = "AAAA"
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("**Added** %s record `%s` → `%s`.", kind, hostname, addr)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("**Added** %s record `%s` → `%s`.", kind, hostname, addr) +
+			restartNoteIf(ctx, c, waits, sent)), nil
 	}
 }
 
@@ -227,10 +232,14 @@ func localDNSDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return res, nil
 		}
 
-		if err := c.Delete(ctx, recordPath(hostsField, match, req.GetBool("restart", true))); err != nil {
+		restart := req.GetBool("restart", true)
+		waits := restartsFor(ctx, c, "dns."+hostsField, restart)
+		sent := time.Now()
+		if err := c.Delete(ctx, recordPath(hostsField, match, restart)); err != nil {
 			return toolError("delete local DNS record", err), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("**Deleted** local DNS record `%s`.", match)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("**Deleted** local DNS record `%s`.", match) +
+			restartNoteIf(ctx, c, waits, sent)), nil
 	}
 }
 
@@ -263,10 +272,14 @@ func localCNAMEAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			record += "," + strconv.Itoa(ttl)
 		}
 
-		if err := c.Put(ctx, recordPath(cnamesField, record, req.GetBool("restart", true)), nil, nil); err != nil {
+		restart := req.GetBool("restart", true)
+		waits := restartsFor(ctx, c, "dns."+cnamesField, restart)
+		sent := time.Now()
+		if err := c.Put(ctx, recordPath(cnamesField, record, restart), nil, nil); err != nil {
 			return toolError("add local CNAME record", err), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("**Added** CNAME `%s` → `%s`.", alias, target)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("**Added** CNAME `%s` → `%s`.", alias, target) +
+			restartNoteIf(ctx, c, waits, sent)), nil
 	}
 }
 
@@ -293,10 +306,14 @@ func localCNAMEDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return res, nil
 		}
 
-		if err := c.Delete(ctx, recordPath(cnamesField, match, req.GetBool("restart", true))); err != nil {
+		restart := req.GetBool("restart", true)
+		waits := restartsFor(ctx, c, "dns."+cnamesField, restart)
+		sent := time.Now()
+		if err := c.Delete(ctx, recordPath(cnamesField, match, restart)); err != nil {
 			return toolError("delete local CNAME record", err), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("**Deleted** local CNAME record `%s`.", match)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("**Deleted** local CNAME record `%s`.", match) +
+			restartNoteIf(ctx, c, waits, sent)), nil
 	}
 }
 

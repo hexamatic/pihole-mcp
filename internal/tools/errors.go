@@ -29,9 +29,13 @@ func toolErrorText(action string, err error) string {
 	var validationErr *pihole.ValidationError
 	var rateLimitErr *pihole.RateLimitError
 	var forbiddenErr *pihole.ForbiddenError
+	var uncertainErr *pihole.UncertainError
 	var apiErr *pihole.APIError
 
 	switch {
+	case errors.As(err, &uncertainErr):
+		msg += fmt.Sprintf(": %v. The request was sent but no reply came back, so Pi-hole may already have made "+
+			"this change. Check its current state with the matching list or get tool before trying again.", uncertainErr.Err)
 	case errors.As(err, &authErr):
 		msg += fmt.Sprintf(": %s. Check PIHOLE_PASSWORD or use an application password.", authErr.Message)
 	case errors.As(err, &forbiddenErr) && forbiddenErr.AppSudoRequired():

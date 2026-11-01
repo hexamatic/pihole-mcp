@@ -106,10 +106,11 @@ func TestTeleporterImport_ListsTheFilesPiholeReports(t *testing.T) {
 			"files": []any{"etc/pihole/pihole.toml", "gravity.db->adlist"},
 			"took":  0.2,
 		},
+		"/info/ftl": map[string]any{"ftl": map[string]any{"uptime": 0}},
 	}))
 
 	text := callTool(t, teleporterImportHandler, c, map[string]any{"file_path": backup})
-	for _, want := range []string{"etc/pihole/pihole.toml", "gravity.db->adlist", "2 item"} {
+	for _, want := range []string{"etc/pihole/pihole.toml", "gravity.db->adlist", "2 item", "restarted to apply it"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("import result should list %q, got: %s", want, text)
 		}
