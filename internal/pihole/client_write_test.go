@@ -3,10 +3,13 @@ package pihole
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -196,5 +199,95 @@ func TestClient_Close(t *testing.T) {
 	c.Close() // idempotent: SID already cleared
 	if logoutCalls != 1 {
 		t.Errorf("logout calls after second Close = %d, want 1", logoutCalls)
+	}
+}
+
+// expiringSessionServer issues sid-1, sid-2, ... and answers 401 to any
+// request carrying sid-1, as FTL does once it has forgotten a session.
+func expiringSessionServer(t *testing.T, handler http.HandlerFunc) (*Client, *int) {
+	t.Helper()
+	logins := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/auth" && r.Method == http.MethodPost {
+			logins++
+			writeJSON(w, authResponse{Session: sessionInfo{Valid: true, SID: "sid-" + strconv.Itoa(logins)}})
+			return
+		}
+		if r.Header.Get("X-FTL-SID") == "sid-1" {
+			w.WriteHeader(http.StatusUnauthorized)
+			writeJSON(w, errorResponse{Error: errorDetail{Key: "unauthorized", Message: "Unauthorized"}})
+			return
+		}
+		handler(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return New(srv.URL, "test", WithRetry(0, time.Second)), &logins
+}
+
+func TestClient_DoRaw_ErrorStatusIsATypedError(t *testing.T) {
+	cases := []struct {
+		status int
+		check  func(error) bool
+	}{
+		{http.StatusInternalServerError, func(err error) bool { var e *APIError; return errors.As(err, &e) && e.StatusCode == 500 }},
+		{http.StatusForbidden, func(err error) bool { var e *ForbiddenError; return errors.As(err, &e) && e.AppSudoRequired() }},
+		{http.StatusNotFound, func(err error) bool { var e *NotFoundError; return errors.As(err, &e) }},
+	}
+	for _, tc := range cases {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			_, c := newAuthedServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				writeJSON(w, errorResponse{Error: errorDetail{Key: "x", Message: "refused",
+					Hint: "The current app session is not allowed to export Pi-hole config settings (webserver.api.app_sudo is false)"}})
+			})
+			resp, err := c.DoRaw(context.Background(), http.MethodGet, "/teleporter", nil)
+			if err == nil {
+				_ = resp.Body.Close()
+				t.Fatalf("DoRaw returned a %d response as success", tc.status)
+			}
+			if !tc.check(err) {
+				t.Errorf("DoRaw error = %T %v, not the typed error for %d", err, err, tc.status)
+			}
+		})
+	}
+}
+
+func TestClient_DoRaw_LogsInAgainAfter401(t *testing.T) {
+	c, logins := expiringSessionServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("PK\x03\x04archive"))
+	})
+	resp, err := c.DoRaw(context.Background(), http.MethodGet, "/teleporter", nil)
+	if err != nil {
+		t.Fatalf("DoRaw after an expired session: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "PK\x03\x04archive" {
+		t.Errorf("body = %q, want the replayed request's archive", body)
+	}
+	if *logins != 2 {
+		t.Errorf("logins = %d, want 2", *logins)
+	}
+}
+
+func TestClient_PostMultipart_LogsInAgainAfter401(t *testing.T) {
+	backup := filepath.Join(t.TempDir(), "backup.zip")
+	if err := os.WriteFile(backup, []byte("PK\x03\x04data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	uploads := 0
+	c, logins := expiringSessionServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		uploads++
+		writeJSON(w, map[string]any{"files": []string{"etc/pihole/pihole.toml"}})
+	})
+	var result TeleporterImportResponse
+	if err := c.PostMultipart(context.Background(), "/teleporter", backup, nil, &result); err != nil {
+		t.Fatalf("PostMultipart after an expired session: %v", err)
+	}
+	if *logins != 2 || uploads != 1 {
+		t.Errorf("logins = %d, uploads reaching the handler = %d; want 2 and 1", *logins, uploads)
+	}
+	if got := result.ImportedFiles(); len(got) != 1 {
+		t.Errorf("ImportedFiles = %v", got)
 	}
 }

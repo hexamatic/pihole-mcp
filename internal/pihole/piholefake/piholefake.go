@@ -17,8 +17,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 )
@@ -38,6 +40,11 @@ type Fake struct {
 	cnames       []string
 	summaryTotal int
 	nextID       int
+
+	// started is when the emulated FTL last started; /info/ftl reports the
+	// time since as its uptime, which is how a client sees a restart.
+	started  time.Time
+	restarts int
 }
 
 // New starts a new fake Pi-hole and returns it. Call Close when done (or use
@@ -51,6 +58,7 @@ func New() *Fake {
 		clients:      make(map[string]pihole.ClientEntry),
 		summaryTotal: 0,
 		nextID:       1,
+		started:      time.Now().Add(-time.Hour),
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.handle))
 	return f
@@ -123,6 +131,27 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 		f.handleStats(w, r, rest[1:])
 	case "teleporter":
 		f.handleTeleporter(w, r)
+	case "info":
+		if len(rest) == 2 && rest[1] == "ftl" && r.Method == http.MethodGet {
+			if time.Now().Before(f.started) {
+				// Still restarting: FTL answers nothing until it is back.
+				writeAPIError(w, http.StatusServiceUnavailable, "restarting", "FTL is restarting")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ftl": map[string]any{
+				// FTL reports uptime in milliseconds.
+				"uptime": float64(time.Since(f.started)) / float64(time.Millisecond),
+			}})
+			return
+		}
+		http.NotFound(w, r)
+	case "action":
+		if len(rest) == 2 && rest[1] == "restartdns" && r.Method == http.MethodPost {
+			f.restart()
+			writeJSON(w, http.StatusOK, map[string]any{"success": true})
+			return
+		}
+		http.NotFound(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -189,8 +218,21 @@ func (f *Fake) handleDomains(w http.ResponseWriter, r *http.Request, p []string)
 			writeAPIError(w, http.StatusBadRequest, "bad_request", "no domain in payload")
 			return
 		}
+		// A rule already on the list is refused ("The item is already present" in v6.8).
+		// FTL adds the rest, reports each outcome under "processed", and
+		// answers 400 only when every rule failed (src/api/list.c). The fake
+		// used to overwrite duplicates and report success, which hid a tool
+		// that read a partly failed batch as complete.
 		created := make([]pihole.Domain, 0, len(names))
+		processed := &pihole.ProcessedResult{Success: []pihole.ProcessedItem{}, Errors: []pihole.ProcessedErr{}}
 		for _, name := range names {
+			key := domainKey(p[0], p[1], name)
+			if _, exists := f.domains[key]; exists {
+				processed.Errors = append(processed.Errors, pihole.ProcessedErr{
+					Item: name, Error: "The item is already present",
+				})
+				continue
+			}
 			d := pihole.Domain{
 				Domain:  name,
 				Type:    p[0],
@@ -199,10 +241,15 @@ func (f *Fake) handleDomains(w http.ResponseWriter, r *http.Request, p []string)
 				Enabled: boolOr(body["enabled"], true),
 				ID:      f.id(),
 			}
-			f.domains[domainKey(d.Type, d.Kind, d.Domain)] = d
+			f.domains[key] = d
 			created = append(created, d)
+			processed.Success = append(processed.Success, pihole.ProcessedItem{Item: name})
 		}
-		writeJSON(w, http.StatusCreated, pihole.DomainsResponse{Domains: created})
+		if len(created) == 0 {
+			writeAPIError(w, http.StatusBadRequest, "database_error", "Could not add to gravity database")
+			return
+		}
+		writeJSON(w, http.StatusCreated, pihole.DomainsResponse{Domains: created, Processed: processed})
 	case http.MethodPut:
 		if len(p) < 3 {
 			writeAPIError(w, http.StatusBadRequest, "bad_request", "type, kind and domain required")
@@ -511,6 +558,10 @@ func (f *Fake) handleBatchDelete(w http.ResponseWriter, r *http.Request, categor
 }
 
 func (f *Fake) handleConfig(w http.ResponseWriter, r *http.Request, p []string) {
+	if len(p) == 0 && r.Method == http.MethodPatch {
+		f.patchConfig(w, r)
+		return
+	}
 	// Only the dns section is emulated (hosts and cnameRecords). Anything else
 	// 404s rather than returning an empty but valid-looking envelope: a bare
 	// GET /config and a GET /config/_properties used to come back as
@@ -543,6 +594,27 @@ func (f *Fake) handleConfig(w http.ResponseWriter, r *http.Request, p []string) 
 		return
 	}
 
+	// GET /config/dns/{field}, optionally ?detailed=true, which wraps the
+	// value with the flags FTL publishes for it. Of the two emulated arrays
+	// only cnameRecords carries FLAG_RESTART_FTL (src/config/config.c, v6.7
+	// and v6.8).
+	if len(p) == 2 && r.Method == http.MethodGet {
+		target := f.fieldSlice(p[1])
+		if target == nil {
+			writeAPIError(w, http.StatusNotFound, "not_found", "unknown config item")
+			return
+		}
+		var value any = toAnySlice(*target)
+		if r.URL.Query().Get("detailed") == "true" {
+			value = map[string]any{
+				"value": value,
+				"flags": map[string]any{"restart_dnsmasq": p[1] == "cnameRecords", "session_reset": false, "env_var": false},
+			}
+		}
+		writeJSON(w, http.StatusOK, pihole.ConfigResponse{Config: map[string]any{"dns": map[string]any{p[1]: value}}})
+		return
+	}
+
 	// /config/dns/{field}/{value} add (PUT) or remove (DELETE).
 	if len(p) < 3 {
 		writeAPIError(w, http.StatusBadRequest, "bad_request", "field and value required")
@@ -554,17 +626,84 @@ func (f *Fake) handleConfig(w http.ResponseWriter, r *http.Request, p []string) 
 		writeAPIError(w, http.StatusBadRequest, "bad_request", "unsupported config array")
 		return
 	}
+	// FTL restarts after a change to a setting flagged for it unless the
+	// request says restart=false.
+	restarts := field == "cnameRecords" && r.URL.Query().Get("restart") != "false"
 	switch r.Method {
 	case http.MethodPut:
 		// FTL answers 201 with no content when an array item is added.
 		f.setFieldSlice(field, appendUnique(*target, value))
+		if restarts {
+			f.restart()
+		}
 		w.WriteHeader(http.StatusCreated)
 	case http.MethodDelete:
 		f.setFieldSlice(field, removeValue(*target, value))
+		if restarts {
+			f.restart()
+		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// patchConfig handles PATCH /config for the two emulated arrays, each
+// replaced whole by the value sent, as FTL does. Any other setting is refused,
+// so a test cannot pass by writing one this fake would silently drop. FTL
+// restarts only when a flagged setting actually changed, and not when the
+// request says restart=false.
+func (f *Fake) patchConfig(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Config map[string]map[string][]string `json:"config"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "this fake accepts only dns.hosts and dns.cnameRecords arrays")
+		return
+	}
+	dns, ok := body.Config["dns"]
+	if !ok || len(body.Config) != 1 || len(dns) == 0 {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "this fake accepts only dns.hosts and dns.cnameRecords arrays")
+		return
+	}
+	for field := range dns {
+		if f.fieldSlice(field) == nil {
+			writeAPIError(w, http.StatusBadRequest, "bad_request", "this fake accepts only dns.hosts and dns.cnameRecords arrays")
+			return
+		}
+	}
+	changed := false
+	for field, v := range dns {
+		if field == "cnameRecords" && !slices.Equal(f.cnames, v) {
+			changed = true
+		}
+		f.setFieldSlice(field, append([]string(nil), v...))
+	}
+	if changed && r.URL.Query().Get("restart") != "false" {
+		f.restart()
+	}
+	writeJSON(w, http.StatusOK, pihole.ConfigResponse{Config: map[string]any{
+		"dns": map[string]any{"hosts": toAnySlice(f.hosts), "cnameRecords": toAnySlice(f.cnames)},
+	}})
+}
+
+// restartOutage is how long the emulated FTL is away while it restarts. The
+// real one takes a couple of seconds; this is long enough that a client
+// waiting for the restart sees FTL go away and come back.
+const restartOutage = 20 * time.Millisecond
+
+// restart records an emulated FTL restart. /info/ftl answers 503 until the
+// new process has started. Caller holds f.mu.
+func (f *Fake) restart() {
+	f.started = time.Now().Add(restartOutage)
+	f.restarts++
+}
+
+// Restarts reports how many times the emulated FTL has restarted.
+func (f *Fake) Restarts() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.restarts
 }
 
 func (f *Fake) fieldSlice(field string) *[]string {
@@ -614,7 +753,16 @@ func (f *Fake) handleTeleporter(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	writeJSON(w, http.StatusOK, pihole.TeleporterImportResponse{Processed: []string{"config", "gravity"}})
+	// FTL restarts after every import (src/api/teleporter.c).
+	f.restart()
+	// FTL lists what it imported under "files", not the "processed" its own
+	// spec documents (src/api/teleporter.c, v6.7 and v6.8). The fake used to
+	// send "processed", which is why an import that rendered an empty list
+	// passed here.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"files": []string{"etc/pihole/pihole.toml", "gravity.db->group", "gravity.db->adlist"},
+		"took":  0.01,
+	})
 }
 
 // --- Seeding and inspection helpers (for tests and the sim harness) ---
@@ -727,6 +875,13 @@ func (f *Fake) Hosts() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.hosts...)
+}
+
+// CNAMEs returns the current dns.cnameRecords entries.
+func (f *Fake) CNAMEs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.cnames...)
 }
 
 // --- internal helpers ---

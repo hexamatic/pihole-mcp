@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 )
 
 // SyncCategory identifies a class of configuration that can be compared and
@@ -88,10 +90,15 @@ type item struct {
 	key     string // stable cross-instance identity
 	label   string // human-readable description for plan output
 	compare string // canonical value for change detection ("" disables updates)
-	add     func(ctx context.Context, c *Client) error
-	update  func(ctx context.Context, c *Client) error
-	delete  func(ctx context.Context, c *Client) error
+	add     writeFunc
+	update  writeFunc
+	delete  writeFunc
 }
+
+// writeFunc makes one change on the target. restart is meaningful only for a
+// category whose writes restart FTL (see restartingCategories); the rest
+// ignore it.
+type writeFunc func(ctx context.Context, c *Client, restart bool) error
 
 // reader reads a category's entries from one instance, keyed by identity.
 type reader func(ctx context.Context, c *Client) (map[string]item, error)
@@ -120,13 +127,13 @@ func readDomains(ctx context.Context, c *Client) (map[string]item, error) {
 			key:     key,
 			label:   fmt.Sprintf("%s (%s/%s)", d.Domain, d.Type, d.Kind),
 			compare: fmt.Sprintf("enabled=%v;comment=%s", d.Enabled, d.Comment),
-			add: func(ctx context.Context, c *Client) error {
+			add: func(ctx context.Context, c *Client, _ bool) error {
 				return c.Post(ctx, base, map[string]any{"domain": d.Domain, "comment": d.Comment, "enabled": d.Enabled}, nil)
 			},
-			update: func(ctx context.Context, c *Client) error {
+			update: func(ctx context.Context, c *Client, _ bool) error {
 				return c.Put(ctx, single, map[string]any{"comment": d.Comment, "enabled": d.Enabled}, nil)
 			},
-			delete: func(ctx context.Context, c *Client) error {
+			delete: func(ctx context.Context, c *Client, _ bool) error {
 				return c.Delete(ctx, single)
 			},
 		}
@@ -148,13 +155,13 @@ func readLists(ctx context.Context, c *Client) (map[string]item, error) {
 			key:     key,
 			label:   fmt.Sprintf("%s (%s)", l.Address, l.Type),
 			compare: fmt.Sprintf("enabled=%v;comment=%s", l.Enabled, l.Comment),
-			add: func(ctx context.Context, c *Client) error {
+			add: func(ctx context.Context, c *Client, _ bool) error {
 				return c.Post(ctx, "/lists?type="+url.QueryEscape(l.Type), map[string]any{"address": l.Address, "comment": l.Comment, "enabled": l.Enabled}, nil)
 			},
-			update: func(ctx context.Context, c *Client) error {
+			update: func(ctx context.Context, c *Client, _ bool) error {
 				return c.Put(ctx, single, map[string]any{"comment": l.Comment, "enabled": l.Enabled, "type": l.Type}, nil)
 			},
-			delete: func(ctx context.Context, c *Client) error {
+			delete: func(ctx context.Context, c *Client, _ bool) error {
 				return c.Delete(ctx, single)
 			},
 		}
@@ -176,13 +183,13 @@ func readGroups(ctx context.Context, c *Client) (map[string]item, error) {
 			key:     key,
 			label:   g.Name,
 			compare: fmt.Sprintf("enabled=%v;comment=%s", g.Enabled, g.Comment),
-			add: func(ctx context.Context, c *Client) error {
+			add: func(ctx context.Context, c *Client, _ bool) error {
 				return c.Post(ctx, "/groups", map[string]any{"name": g.Name, "comment": g.Comment, "enabled": g.Enabled}, nil)
 			},
-			update: func(ctx context.Context, c *Client) error {
+			update: func(ctx context.Context, c *Client, _ bool) error {
 				return c.Put(ctx, single, map[string]any{"comment": g.Comment, "enabled": g.Enabled}, nil)
 			},
-			delete: func(ctx context.Context, c *Client) error {
+			delete: func(ctx context.Context, c *Client, _ bool) error {
 				return c.Delete(ctx, single)
 			},
 		}
@@ -204,13 +211,13 @@ func readClients(ctx context.Context, c *Client) (map[string]item, error) {
 			key:     key,
 			label:   cl.Client,
 			compare: "comment=" + cl.Comment,
-			add: func(ctx context.Context, c *Client) error {
+			add: func(ctx context.Context, c *Client, _ bool) error {
 				return c.Post(ctx, "/clients", map[string]any{"client": cl.Client, "comment": cl.Comment}, nil)
 			},
-			update: func(ctx context.Context, c *Client) error {
+			update: func(ctx context.Context, c *Client, _ bool) error {
 				return c.Put(ctx, single, map[string]any{"comment": cl.Comment}, nil)
 			},
-			delete: func(ctx context.Context, c *Client) error {
+			delete: func(ctx context.Context, c *Client, _ bool) error {
 				return c.Delete(ctx, single)
 			},
 		}
@@ -219,17 +226,33 @@ func readClients(ctx context.Context, c *Client) (map[string]item, error) {
 }
 
 func readLocalDNS(ctx context.Context, c *Client) (map[string]item, error) {
-	return readDNSArray(ctx, c, "hosts", "host")
+	return readDNSArray(ctx, c, "hosts", "host", false)
 }
 
 func readCNAMEs(ctx context.Context, c *Client) (map[string]item, error) {
-	return readDNSArray(ctx, c, "cnameRecords", "cname")
+	return readDNSArray(ctx, c, "cnameRecords", "cname", true)
+}
+
+// restartingCategories are the categories whose writes make FTL restart.
+// dns.cnameRecords carries FLAG_RESTART_FTL in FTL v6.7 and v6.8; dns.hosts
+// does not.
+var restartingCategories = map[SyncCategory]bool{CategoryCNAME: true}
+
+// categorySettings are the config settings a category's writes change, which
+// a write locks so it cannot land between another writer's read of the
+// setting and its write of the whole setting back (Client.LockSettings).
+var categorySettings = map[SyncCategory]string{
+	CategoryLocalDNS: "dns.hosts",
+	CategoryCNAME:    "dns.cnameRecords",
 }
 
 // readDNSArray reads a string-array config value under the dns section
 // (e.g. hosts, cnameRecords). Each entry is an opaque string: there is no
 // change detection (compare is empty), only add and remove.
-func readDNSArray(ctx context.Context, c *Client, field, kind string) (map[string]item, error) {
+//
+// For a field whose writes restart FTL (restarts), each write says whether
+// it should: ApplyPlan lets only the last one restart.
+func readDNSArray(ctx context.Context, c *Client, field, kind string, restarts bool) (map[string]item, error) {
 	var resp ConfigResponse
 	if err := c.Get(ctx, "/config/dns", &resp); err != nil {
 		return nil, err
@@ -249,14 +272,20 @@ func readDNSArray(ctx context.Context, c *Client, field, kind string) (map[strin
 		}
 		key := kind + "|" + s
 		path := "/config/dns/" + field + "/" + EscapePathSegment(s)
+		pathFor := func(restart bool) string {
+			if restarts && !restart {
+				return path + "?restart=false"
+			}
+			return path
+		}
 		m[key] = item{
 			key:   key,
 			label: s,
-			add: func(ctx context.Context, c *Client) error {
-				return c.Put(ctx, path, nil, nil)
+			add: func(ctx context.Context, c *Client, restart bool) error {
+				return c.Put(ctx, pathFor(restart), nil, nil)
 			},
-			delete: func(ctx context.Context, c *Client) error {
-				return c.Delete(ctx, path)
+			delete: func(ctx context.Context, c *Client, restart bool) error {
+				return c.Delete(ctx, pathFor(restart))
 			},
 		}
 	}
@@ -376,7 +405,7 @@ type plannedOp struct {
 	category SyncCategory
 	action   string // add | update | delete
 	label    string
-	run      func(ctx context.Context, c *Client) error
+	run      writeFunc
 }
 
 // plan builds the ordered list of operations needed to bring the target into
@@ -460,29 +489,119 @@ type ApplyResult struct {
 	Applied int        `json:"applied"`
 	Failed  int        `json:"failed"`
 	Ops     []OpResult `json:"ops"`
+	// Restarted is set when the sync restarted FTL to apply its changes and
+	// FTL came back.
+	Restarted bool `json:"restarted,omitempty"`
+	// RestartError says why changes that need an FTL restart may not have
+	// taken effect.
+	RestartError string `json:"restart_error,omitempty"`
 }
 
 // ApplyPlan reconciles the target towards the source by running the planned
 // operations in order. It continues past individual failures, recording each
 // outcome, so a single bad entry does not abort the whole sync. Context
 // cancellation stops further operations.
+//
+// Every CNAME write used to restart FTL, so a sync of several records
+// restarted it once per record and sent each next write into the restart
+// window, where FTL can apply a change and lose the reply. Now only the last
+// such write asks for a restart, and the sync waits for FTL to come back
+// before it goes on. If that write fails after earlier ones succeeded, the
+// sync asks for the restart separately, since without one those records
+// would be saved but not served. A write that lost its reply may have been
+// saved, so it counts as needing the restart too.
 func ApplyPlan(ctx context.Context, target *Client, d *Diff, prune bool) ApplyResult {
 	ops := d.plan(prune)
 	res := ApplyResult{Ops: make([]OpResult, 0, len(ops))}
-	for _, op := range ops {
+
+	last := -1
+	for i, op := range ops {
+		if restartingCategories[op.category] {
+			last = i
+		}
+	}
+	awaitingRestart := false
+	for i, op := range ops {
 		if err := ctx.Err(); err != nil {
 			res.Ops = append(res.Ops, OpResult{Category: string(op.category), Action: op.action, Item: op.label, Err: err.Error()})
 			res.Failed++
 			continue
 		}
+		restart := i == last
 		or := OpResult{Category: string(op.category), Action: op.action, Item: op.label}
-		if err := op.run(ctx, target); err != nil {
+		sent, err := runLocked(ctx, target, op, restart)
+		var uncertain *UncertainError
+		mayBeSaved := err == nil || errors.As(err, &uncertain)
+		if err != nil {
 			or.Err = err.Error()
 			res.Failed++
 		} else {
 			res.Applied++
 		}
 		res.Ops = append(res.Ops, or)
+		if !restartingCategories[op.category] || !mayBeSaved {
+			continue
+		}
+		if !restart {
+			awaitingRestart = true
+			continue
+		}
+		// The write that asked for the restart. If it lost its reply, FTL
+		// may have saved it and restarted, or may have seen nothing, so wait
+		// for a restart and ask for one only if none comes.
+		if waitErr := target.AwaitRestart(ctx, sent); waitErr == nil {
+			awaitingRestart = false
+			res.recordRestart(nil)
+		} else if err == nil {
+			awaitingRestart = false
+			res.recordRestart(waitErr)
+		} else {
+			awaitingRestart = true
+		}
+	}
+	if awaitingRestart {
+		res.restartAfterSync(ctx, target)
 	}
 	return res
+}
+
+// runLocked runs one planned write, holding the lock on the config setting
+// it changes, if it changes one, and returns when the write was sent. That is
+// after the lock was acquired: another writer holding it may restart FTL
+// meanwhile, and a restart before the write is not the one it caused.
+func runLocked(ctx context.Context, target *Client, op plannedOp, restart bool) (time.Time, error) {
+	if setting, ok := categorySettings[op.category]; ok {
+		defer target.LockSettings(setting)()
+	}
+	sent := time.Now()
+	return sent, op.run(ctx, target, restart)
+}
+
+// restartAfterSync restarts FTL so that CNAME records the sync saved without
+// a restart take effect. It runs even when ctx has been cancelled, since by
+// then the records are saved and only the restart is missing, and it is
+// bounded by its own timeout instead.
+func (r *ApplyResult) restartAfterSync(ctx context.Context, target *Client) {
+	wait := target.restartWait
+	if wait <= 0 {
+		wait = restartWaitTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*wait)
+	defer cancel()
+
+	sent := time.Now()
+	if err := target.Post(ctx, "/action/restartdns", nil, nil); err != nil {
+		r.RestartError = "Pi-hole saved the CNAME changes but they take effect only after FTL restarts, " +
+			"and the request to restart it failed: " + err.Error()
+		return
+	}
+	r.recordRestart(target.AwaitRestart(ctx, sent))
+}
+
+func (r *ApplyResult) recordRestart(err error) {
+	if err != nil {
+		r.RestartError = err.Error()
+		return
+	}
+	r.Restarted = true
 }

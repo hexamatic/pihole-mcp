@@ -141,19 +141,6 @@ func flattenTree(m map[string]any) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-// writeProcessedResult writes bulk operation results to a string builder.
-func writeProcessedResult(b *strings.Builder, p *pihole.ProcessedResult) {
-	if p == nil {
-		return
-	}
-	for _, s := range p.Success {
-		fmt.Fprintf(b, "- Added: %s\n", s.Item)
-	}
-	for _, e := range p.Errors {
-		fmt.Fprintf(b, "- Failed: %s (%s)\n", e.Item, e.Error)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // CRUD writes
 //
@@ -165,17 +152,11 @@ func writeProcessedResult(b *strings.Builder, p *pihole.ProcessedResult) {
 // four CRUD tool families so the shape is fixed in one place.
 // ---------------------------------------------------------------------------
 
-// entryFields are the two columns a CRUD PUT replaces wholesale. The zero
-// value is deliberately not useful: use newEntryFields for the defaults that
-// apply when no entry exists yet.
+// entryFields are the two columns a CRUD PUT replaces wholesale.
 type entryFields struct {
 	comment string
 	enabled bool
 }
-
-// newEntryFields returns the values a write assumes when there is no entry to
-// read them from, matching each tool's documented defaults.
-func newEntryFields() entryFields { return entryFields{enabled: true} }
 
 // suppliedString reports whether the caller set key, and its value. GetString
 // cannot tell an omitted parameter from an empty one, and for an update that
@@ -199,13 +180,21 @@ func suppliedBool(req mcp.CallToolRequest, key string) (bool, bool) {
 	return b, ok
 }
 
-// needsCurrentEntry reports whether an update has to read the entry before
-// writing it. A caller that supplied both fields replaces both, so there is
-// nothing to carry over and no round trip to pay for.
-func needsCurrentEntry(req mcp.CallToolRequest) bool {
-	_, hasComment := suppliedString(req, "comment")
-	_, hasEnabled := suppliedBool(req, "enabled")
-	return !hasComment || !hasEnabled
+// missingEntry is the reply when an update names an entry that does not
+// exist. FTL's PUT creates the entry in that case and answers "Created or
+// Updated", so an update of a misspelt name used to add a new one and report
+// it as updated. Every update now reads the entry first and stops here.
+func missingEntry(what, addTool string) *mcp.CallToolResult {
+	return mcp.NewToolResultError(fmt.Sprintf("No %s exists, so there is nothing to update and nothing was changed. "+
+		"Check the name with the matching list tool, or create it with %s.", what, addTool))
+}
+
+// lockEntry locks the entry at path on c across an update's read and write,
+// and returns the unlock. FTL replaces comment and enabled together, so an
+// update reads the entry to keep the field it was not given, and two at once
+// could each put back what the other changed. See pihole.Client.LockEntry.
+func lockEntry(c *pihole.Client, path string) func() {
+	return c.LockEntry(path)
 }
 
 // requireStrings extracts each of keys as a required string parameter,
@@ -271,11 +260,23 @@ func batchDeleteHandler(r *pihole.Registry, collection string) server.ToolHandle
 			return mcp.NewToolResultError("Parameter 'items' is required (JSON array)"), nil
 		}
 
+		var parsed []any
+		if err := json.Unmarshal([]byte(items), &parsed); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Parameter 'items' must be a JSON array: %v", err)), nil
+		}
+		if len(parsed) == 0 {
+			return mcp.NewToolResultError("Parameter 'items' is an empty array, so there is nothing to delete"), nil
+		}
+
 		if err := c.Post(ctx, "/"+collection+":batchDelete", rawJSON(items), nil); err != nil {
 			return toolError("batch delete "+collection, err), nil
 		}
 
-		return mcp.NewToolResultText("**Batch delete completed.**"), nil
+		// FTL answers 204 when it deleted at least one item and 404 only when
+		// it deleted none, and it does not say which ones it found.
+		return mcp.NewToolResultText(fmt.Sprintf("**Batch delete done.** Pi-hole deleted at least one of the %d "+
+			"requested %s; it does not report which, and items that did not exist are skipped without an error. "+
+			"List them again if it matters which were removed.", len(parsed), collection)), nil
 	}
 }
 

@@ -211,15 +211,17 @@ func clientsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		// mutable field a client row has, so an update that does not name one
 		// erases it. Read it back rather than write over it. Group membership
 		// survives a PUT that omits it, so it needs no round trip.
+		defer lockEntry(c, path)()
+		var existing pihole.ClientsResponse
+		if err := c.Get(ctx, path, &existing); err != nil {
+			return toolError("read the client before updating it", err), nil
+		}
+		if len(existing.Clients) == 0 {
+			return missingEntry("client "+client, "pihole_clients_add"), nil
+		}
 		comment, supplied := suppliedString(req, "comment")
 		if !supplied {
-			var existing pihole.ClientsResponse
-			if err := c.Get(ctx, path, &existing); err != nil {
-				return toolError("read the client before updating it", err), nil
-			}
-			if len(existing.Clients) > 0 {
-				comment = existing.Clients[0].Comment
-			}
+			comment = existing.Clients[0].Comment
 		}
 		if err := validateMaxLength("comment", comment, maxCommentLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil

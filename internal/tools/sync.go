@@ -48,6 +48,8 @@ type InstanceSyncOutput struct {
 	Applied      int               `json:"applied,omitempty"`
 	Failed       int               `json:"failed,omitempty"`
 	Ops          []pihole.OpResult `json:"ops,omitempty"`
+	Restarted    bool              `json:"restarted,omitempty" jsonschema:"Whether the sync restarted FTL on the target to apply CNAME changes"`
+	RestartError string            `json:"restart_error,omitempty" jsonschema:"Why changes that need an FTL restart may not have taken effect"`
 }
 
 // RegisterSync registers the multi-instance diff and sync tools. They only
@@ -257,7 +259,9 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if req.GetBool("snapshot", true) {
 			path, serr := exportSnapshot(ctx, target)
 			if serr != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("aborting before any change: failed to snapshot target %q: %v", target.Name(), serr)), nil
+				return mcp.NewToolResultError(toolErrorText(
+					fmt.Sprintf("back up %q before changing it, so nothing was changed", target.Name()), serr) +
+					" To sync without a rollback point, pass snapshot=false."), nil
 			}
 			output.SnapshotPath = path
 		}
@@ -266,6 +270,8 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		output.Applied = res.Applied
 		output.Failed = res.Failed
 		output.Ops = res.Ops
+		output.Restarted = res.Restarted
+		output.RestartError = res.RestartError
 
 		sendLog(ctx, mcp.LoggingLevelInfo, "sync", map[string]any{
 			"event": "instance_sync", "source": source.Name(), "target": target.Name(),
@@ -282,6 +288,12 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 				fmt.Fprintf(&b, "- FAILED %s %s (%s): %s\n", op.Action, op.Category, op.Item, op.Err)
 			}
 		}
+		switch {
+		case res.RestartError != "":
+			fmt.Fprintf(&b, "FTL restart: %s. Check that %s is answering before making further changes.\n", res.RestartError, target.Name())
+		case res.Restarted:
+			fmt.Fprintf(&b, "%s restarted once to apply the CNAME changes and is answering again.\n", target.Name())
+		}
 		result := mcp.NewToolResultStructured(output, b.String())
 		if res.Failed > 0 && res.Applied == 0 {
 			return mcp.NewToolResultError(b.String()), nil
@@ -295,17 +307,17 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 func exportSnapshot(ctx context.Context, c *pihole.Client) (string, error) {
 	reapStaleBackups()
 
-	resp, err := c.DoRaw(ctx, "GET", "/teleporter", nil)
+	archive, done, err := openBackupStream(ctx, c)
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer done()
 
 	tmp, err := os.CreateTemp("", fmt.Sprintf("pihole-%s-snapshot-*.zip", sanitiseName(c.Name())))
 	if err != nil {
 		return "", err
 	}
-	_, err = io.Copy(tmp, resp.Body)
+	_, err = io.Copy(tmp, archive)
 	if closeErr := tmp.Close(); closeErr != nil && err == nil {
 		err = closeErr
 	}

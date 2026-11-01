@@ -3,9 +3,15 @@
 package pihole
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
+	"syscall"
 	"time"
 )
 
@@ -43,6 +49,19 @@ type NotFoundError struct{ *APIError }
 
 // ValidationError is returned for invalid request parameters (400).
 type ValidationError struct{ *APIError }
+
+// ForbiddenError is returned when Pi-hole refuses an authenticated request
+// (403). The common case is a session opened with an application password,
+// which FTL lets read but not change the configuration, export a backup
+// (FTL v6.8+) or import one unless webserver.api.app_sudo is true.
+type ForbiddenError struct{ *APIError }
+
+// AppSudoRequired reports whether Pi-hole refused because the session uses an
+// application password and webserver.api.app_sudo is off. FTL names the
+// setting in the hint of every such refusal, in v6.7 and v6.8 alike.
+func (e *ForbiddenError) AppSudoRequired() bool {
+	return strings.Contains(e.Hint, "app_sudo") || strings.Contains(e.Message, "app_sudo")
+}
 
 // RateLimitError is returned for a 429 that is expected to clear on its own.
 // In practice this is FTL's failed-login brute-force limiter, which decays
@@ -88,6 +107,8 @@ func classifyError(e *APIError) error {
 		return &NotFoundError{e}
 	case http.StatusBadRequest:
 		return &ValidationError{e}
+	case http.StatusForbidden:
+		return &ForbiddenError{e}
 	case http.StatusTooManyRequests:
 		// Both conditions are 429; only the key tells them apart, and they need
 		// opposite handling — one is retryable, the other is not.
@@ -119,4 +140,49 @@ func parseRetryAfter(h http.Header) time.Duration {
 		}
 	}
 	return 0
+}
+
+// UncertainError marks a change request that was sent but got no reply: the
+// connection dropped or timed out after the request went out. Pi-hole may or
+// may not have applied it, so the caller must check before trying again.
+//
+// The usual cause is a write landing just as FTL restarts to apply an earlier
+// change. FTL applies the write and then exits before answering, the caller
+// sees EOF, and a retry fails with "already present", which reads as though
+// the first attempt had done nothing.
+type UncertainError struct{ Err error }
+
+func (e *UncertainError) Error() string { return e.Err.Error() }
+func (e *UncertainError) Unwrap() error { return e.Err }
+
+// mayHaveApplied reports whether err leaves it unknown whether a sent request
+// was processed: the connection ended or timed out with the request already
+// sent. A refused connection or a failed login means nothing was sent.
+//
+// live says whether the request's context was still live when the request
+// began. A context that ends while the request is out, such as a client
+// cancelling the tool call, abandons the reply but not the change, so that
+// outcome is uncertain too. A context that had already ended stopped the
+// request before anything was sent.
+func mayHaveApplied(err error, live bool) bool {
+	if err == nil {
+		return false
+	}
+	var le *loginError
+	if errors.As(err, &le) || errors.Is(err, syscall.ECONNREFUSED) {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return live
+	}
+	switch {
+	case errors.Is(err, io.EOF),
+		errors.Is(err, io.ErrUnexpectedEOF),
+		errors.Is(err, syscall.ECONNRESET),
+		errors.Is(err, syscall.ECONNABORTED),
+		errors.Is(err, syscall.EPIPE):
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }

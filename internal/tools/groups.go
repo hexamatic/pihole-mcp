@@ -168,16 +168,15 @@ func groupsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		// The PUT replaces comment and enabled together, so whichever the
 		// caller left out has to come from the group as it stands. The name is
 		// not replaced: FTL keeps it when the body omits it.
-		current := newEntryFields()
-		if needsCurrentEntry(req) {
-			var existing pihole.GroupsResponse
-			if err := c.Get(ctx, path, &existing); err != nil {
-				return toolError("read the group before updating it", err), nil
-			}
-			if len(existing.Groups) > 0 {
-				current = entryFields{comment: existing.Groups[0].Comment, enabled: existing.Groups[0].Enabled}
-			}
+		defer lockEntry(c, path)()
+		var existing pihole.GroupsResponse
+		if err := c.Get(ctx, path, &existing); err != nil {
+			return toolError("read the group before updating it", err), nil
 		}
+		if len(existing.Groups) == 0 {
+			return missingEntry("group named "+name, "pihole_groups_add"), nil
+		}
+		current := entryFields{comment: existing.Groups[0].Comment, enabled: existing.Groups[0].Enabled}
 
 		body, err := crudUpdateBody(req, current)
 		if err != nil {

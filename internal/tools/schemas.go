@@ -110,3 +110,16 @@ type DomainsListOutput struct {
 	Domains []DomainOutput `json:"domains" jsonschema:"List of domain entries"`
 	Count   int            `json:"count" jsonschema:"Total number of domains"`
 }
+
+// DomainsAddOutput is the structured output for pihole_domains_add.
+type DomainsAddOutput struct {
+	Requested int               `json:"requested" jsonschema:"Number of rules in the request"`
+	Added     []string          `json:"added" jsonschema:"Rules Pi-hole added"`
+	Failed    []DomainAddFailed `json:"failed" jsonschema:"Rules Pi-hole refused, each with its reason, such as already being on the list"`
+}
+
+// DomainAddFailed is one rule Pi-hole refused to add.
+type DomainAddFailed struct {
+	Domain string `json:"domain" jsonschema:"The rule as sent"`
+	Error  string `json:"error" jsonschema:"Pi-hole's reason"`
+}

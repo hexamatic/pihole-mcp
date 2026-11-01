@@ -1,9 +1,12 @@
 package tools
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +52,34 @@ func reapStaleBackups() {
 	}
 }
 
+// zipSignature is the local file header every zip archive starts with. FTL
+// checks the same four bytes before it will import an upload.
+var zipSignature = []byte("PK\x03\x04")
+
+// openBackupStream requests a teleporter export and confirms the reply is a
+// zip archive before anything is written to disk. done closes the response.
+//
+// Both callers used to copy whatever came back straight into a file and
+// report success. An error reply therefore became a 70-byte "backup", and
+// pihole_instance_sync kept one as its rollback point and went on to change
+// the target. The status check in DoRaw stops the error replies; the
+// signature check stops anything else that is not an archive, such as a
+// login page from a reverse proxy, before a file exists.
+func openBackupStream(ctx context.Context, c *pihole.Client) (archive io.Reader, done func(), err error) {
+	resp, err := c.DoRaw(ctx, http.MethodGet, "/teleporter", nil) //nolint:bodyclose // closed below on failure, otherwise by the returned done
+	if err != nil {
+		return nil, nil, err
+	}
+	br := bufio.NewReader(resp.Body)
+	head, err := br.Peek(len(zipSignature))
+	if err != nil || !bytes.Equal(head, zipSignature) {
+		_ = resp.Body.Close()
+		return nil, nil, fmt.Errorf("pi-hole answered the backup request with something other than a zip archive "+
+			"(HTTP %d, Content-Type %q), so nothing was saved", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	return br, func() { _ = resp.Body.Close() }, nil
+}
+
 // RegisterTeleporter registers teleporter export and import tools.
 func RegisterTeleporter(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_teleporter_export",
@@ -83,11 +114,11 @@ func teleporterExportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		reapStaleBackups()
 
-		resp, err := c.DoRaw(ctx, "GET", "/teleporter", nil)
+		archive, done, err := openBackupStream(ctx, c)
 		if err != nil {
 			return toolError("export backup", err), nil
 		}
-		defer func() { _ = resp.Body.Close() }()
+		defer done()
 
 		// 0600, matching what os.CreateTemp gives the default path. The archive
 		// holds the admin password's hash in pihole.toml, every DHCP lease and
@@ -105,12 +136,15 @@ func teleporterExportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to create backup file: %v", err)), nil
 		}
 
-		n, err := io.Copy(out, resp.Body)
+		n, err := io.Copy(out, archive)
 		if closeErr := out.Close(); closeErr != nil && err == nil {
 			err = closeErr
 		}
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to save backup: %v", err)), nil
+			// A truncated archive is worse than none: it looks like a backup
+			// until the day it is needed.
+			_ = os.Remove(out.Name())
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to save backup, so the partial file was removed: %v", err)), nil
 		}
 
 		return mcp.NewToolResultText(fmt.Sprintf(
@@ -152,16 +186,25 @@ func teleporterImportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			},
 		}
 
+		sent := time.Now()
 		var result pihole.TeleporterImportResponse
 		if err := c.PostMultipart(ctx, "/teleporter", filePath, importOptions, &result); err != nil {
 			return toolError("import backup", err), nil
 		}
 
+		imported := result.ImportedFiles()
+		if len(imported) == 0 && (importConfig || importGravity || importDHCP) {
+			return mcp.NewToolResultError("Pi-hole accepted the archive but reported importing nothing from it. " +
+				"Check that the file is a Pi-hole v6 teleporter export and that the parts you asked for are in it."), nil
+		}
+
 		var b strings.Builder
-		b.WriteString("**Import complete.**\n")
-		for _, item := range result.Processed {
+		fmt.Fprintf(&b, "**Import complete.** Pi-hole imported %d item(s):\n", len(imported))
+		for _, item := range imported {
 			fmt.Fprintf(&b, "- %s\n", item)
 		}
+		// FTL always restarts after an import (src/api/teleporter.c).
+		b.WriteString(strings.TrimSpace(awaitRestartNote(ctx, c, sent)) + "\n")
 
 		return mcp.NewToolResultText(b.String()), nil
 	}

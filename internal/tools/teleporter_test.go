@@ -181,6 +181,7 @@ func TestTeleporterImport_SendsTheBackupAsMultipart(t *testing.T) {
 			"processed": []any{"config", "gravity"},
 			"took":      0.1,
 		},
+		"/info/ftl": map[string]any{"ftl": map[string]any{"uptime": 0}},
 	})
 	c := newTestClient(t, h)
 

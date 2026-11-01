@@ -24,7 +24,7 @@ func RegisterDNS(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r,
 		mcp.NewTool("pihole_dns_set_blocking",
 			mcp.WithTitleAnnotation("Set Blocking"),
-			mcp.WithDescription("Enable or disable DNS blocking. Set a timer (seconds) to automatically revert after a duration."),
+			mcp.WithDescription("Enable or disable DNS blocking. Set a timer (seconds) to automatically revert after a duration; repeating the call restarts the countdown."),
 			mcp.WithBoolean("blocking",
 				mcp.Required(),
 				mcp.Description("True to enable blocking, false to disable."),
@@ -33,7 +33,10 @@ func RegisterDNS(s *server.MCPServer, r *pihole.Registry) {
 				mcp.Description("Seconds until automatic revert. Omit for permanent change."),
 			),
 			mcp.WithDestructiveHintAnnotation(true),
-			mcp.WithIdempotentHintAnnotation(true),
+			// Not idempotent: FTL restarts the countdown on every call with a
+			// timer, and a call without one cancels a pending revert, so a
+			// client that replayed this after an unclear outcome could leave
+			// blocking off for longer than asked.
 		),
 		dnsSetBlockingHandler(r),
 	)

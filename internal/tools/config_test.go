@@ -733,16 +733,17 @@ func TestConfigGetValue_SectionAboveACredentialIsFiltered(t *testing.T) {
 
 // TestConfigSet_ResponseWithholdsPasswordHashes covers the path that was
 // easiest to miss. FTL answers a PATCH with the entire configuration, and the
-// handler echoes it, so every successful write of any setting returned the
-// admin password's hash as a side effect.
+// handler used to echo it, so every successful write of any setting returned
+// the admin password's hash as a side effect. The reply now names only the
+// keys the caller set, so nothing else from FTL's answer reaches it.
 func TestConfigSet_ResponseWithholdsPasswordHashes(t *testing.T) {
 	c := newTestClient(t, piholeHandler(map[string]any{"PATCH /config": webserverAPIConfig()}))
 
 	text := callTool(t, configSetHandler, c, map[string]any{"config": `{"dns":{"cache":{"size":10001}}}`})
 
 	assertNoPasswordHash(t, text)
-	if !strings.Contains(text, "Config updated") || !strings.Contains(text, "max_sessions") {
-		t.Errorf("expected a normal success reply with the rest of the config, got:\n%s", text)
+	if !strings.Contains(text, "Config updated") || strings.Contains(text, "max_sessions") {
+		t.Errorf("expected a success reply that does not echo the rest of the config, got:\n%s", text)
 	}
 }
 
