@@ -305,6 +305,18 @@ func (c *Client) DoRaw(ctx context.Context, method, path string, body any) (*htt
 	return c.doRaw(ctx, c.httpClient, method, path, body)
 }
 
+// DoStream is DoRaw for a response that streams for as long as the work
+// behind it takes, such as a gravity rebuild. The request timeout
+// (PIHOLE_REQUEST_TIMEOUT) covers reading the whole body, so it would cut
+// such a stream off part way. DoStream drops that limit and leaves ctx as the
+// only bound, so the caller must give ctx a deadline or cancel it when the
+// stream goes quiet.
+func (c *Client) DoStream(ctx context.Context, method, path string, body any) (*http.Response, error) {
+	hc := *c.httpClient
+	hc.Timeout = 0
+	return c.doRaw(ctx, &hc, method, path, body)
+}
+
 func (c *Client) doRaw(ctx context.Context, hc *http.Client, method, path string, body any) (*http.Response, error) {
 	var resp *http.Response
 	err := c.withRetry(ctx, idempotentMethod(method), func() error {

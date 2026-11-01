@@ -791,7 +791,7 @@ Toolset: `actions`
 
 *destructive*
 
-Re-download all configured blocklists and rebuild the gravity database. Takes 30+ seconds. Run after adding or removing lists.
+Re-download all configured blocklists and rebuild the gravity database. Takes from 30 seconds to several minutes and reports any list that failed. Run after adding or removing lists.
 
 _No parameters._
 
