@@ -39,10 +39,17 @@ type BearerAuth struct {
 type AuthOption func(*BearerAuth)
 
 // WithFailurePenalty charges every rejected request to charge, which reports
-// whether the sender is still under its limit. Pass RateLimiter.Penalise: it
-// makes a wrong token cost the sender ceiling budget even though the 401 is
-// answered before the rate limiter runs, so a token cannot be guessed at line
-// rate.
+// whether the sender is still under its limit. Pass the Penalise method of a
+// NewFailureLimiter: a sender of wrong tokens is answered 429 once over its
+// budget, and the server logs that something is guessing.
+//
+// It does not slow a guesser down. Every token is still compared, so the
+// right one is accepted even from a throttled address, and only the answer to
+// a miss changes. That is deliberate: refusing a throttled address outright
+// would let anyone sharing it, such as every client behind a reverse proxy
+// whose address is not in PIHOLE_TRUSTED_PROXIES, lock the token holder out by
+// sending bad tokens. What makes guessing hopeless is the token's length,
+// which configuration requires to be at least 16 characters.
 func WithFailurePenalty(charge func(*http.Request) bool) AuthOption {
 	return func(a *BearerAuth) { a.penalise = charge }
 }

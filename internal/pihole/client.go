@@ -80,13 +80,38 @@ func WithHTTPClient(hc *http.Client) Option {
 	}
 }
 
+// RedirectError is returned when Pi-hole, or something in front of it,
+// answers with a redirect.
+type RedirectError struct {
+	// Location is where the reply pointed, with any credentials hidden.
+	Location string
+}
+
+func (e *RedirectError) Error() string {
+	return fmt.Sprintf("pi-hole's address redirected to %s; set PIHOLE_URL to the address it redirects to, "+
+		"since this server does not follow redirects", e.Location)
+}
+
+// refuseRedirect stops the HTTP client following a redirect. Go copies the
+// headers it set to the new address, X-FTL-SID among them, even on another
+// host, and a 307 or 308 sends the request body again there, which for a
+// login is the password. Pi-hole's API never redirects, so a redirect means
+// a proxy or a wrong address, and the fix is to configure the final one.
+func refuseRedirect(req *http.Request, _ []*http.Request) error {
+	loc := *req.URL
+	loc.User = nil
+	loc.RawQuery = ""
+	return &RedirectError{Location: loc.String()}
+}
+
 // New creates a new Pi-hole API client.
 func New(baseURL, password string, opts ...Option) *Client {
 	c := &Client{
 		baseURL:  strings.TrimRight(baseURL, "/"),
 		password: password,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:       30 * time.Second,
+			CheckRedirect: refuseRedirect,
 		},
 		retry: RetryPolicy{
 			MaxRetries: DefaultMaxRetries,

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -294,5 +295,28 @@ func TestClient_PostMultipart_LogsInAgainAfter401(t *testing.T) {
 	}
 	if got := result.ImportedFiles(); len(got) != 1 {
 		t.Errorf("ImportedFiles = %v", got)
+	}
+}
+
+func TestClient_DoesNotFollowRedirects(t *testing.T) {
+	// Go copies X-FTL-SID to wherever a redirect points, and a 307 sends a
+	// login's password there again.
+	var elsewhere atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		elsewhere.Add(1)
+	}))
+	t.Cleanup(other.Close)
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/api/elsewhere", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(front.Close)
+
+	err := New(front.URL, "secret", WithRetry(0, time.Second)).Get(context.Background(), "/info/version", nil)
+	var redirect *RedirectError
+	if !errors.As(err, &redirect) || !strings.Contains(err.Error(), "set PIHOLE_URL") {
+		t.Fatalf("err = %T %v, want a RedirectError telling the user what to set", err, err)
+	}
+	if n := elsewhere.Load(); n != 0 {
+		t.Errorf("the redirect target received %d request(s)", n)
 	}
 }
