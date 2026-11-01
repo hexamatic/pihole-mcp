@@ -65,9 +65,12 @@ func TestActionRestartDNS_Success(t *testing.T) {
 func TestActionRestartDNS_NotBackInTimeIsAnError(t *testing.T) {
 	// FTL answers before it restarts. An uptime that never resets is a
 	// restart that has not happened, or has not finished.
+	started := time.Now().Add(-time.Hour)
 	srv := httptest.NewServer(piholeHandler(map[string]any{
 		"/action/restartdns": map[string]any{"success": true},
-		"/info/ftl":          map[string]any{"ftl": map[string]any{"uptime": 3_600_000}},
+		"/info/ftl": func() any {
+			return map[string]any{"ftl": map[string]any{"uptime": float64(time.Since(started)) / float64(time.Millisecond)}}
+		},
 	}))
 	t.Cleanup(srv.Close)
 	c := pihole.New(srv.URL, "test", pihole.WithRestartWait(300*time.Millisecond))

@@ -83,13 +83,9 @@ func RegisterConfig(s *server.MCPServer, r *pihole.Registry) {
 var credentialPaths = []string{"webserver.api.pwhash", "webserver.api.app_pwhash"}
 
 // normaliseConfigPath reduces a dotted config path to the form credentialPaths
-// uses. Case, surrounding whitespace, empty segments and slash separators are
-// all ways of spelling a path that FTL may still resolve to the same key.
+// uses, the one spelling of every path FTL may resolve to the same key.
 func normaliseConfigPath(p string) string {
-	parts := strings.FieldsFunc(strings.ToLower(strings.TrimSpace(p)), func(r rune) bool {
-		return r == '.' || r == '/'
-	})
-	return strings.Join(parts, ".")
+	return pihole.NormaliseConfigPath(p)
 }
 
 // isCredentialPath reports whether a config path names a password hash.
@@ -295,6 +291,14 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if len(leaves) == 0 {
 			return mcp.NewToolResultError(`Parameter 'config' names no setting to change, e.g. {"dns":{"blocking":{"active":true}}}`), nil
 		}
+
+		// A tool that removes one local DNS name writes back the whole
+		// setting it read, so this write must not land in between.
+		settings := make([]string, 0, len(leaves))
+		for k := range leaves {
+			settings = append(settings, k)
+		}
+		defer c.LockSettings(settings...)()
 
 		// Read the current values and FTL's flags for them first. FTL skips
 		// any key it does not recognise and still answers 200 with the whole
@@ -546,10 +550,11 @@ func configValueAt(cfg map[string]any, key string) (any, bool) {
 }
 
 // configLock locks a config setting on c from a read to the write that
-// depends on it, and returns the unlock. Every tool that changes a setting
-// item by item takes the same lock, however it spells the setting's path.
+// depends on it, and returns the unlock. Every writer of a setting takes the
+// same lock, however it spells the setting's path: these tools,
+// pihole_config_set and pihole_instance_sync.
 func configLock(c *pihole.Client, element string) func() {
-	return lockEntry(c, "/config/"+normaliseConfigPath(element))
+	return c.LockSettings(element)
 }
 
 func pluralIt(n int) string {

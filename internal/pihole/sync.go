@@ -238,6 +238,14 @@ func readCNAMEs(ctx context.Context, c *Client) (map[string]item, error) {
 // does not.
 var restartingCategories = map[SyncCategory]bool{CategoryCNAME: true}
 
+// categorySettings are the config settings a category's writes change, which
+// a write locks so it cannot land between another writer's read of the
+// setting and its write of the whole setting back (Client.LockSettings).
+var categorySettings = map[SyncCategory]string{
+	CategoryLocalDNS: "dns.hosts",
+	CategoryCNAME:    "dns.cnameRecords",
+}
+
 // readDNSArray reads a string-array config value under the dns section
 // (e.g. hosts, cnameRecords). Each entry is an opaque string: there is no
 // change detection (compare is empty), only add and remove.
@@ -522,7 +530,7 @@ func ApplyPlan(ctx context.Context, target *Client, d *Diff, prune bool) ApplyRe
 		restart := i == last
 		sent := time.Now()
 		or := OpResult{Category: string(op.category), Action: op.action, Item: op.label}
-		err := op.run(ctx, target, restart)
+		err := runLocked(ctx, target, op, restart)
 		var uncertain *UncertainError
 		mayBeSaved := err == nil || errors.As(err, &uncertain)
 		if err != nil {
@@ -556,6 +564,15 @@ func ApplyPlan(ctx context.Context, target *Client, d *Diff, prune bool) ApplyRe
 		res.restartAfterSync(ctx, target)
 	}
 	return res
+}
+
+// runLocked runs one planned write, holding the lock on the config setting
+// it changes, if it changes one.
+func runLocked(ctx context.Context, target *Client, op plannedOp, restart bool) error {
+	if setting, ok := categorySettings[op.category]; ok {
+		defer target.LockSettings(setting)()
+	}
+	return op.run(ctx, target, restart)
 }
 
 // restartAfterSync restarts FTL so that CNAME records the sync saved without

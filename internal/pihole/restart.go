@@ -34,6 +34,13 @@ const (
 	// restartProbeTimeout bounds one uptime check, so a probe sent into the
 	// shutdown window does not hold the wait up.
 	restartProbeTimeout = 2 * time.Second
+
+	// processChangeMargin is how much later one process's earliest possible
+	// start must be than another's latest possible start before the two are
+	// taken for different processes. FTL reports its uptime to the
+	// microsecond; the margin absorbs clock jitter, and a restart, which
+	// takes FTL down for a second or more, clears it easily.
+	processChangeMargin = 100 * time.Millisecond
 )
 
 // WithRestartWait sets how long a write waits for FTL to come back after a
@@ -132,14 +139,17 @@ func ConfigChild(m map[string]any, key string) (string, any, bool) {
 // and nothing answers while the new one starts, so both are polled through.
 // It gives up after restartWaitTimeout, or when ctx ends.
 //
-// A process started after the request reports an uptime shorter than the time
-// since the request, but FTL measures its uptime when it answers, and the
-// reply can take a while to arrive. Measured when the reply arrives, an FTL
-// that last started just before the request could pass for a new one;
-// measured when the probe is sent, a restart quicker than one round trip
-// could never be confirmed. So the bound from before the probe counts on its
-// own, and the bound from after it counts once FTL has been seen to go away,
-// which the old process cannot follow with an answer.
+// FTL reports how long it has been up, measured when it answers, and the
+// answer arrives some time after the probe was sent. A probe therefore
+// places the answering process's start between the probe's send time less
+// the uptime and its arrival time less the uptime. A process whose earliest
+// possible start is after the request has restarted. So has one whose
+// earliest possible start is after the latest possible start of a process
+// seen answering since the request: it is a different, later process, and
+// the earlier one was still running after the request (with a margin, see
+// processChangeMargin). The second test
+// confirms a restart quicker than one round trip, and unlike counting a
+// failed probe as FTL going away, a transient error cannot satisfy it.
 func (c *Client) AwaitRestart(ctx context.Context, sent time.Time) error {
 	wait := c.restartWait
 	if wait <= 0 {
@@ -150,15 +160,20 @@ func (c *Client) AwaitRestart(ctx context.Context, sent time.Time) error {
 
 	tick := time.NewTicker(restartPollInterval)
 	defer tick.Stop()
-	wentAway := false
+	var seen bool
+	var seenStartedBy time.Time // the earliest latest-possible start of a process seen
 	for {
-		before := time.Since(sent)
+		probed := time.Now()
 		up, err := c.ftlUptime(ctx)
-		switch {
-		case err != nil:
-			wentAway = true
-		case up < before, wentAway && up < time.Since(sent):
-			return nil
+		if err == nil {
+			startedFrom := probed.Add(-up)
+			startedBy := time.Now().Add(-up)
+			if startedFrom.After(sent) || (seen && startedFrom.After(seenStartedBy.Add(processChangeMargin))) {
+				return nil
+			}
+			if !seen || startedBy.Before(seenStartedBy) {
+				seen, seenStartedBy = true, startedBy
+			}
 		}
 		select {
 		case <-ctx.Done():

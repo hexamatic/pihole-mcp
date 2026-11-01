@@ -7,7 +7,6 @@ import (
 	"math"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
@@ -190,56 +189,12 @@ func missingEntry(what, addTool string) *mcp.CallToolResult {
 		"Check the name with the matching list tool, or create it with %s.", what, addTool))
 }
 
-// entryLocks serialises an update's read and write of one entry on one
-// Pi-hole. FTL replaces comment and enabled together, so an update reads the
-// entry to keep the field it was not given. Two updates to the same entry at
-// once could both read it before either wrote, and the second write would
-// put back the value the first had just changed: disabling a rule while
-// editing its comment could leave it enabled, with both calls reporting
-// success. MCP clients do issue tool calls in parallel. Writers outside this
-// server, such as the web interface, are not covered; FTL offers no
-// conditional write that could.
-var entryLocks keyedMutex
-
-// lockEntry locks the entry at path on c, and returns the unlock.
+// lockEntry locks the entry at path on c across an update's read and write,
+// and returns the unlock. FTL replaces comment and enabled together, so an
+// update reads the entry to keep the field it was not given, and two at once
+// could each put back what the other changed. See pihole.Client.LockEntry.
 func lockEntry(c *pihole.Client, path string) func() {
-	return entryLocks.lock(fmt.Sprintf("%p %s", c, path))
-}
-
-// keyedMutex is a set of mutexes created on demand, one per key, and dropped
-// once nothing holds or waits for them.
-type keyedMutex struct {
-	mu   sync.Mutex
-	held map[string]*keyedLock
-}
-
-type keyedLock struct {
-	mu   sync.Mutex
-	refs int
-}
-
-func (k *keyedMutex) lock(key string) func() {
-	k.mu.Lock()
-	if k.held == nil {
-		k.held = make(map[string]*keyedLock)
-	}
-	l := k.held[key]
-	if l == nil {
-		l = &keyedLock{}
-		k.held[key] = l
-	}
-	l.refs++
-	k.mu.Unlock()
-
-	l.mu.Lock()
-	return func() {
-		l.mu.Unlock()
-		k.mu.Lock()
-		if l.refs--; l.refs == 0 {
-			delete(k.held, key)
-		}
-		k.mu.Unlock()
-	}
+	return c.LockEntry(path)
 }
 
 // requireStrings extracts each of keys as a required string parameter,

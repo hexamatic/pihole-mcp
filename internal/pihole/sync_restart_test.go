@@ -216,3 +216,27 @@ func TestApplyPlan_RestartsFTLEvenWhenCancelledPartWay(t *testing.T) {
 			n, res.Restarted, res.RestartError)
 	}
 }
+
+func TestApplyPlan_DNSWritesWaitForTheSettingLock(t *testing.T) {
+	// Removing one name from a local DNS record writes back the whole
+	// setting it read. A sync write landing in between would be erased by
+	// it, so the sync takes the same lock.
+	src := cnameSource(t, "a.home,nas.home")
+	_, tgt, rec := recordedTarget(t)
+	d, err := pihole.ComputeDiff(context.Background(), src, tgt, []pihole.SyncCategory{pihole.CategoryCNAME})
+	if err != nil {
+		t.Fatalf("ComputeDiff: %v", err)
+	}
+
+	unlock := tgt.LockSettings("DNS.cnameRecords")
+	done := make(chan pihole.ApplyResult)
+	go func() { done <- pihole.ApplyPlan(context.Background(), tgt, d, false) }()
+	time.Sleep(100 * time.Millisecond)
+	if n := rec.Count("PUT", ""); n != 0 {
+		t.Errorf("the sync wrote %d CNAME record(s) while another writer held the setting", n)
+	}
+	unlock()
+	if res := <-done; res.Applied != 1 {
+		t.Errorf("after the lock was released the sync applied %d, want 1 (%+v)", res.Applied, res.Ops)
+	}
+}

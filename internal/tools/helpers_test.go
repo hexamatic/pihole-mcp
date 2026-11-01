@@ -27,7 +27,8 @@ func newTestClient(t *testing.T, handler http.Handler) *pihole.Client {
 // every request it saw, so a test can assert on the wire as well as on the
 // reply. Routes are keyed by path ("/dns/blocking") or by method and path
 // ("PUT /dns/blocking", which takes precedence), and map to any
-// JSON-serialisable value. The /api prefix is stripped automatically. Auth
+// JSON-serialisable value, or a func() any that computes one per request. The
+// /api prefix is stripped automatically. Auth
 // requests are handled transparently.
 //
 // Route keys are matched against the DECODED path, so a key covering a value
@@ -45,6 +46,9 @@ func piholeHandler(routes map[string]any) *recorder {
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/api")
 		if resp, ok := rt.lookup(r.Method, path); ok {
+			if compute, ok := resp.(func() any); ok {
+				resp = compute()
+			}
 			writeTestJSON(w, resp)
 			return
 		}

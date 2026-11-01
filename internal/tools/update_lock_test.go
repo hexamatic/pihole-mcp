@@ -64,32 +64,3 @@ func TestDomainsUpdate_ConcurrentPartialUpdatesKeepBothChanges(t *testing.T) {
 			d.Enabled, d.Comment)
 	}
 }
-
-func TestKeyedMutex_SerialisesOneKeyOnly(t *testing.T) {
-	var k keyedMutex
-	unlockA := k.lock("a")
-
-	other := make(chan struct{})
-	go func() { k.lock("b")(); close(other) }()
-	select {
-	case <-other:
-	case <-time.After(time.Second):
-		t.Fatal("a lock on one key blocked a different key")
-	}
-
-	same := make(chan struct{})
-	go func() { k.lock("a")(); close(same) }()
-	select {
-	case <-same:
-		t.Fatal("a second lock on a held key did not wait")
-	case <-time.After(50 * time.Millisecond):
-	}
-	unlockA()
-	<-same
-
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	if len(k.held) != 0 {
-		t.Errorf("released keys are still held: %v", k.held)
-	}
-}

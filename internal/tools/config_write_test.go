@@ -4,6 +4,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/hexamatic/pihole-mcp/internal/pihole/piholefake"
@@ -242,4 +243,29 @@ func TestExpandConfigKeys_MergesSectionsSpelledDifferently(t *testing.T) {
 	if len(leaves) != 3 {
 		t.Errorf("leaves = %v, want three settings", leaves)
 	}
+}
+
+func TestConfigSet_WaitsForTheSettingLock(t *testing.T) {
+	// pihole_local_dns_delete writes back the whole setting it read, so a
+	// config_set of the same setting must not land between its read and write.
+	rec := piholeHandler(map[string]any{
+		"GET /config":   detailedConfig(),
+		"PATCH /config": configAfter(20000),
+		"/info/ftl":     map[string]any{"ftl": map[string]any{"uptime": 0}},
+	})
+	c := newTestClient(t, rec)
+
+	unlock := c.LockSettings("DNS.Cache.Size")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		callTool(t, configSetHandler, c, map[string]any{"config": `{"dns":{"cache":{"size":20000}}}`})
+	}()
+	time.Sleep(100 * time.Millisecond)
+	if n := rec.Count("PATCH", ""); n != 0 {
+		t.Errorf("config_set wrote while another writer held the setting")
+	}
+	unlock()
+	<-done
+	rec.AssertCount(t, "PATCH", "/config", 1)
 }

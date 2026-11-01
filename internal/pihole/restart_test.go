@@ -41,14 +41,17 @@ func ftlUptimeServer(t *testing.T, uptime func(n int) float64) (*Client, *atomic
 func TestAwaitRestart_WaitsThroughTheShutdownForANewProcess(t *testing.T) {
 	// The old process answers first, then nothing answers, then the new one
 	// reports a short uptime: the sequence a real restart produces.
+	oldStart := time.Now().Add(-time.Hour)
+	var newStart time.Time
 	c, probes := ftlUptimeServer(t, func(n int) float64 {
 		switch {
 		case n <= 2:
-			return 3_600_000 // the process that took the write, still up
+			return msSince(oldStart) // the process that took the write, still up
 		case n <= 4:
+			newStart = time.Now()
 			return -1 // down
 		default:
-			return 50 // started 50 ms ago
+			return msSince(newStart)
 		}
 	})
 
@@ -61,7 +64,8 @@ func TestAwaitRestart_WaitsThroughTheShutdownForANewProcess(t *testing.T) {
 }
 
 func TestAwaitRestart_GivesUpWhenFTLNeverRestarts(t *testing.T) {
-	c, _ := ftlUptimeServer(t, func(int) float64 { return 3_600_000 })
+	started := time.Now().Add(-time.Hour)
+	c, _ := ftlUptimeServer(t, func(int) float64 { return msSince(started) })
 	c.restartWait = 300 * time.Millisecond
 
 	err := c.AwaitRestart(context.Background(), time.Now())
@@ -136,41 +140,49 @@ func TestDo_ARefusedConnectionIsNotUncertain(t *testing.T) {
 }
 
 func TestAwaitRestart_ASlowReplyFromTheOldProcessIsNotARestart(t *testing.T) {
-	// FTL last started just before the write, and its replies take longer to
-	// arrive than that. Measured once the reply was in, its uptime looked
-	// shorter than the time since the write, and it passed for a restart.
+	// FTL last started just before the write, its replies take longer to
+	// arrive than that, and one probe fails without FTL having gone anywhere.
+	// Measured once the reply was in, its uptime looked shorter than the
+	// time since the write; and counting the failed probe as a restart in
+	// progress let it pass for the new process.
 	sent := time.Now()
 	started := sent.Add(-20 * time.Millisecond)
-	c, _ := ftlUptimeServerWith(t, func(int) (float64, time.Duration) {
-		return float64(time.Since(started)) / float64(time.Millisecond), 80 * time.Millisecond
+	c, _ := ftlUptimeServerWith(t, func(n int) (float64, time.Duration) {
+		if n == 2 {
+			return -1, 0 // a transient error
+		}
+		return msSince(started), 80 * time.Millisecond
 	})
-	c.restartWait = 400 * time.Millisecond
+	c.restartWait = 900 * time.Millisecond
 
 	if err := c.AwaitRestart(context.Background(), sent); err == nil {
 		t.Fatal("an FTL that started before the write was taken for a restart")
 	}
 }
 
-func TestAwaitRestart_AQuickRestartIsConfirmedOnceFTLWentAway(t *testing.T) {
+func TestAwaitRestart_AQuickRestartIsConfirmedOnceADifferentProcessAnswers(t *testing.T) {
 	// The new process started 5 ms after the write, sooner than a probe takes
 	// to come back, so its uptime is never below the time since the write
-	// as measured before the probe. Having seen FTL go away, the wait
-	// accepts it.
+	// as measured when the probe was sent. It started after the process that
+	// answered the first probe, though, which only a restart explains.
 	sent := time.Now()
 	started := sent.Add(5 * time.Millisecond)
 	c, probes := ftlUptimeServerWith(t, func(n int) (float64, time.Duration) {
-		if n == 1 {
-			return -1, 0
+		switch n {
+		case 1:
+			return msSince(sent.Add(-time.Hour)), 0 // the process that took the write
+		case 2:
+			return -1, 0 // down
 		}
 		time.Sleep(20 * time.Millisecond) // FTL is slow to answer
-		return float64(time.Since(started)) / float64(time.Millisecond), 0
+		return msSince(started), 0
 	})
 
 	if err := c.AwaitRestart(context.Background(), sent); err != nil {
 		t.Fatalf("AwaitRestart: %v", err)
 	}
-	if n := probes.Load(); n != 2 {
-		t.Errorf("confirmed after %d probes, want 2", n)
+	if n := probes.Load(); n != 3 {
+		t.Errorf("confirmed after %d probes, want 3", n)
 	}
 }
 
@@ -241,4 +253,10 @@ func TestDetailedConfigItem_MatchesKeysAsFTLDoes(t *testing.T) {
 	if !ok || item.Key != "dns.cache.size" || !item.RestartsFTL {
 		t.Errorf("DetailedConfigItem(DNS.Cache.size) = %+v, %v; want dns.cache.size, which FTL matches ignoring case", item, ok)
 	}
+}
+
+// msSince is an uptime as FTL reports it: milliseconds since start, to the
+// microsecond, growing with the clock.
+func msSince(start time.Time) float64 {
+	return float64(time.Since(start)) / float64(time.Millisecond)
 }

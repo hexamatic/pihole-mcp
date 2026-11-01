@@ -27,8 +27,10 @@ type Client struct {
 	retry      RetryPolicy
 	// restartWait bounds AwaitRestart; zero means restartWaitTimeout.
 	restartWait time.Duration
-	mu          sync.RWMutex
-	sid         string
+	// locks serialises this server's read-then-write sequences (locks.go).
+	locks keyedMutex
+	mu    sync.RWMutex
+	sid   string
 }
 
 // Option configures the Pi-hole client.
