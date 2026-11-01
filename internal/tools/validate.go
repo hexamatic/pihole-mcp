@@ -21,11 +21,11 @@ const (
 	maxConfigPathLen = 256  // dotted config paths like dns.upstreams
 	maxRegexLength   = 1024 // regex denylist rules: an alternation is easily longer than a name
 
-	// maxTeleporterFileSize caps a teleporter import upload. A real export is
-	// gravity plus config plus DHCP leases, typically a few MB even on a
-	// heavily configured install, so this is generous headroom rather than a
-	// tight fit.
-	maxTeleporterFileSize = 512 * 1024 * 1024 // 512 MiB
+	// maxTeleporterFileSize caps a teleporter import upload at FTL's own
+	// limit (MAXFILESIZE in src/api/teleporter.c, 50 MiB in v6.7 and v6.8).
+	// It used to be 512 MiB, which let a file FTL was always going to refuse
+	// be read into memory and uploaded first. A real export is a few MB.
+	maxTeleporterFileSize = 50 * 1024 * 1024 // 50 MiB
 )
 
 // validateDomainName returns nil if s is acceptable as a Pi-hole denylist or

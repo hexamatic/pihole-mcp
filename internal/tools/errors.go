@@ -17,17 +17,36 @@ import (
 // It inspects the error type and adds contextual guidance for tool clients
 // to understand what went wrong and how to fix it.
 func toolError(action string, err error) *mcp.CallToolResult {
+	return mcp.NewToolResultError(toolErrorText(action, err))
+}
+
+// toolErrorText is toolError's message, for a caller that has more to add.
+func toolErrorText(action string, err error) string {
 	msg := fmt.Sprintf("Failed to %s", action)
 
 	var authErr *pihole.AuthError
 	var notFoundErr *pihole.NotFoundError
 	var validationErr *pihole.ValidationError
 	var rateLimitErr *pihole.RateLimitError
+	var forbiddenErr *pihole.ForbiddenError
 	var apiErr *pihole.APIError
 
 	switch {
 	case errors.As(err, &authErr):
 		msg += fmt.Sprintf(": %s. Check PIHOLE_PASSWORD or use an application password.", authErr.Message)
+	case errors.As(err, &forbiddenErr) && forbiddenErr.AppSudoRequired():
+		msg += fmt.Sprintf(": %s. PIHOLE_PASSWORD is a Pi-hole application password, and Pi-hole lets an "+
+			"application password read settings but not change them, export a backup or import one while "+
+			"webserver.api.app_sudo is false. Turn on webserver.api.app_sudo in the Pi-hole web interface "+
+			"(Settings > All Settings) or with `pihole-FTL --config webserver.api.app_sudo true` on the Pi-hole, "+
+			"or use the admin password instead. This server cannot change the setting itself while it is "+
+			"logged in with the application password.",
+			forbiddenErr.Message)
+	case errors.As(err, &forbiddenErr):
+		msg += fmt.Sprintf(": %s", forbiddenErr.Message)
+		if forbiddenErr.Hint != "" {
+			msg += " (" + forbiddenErr.Hint + ")"
+		}
 	case errors.As(err, &rateLimitErr):
 		msg += fmt.Sprintf(": %s. Too many requests — try again shortly.", rateLimitErr.Message)
 	case errors.As(err, &notFoundErr):
@@ -49,7 +68,7 @@ func toolError(action string, err error) *mcp.CallToolResult {
 		}
 	}
 
-	return mcp.NewToolResultError(msg)
+	return msg
 }
 
 // TransportHint returns the fix for a connection-level failure, or "" when the

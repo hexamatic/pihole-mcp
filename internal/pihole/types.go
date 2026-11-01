@@ -787,9 +787,25 @@ type ActionResponse struct {
 }
 
 // TeleporterImportResponse is the response from POST /api/teleporter.
+//
+// FTL reports what it imported under "files" (src/api/teleporter.c in v6.7
+// and v6.8 alike). Its own OpenAPI spec documents "processed", which is the
+// key this struct used to read, so every import rendered an empty list and
+// read the same whether Pi-hole restored everything or nothing. Processed is
+// kept in case a future FTL brings the code in line with its documentation.
 type TeleporterImportResponse struct {
+	Files     []string `json:"files"`
 	Processed []string `json:"processed"`
 	Took      float64  `json:"took"`
+}
+
+// ImportedFiles returns what Pi-hole reported importing, from whichever key
+// carried it.
+func (r TeleporterImportResponse) ImportedFiles() []string {
+	if len(r.Files) > 0 {
+		return r.Files
+	}
+	return r.Processed
 }
 
 // MetricsInfo is the response from GET /api/info/metrics.

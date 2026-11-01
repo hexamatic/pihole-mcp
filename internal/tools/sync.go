@@ -257,7 +257,9 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if req.GetBool("snapshot", true) {
 			path, serr := exportSnapshot(ctx, target)
 			if serr != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("aborting before any change: failed to snapshot target %q: %v", target.Name(), serr)), nil
+				return mcp.NewToolResultError(toolErrorText(
+					fmt.Sprintf("back up %q before changing it, so nothing was changed", target.Name()), serr) +
+					" To sync without a rollback point, pass snapshot=false."), nil
 			}
 			output.SnapshotPath = path
 		}
@@ -295,17 +297,17 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 func exportSnapshot(ctx context.Context, c *pihole.Client) (string, error) {
 	reapStaleBackups()
 
-	resp, err := c.DoRaw(ctx, "GET", "/teleporter", nil)
+	archive, done, err := openBackupStream(ctx, c)
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer done()
 
 	tmp, err := os.CreateTemp("", fmt.Sprintf("pihole-%s-snapshot-*.zip", sanitiseName(c.Name())))
 	if err != nil {
 		return "", err
 	}
-	_, err = io.Copy(tmp, resp.Body)
+	_, err = io.Copy(tmp, archive)
 	if closeErr := tmp.Close(); closeErr != nil && err == nil {
 		err = closeErr
 	}

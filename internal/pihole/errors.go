@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -43,6 +44,19 @@ type NotFoundError struct{ *APIError }
 
 // ValidationError is returned for invalid request parameters (400).
 type ValidationError struct{ *APIError }
+
+// ForbiddenError is returned when Pi-hole refuses an authenticated request
+// (403). The common case is a session opened with an application password,
+// which FTL lets read but not change the configuration, export a backup
+// (FTL v6.8+) or import one unless webserver.api.app_sudo is true.
+type ForbiddenError struct{ *APIError }
+
+// AppSudoRequired reports whether Pi-hole refused because the session uses an
+// application password and webserver.api.app_sudo is off. FTL names the
+// setting in the hint of every such refusal, in v6.7 and v6.8 alike.
+func (e *ForbiddenError) AppSudoRequired() bool {
+	return strings.Contains(e.Hint, "app_sudo") || strings.Contains(e.Message, "app_sudo")
+}
 
 // RateLimitError is returned for a 429 that is expected to clear on its own.
 // In practice this is FTL's failed-login brute-force limiter, which decays
@@ -88,6 +102,8 @@ func classifyError(e *APIError) error {
 		return &NotFoundError{e}
 	case http.StatusBadRequest:
 		return &ValidationError{e}
+	case http.StatusForbidden:
+		return &ForbiddenError{e}
 	case http.StatusTooManyRequests:
 		// Both conditions are 429; only the key tells them apart, and they need
 		// opposite handling — one is retryable, the other is not.

@@ -614,7 +614,14 @@ func (f *Fake) handleTeleporter(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	writeJSON(w, http.StatusOK, pihole.TeleporterImportResponse{Processed: []string{"config", "gravity"}})
+	// FTL lists what it imported under "files", not the "processed" its own
+	// spec documents (src/api/teleporter.c, v6.7 and v6.8). The fake used to
+	// send "processed", which is why an import that rendered an empty list
+	// passed here.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"files": []string{"etc/pihole/pihole.toml", "gravity.db->group", "gravity.db->adlist"},
+		"took":  0.01,
+	})
 }
 
 // --- Seeding and inspection helpers (for tests and the sim harness) ---

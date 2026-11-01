@@ -166,36 +166,53 @@ func (c *Client) PostMultipart(ctx context.Context, path, filePath string, impor
 			return err
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api"+path, bytes.NewReader(body))
+		err = c.sendMultipart(ctx, path, sid, body, contentType, result)
+		// A 401 means FTL refused the upload before reading it, typically
+		// because the session expired or FTL restarted. Log in again and
+		// send it once more, exactly as Do does.
+		var authErr *AuthError
+		if !errors.As(err, &authErr) {
+			return err
+		}
+		newSID, err := c.handleAuthRetry(ctx, sid)
 		if err != nil {
-			return fmt.Errorf("creating multipart request: %w", err)
+			return err
 		}
-		req.Header.Set("Content-Type", contentType)
-		req.Header.Set("X-FTL-SID", sid)
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("sending multipart request: %w", err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("reading response: %w", err)
-		}
-
-		if resp.StatusCode >= 400 {
-			return c.parseError(resp.StatusCode, resp.Header, path, respBody)
-		}
-
-		if result != nil && len(respBody) > 0 {
-			if err := json.Unmarshal(respBody, result); err != nil {
-				return fmt.Errorf("unmarshalling response: %w", err)
-			}
-		}
-
-		return nil
+		return c.sendMultipart(ctx, path, newSID, body, contentType, result)
 	})
+}
+
+// sendMultipart sends one encoded multipart body and decodes the reply.
+func (c *Client) sendMultipart(ctx context.Context, path, sid string, body []byte, contentType string, result any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api"+path, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("creating multipart request: %w", err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("X-FTL-SID", sid)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("sending multipart request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return c.parseError(resp.StatusCode, resp.Header, path, respBody)
+	}
+
+	if result != nil && len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, result); err != nil {
+			return fmt.Errorf("unmarshalling response: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // buildMultipartBody encodes filePath (and any import options) as a multipart
@@ -266,13 +283,29 @@ func (c *Client) Close() {
 	c.mu.Unlock()
 }
 
-// DoRaw executes an authenticated request and returns the raw HTTP response.
-// The caller is responsible for closing the response body.
-// Used for non-JSON endpoints (teleporter export, gravity stream).
+// maxErrorBody bounds how much of an error response is read. FTL's error
+// bodies are a few hundred bytes; anything larger is not one of them.
+const maxErrorBody = 1 << 20
+
+// DoRaw executes an authenticated request and returns the raw HTTP response,
+// for an endpoint whose body the caller streams itself (teleporter export,
+// gravity). The caller closes the body.
 //
-// Only the transport failure is retried — once headers are in hand the response
-// is handed straight to the caller, who streams the body themselves.
+// The status is checked before the response is handed over. It used not to
+// be, so an expired session or a refusal reached the caller as a successful
+// response whose body was FTL's JSON error: pihole_teleporter_export saved
+// that as "Backup saved", and pihole_instance_sync kept it as its rollback
+// point and went on to write to the target. A 401 now refreshes the session
+// and replays the request once, as Do does, and any other status of 400 or
+// above comes back as the same typed error Do would return.
+//
+// Only a transport failure is retried. Once a successful response is in hand
+// its body belongs to the caller.
 func (c *Client) DoRaw(ctx context.Context, method, path string, body any) (*http.Response, error) {
+	return c.doRaw(ctx, c.httpClient, method, path, body)
+}
+
+func (c *Client) doRaw(ctx context.Context, hc *http.Client, method, path string, body any) (*http.Response, error) {
 	var resp *http.Response
 	err := c.withRetry(ctx, idempotentMethod(method), func() error {
 		sid, err := c.ensureAuth(ctx)
@@ -280,21 +313,43 @@ func (c *Client) DoRaw(ctx context.Context, method, path string, body any) (*htt
 			return err
 		}
 
-		req, err := c.buildRequest(ctx, method, path, sid, body)
+		resp, err = c.sendRaw(ctx, hc, method, path, sid, body) //nolint:bodyclose // returned to the caller, who closes it
+		var authErr *AuthError
+		if !errors.As(err, &authErr) {
+			return err
+		}
+		newSID, err := c.handleAuthRetry(ctx, sid)
 		if err != nil {
 			return err
 		}
-
-		resp, err = c.httpClient.Do(req) //nolint:bodyclose // the caller owns and closes the body
-		if err != nil {
-			return fmt.Errorf("pi-hole API request failed: %w", err)
-		}
-		return nil
+		resp, err = c.sendRaw(ctx, hc, method, path, newSID, body) //nolint:bodyclose // returned to the caller, who closes it
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	return resp, nil
+}
+
+// sendRaw sends one request and returns the response when its status is below
+// 400. Otherwise it reads the error body, closes it, and returns the typed
+// error.
+func (c *Client) sendRaw(ctx context.Context, hc *http.Client, method, path, sid string, body any) (*http.Response, error) {
+	req, err := c.buildRequest(ctx, method, path, sid, body)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := hc.Do(req) //nolint:bodyclose // closed below on error, otherwise owned and closed by the caller
+	if err != nil {
+		return nil, fmt.Errorf("pi-hole API request failed: %w", err)
+	}
+	if resp.StatusCode < 400 {
+		return resp, nil
+	}
+	defer func() { _ = resp.Body.Close() }()
+	errBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+	return nil, c.parseError(resp.StatusCode, resp.Header, path, errBody)
 }
 
 // doRequest executes a single API request without auth retry logic.
