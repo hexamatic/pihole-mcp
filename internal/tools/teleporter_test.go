@@ -190,6 +190,7 @@ func TestTeleporterImport_SendsTheBackupAsMultipart(t *testing.T) {
 		"config":      false,
 		"gravity":     true,
 		"dhcp_leases": false,
+		"snapshot":    false,
 	})
 	if !strings.Contains(text, "Import complete") {
 		t.Errorf("expected import confirmation, got: %s", text)

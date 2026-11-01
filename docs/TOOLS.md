@@ -962,7 +962,7 @@ Export a full Pi-hole configuration backup as a zip archive. Returns the saved f
 
 *destructive*
 
-Import a Pi-hole configuration backup from a zip archive. Selectively import config, gravity tables, and DHCP leases.
+Import a Pi-hole configuration backup from a zip archive, replacing the configuration, gravity tables or DHCP leases it holds. Backs up the current configuration first; mode=plan shows what the archive holds without importing.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -970,6 +970,8 @@ Import a Pi-hole configuration backup from a zip archive. Selectively import con
 | `config` | boolean | No | Import Pi-hole configuration (default true). |
 | `dhcp_leases` | boolean | No | Import DHCP leases (default true). |
 | `gravity` | boolean | No | Import gravity database tables (default true). |
+| `mode` | string | No | 'apply' (default) imports; 'plan' lists what the archive holds and what would be replaced, and changes nothing. |
+| `snapshot` | boolean | No | Export a backup of the current configuration before importing, as a rollback point (default true). |
 
 ## Sessions
 

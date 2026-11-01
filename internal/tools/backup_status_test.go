@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"archive/zip"
 	"bytes"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/hexamatic/pihole-mcp/internal/pihole/piholefake"
+	"github.com/hexamatic/pihole-mcp/internal/pihole/wiretest"
 )
 
 // The backup path used to accept any reply. An expired session, a refusal or a
@@ -109,7 +111,7 @@ func TestTeleporterImport_ListsTheFilesPiholeReports(t *testing.T) {
 		"/info/ftl": map[string]any{"ftl": map[string]any{"uptime": 0}},
 	}))
 
-	text := callTool(t, teleporterImportHandler, c, map[string]any{"file_path": backup})
+	text := callTool(t, teleporterImportHandler, c, map[string]any{"file_path": backup, "snapshot": false})
 	for _, want := range []string{"etc/pihole/pihole.toml", "gravity.db->adlist", "2 item", "restarted to apply it"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("import result should list %q, got: %s", want, text)
@@ -123,7 +125,7 @@ func TestTeleporterImport_NothingImportedIsAnError(t *testing.T) {
 		"/teleporter": map[string]any{"files": []any{}, "took": 0.1},
 	}))
 
-	text := callToolExpectError(t, teleporterImportHandler, c, map[string]any{"file_path": backup})
+	text := callToolExpectError(t, teleporterImportHandler, c, map[string]any{"file_path": backup, "snapshot": false})
 	if !strings.Contains(text, "importing nothing") {
 		t.Errorf("an empty import should say nothing was imported, got: %s", text)
 	}
@@ -208,5 +210,83 @@ func TestSync_DefaultSnapshotIsARealArchive(t *testing.T) {
 	}
 	if applied.Failed != 0 || f2.DomainCount() != 1 {
 		t.Errorf("apply after a good snapshot: failed=%d target domains=%d", applied.Failed, f2.DomainCount())
+	}
+}
+
+func TestTeleporterImport_BacksUpTheCurrentConfigurationFirst(t *testing.T) {
+	// An import replaces whole parts of the configuration with no way back
+	// through the API, so the current state is exported before it.
+	f := piholefake.New()
+	t.Cleanup(f.Close)
+	rec := wiretest.Proxy(f.Handler())
+	c := newTestClient(t, rec)
+
+	text := callTool(t, teleporterImportHandler, c, map[string]any{"file_path": writeTestBackup(t)})
+	_, after, ok := strings.Cut(text, "backed up at ")
+	if !ok {
+		t.Fatalf("expected the reply to give the backup's path, got: %s", text)
+	}
+	path, _, _ := strings.Cut(after, ";")
+	t.Cleanup(func() { _ = os.Remove(path) })
+	data, err := os.ReadFile(path) //nolint:gosec // a path this test just received from the tool
+	if err != nil || !bytes.HasPrefix(data, []byte("PK\x03\x04")) {
+		t.Fatalf("backup at %q is not a zip archive (%v)", path, err)
+	}
+
+	var order []string
+	for _, r := range rec.Select("", "/teleporter") {
+		order = append(order, r.Method)
+	}
+	if strings.Join(order, ",") != "GET,POST" {
+		t.Errorf("teleporter requests = %v, want the export before the import", order)
+	}
+}
+
+func TestTeleporterImport_AFailedBackupImportsNothing(t *testing.T) {
+	f := piholefake.New()
+	t.Cleanup(f.Close)
+	rec := wiretest.Proxy(failingExport(f, http.StatusInternalServerError))
+	c := newTestClient(t, rec)
+
+	text := callToolExpectError(t, teleporterImportHandler, c, map[string]any{"file_path": writeTestBackup(t)})
+	if !strings.Contains(text, "so nothing was imported") || !strings.Contains(text, ". To import without a rollback point, pass snapshot=false.") {
+		t.Errorf("expected the failed backup to stop the import and say how to skip it, got: %s", text)
+	}
+	rec.AssertNone(t, "POST", "/teleporter")
+}
+
+func TestTeleporterImport_PlanListsWhatWouldBeReplaced(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "backup.zip")
+	out, err := os.Create(path) //nolint:gosec // a path inside the test's own temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(out)
+	for _, name := range []string{"etc/pihole/pihole.toml", "etc/pihole/gravity.db", "etc/pihole/dhcp.leases", "etc/hosts"} {
+		w, _ := zw.Create(name)
+		_, _ = w.Write([]byte("data"))
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_ = out.Close()
+
+	rec := piholeHandler(nil)
+	text := callTool(t, teleporterImportHandler, newTestClient(t, rec), map[string]any{
+		"file_path": path, "mode": "plan", "dhcp_leases": false,
+	})
+	for _, want := range []string{
+		"Nothing has been changed",
+		"etc/pihole/pihole.toml: replaces the Pi-hole configuration",
+		"etc/pihole/gravity.db: replaces the lists, rules, groups and clients",
+		"etc/pihole/dhcp.leases: skipped, since dhcp_leases=false",
+		"etc/hosts: not imported",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("expected %q in the plan, got:\n%s", want, text)
+		}
+	}
+	if n := len(rec.Requests()); n != 0 {
+		t.Errorf("a plan reads the archive locally, but %d request(s) reached Pi-hole", n)
 	}
 }
