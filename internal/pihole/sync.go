@@ -528,9 +528,8 @@ func ApplyPlan(ctx context.Context, target *Client, d *Diff, prune bool) ApplyRe
 			continue
 		}
 		restart := i == last
-		sent := time.Now()
 		or := OpResult{Category: string(op.category), Action: op.action, Item: op.label}
-		err := runLocked(ctx, target, op, restart)
+		sent, err := runLocked(ctx, target, op, restart)
 		var uncertain *UncertainError
 		mayBeSaved := err == nil || errors.As(err, &uncertain)
 		if err != nil {
@@ -567,12 +566,15 @@ func ApplyPlan(ctx context.Context, target *Client, d *Diff, prune bool) ApplyRe
 }
 
 // runLocked runs one planned write, holding the lock on the config setting
-// it changes, if it changes one.
-func runLocked(ctx context.Context, target *Client, op plannedOp, restart bool) error {
+// it changes, if it changes one, and returns when the write was sent. That is
+// after the lock was acquired: another writer holding it may restart FTL
+// meanwhile, and a restart before the write is not the one it caused.
+func runLocked(ctx context.Context, target *Client, op plannedOp, restart bool) (time.Time, error) {
 	if setting, ok := categorySettings[op.category]; ok {
 		defer target.LockSettings(setting)()
 	}
-	return op.run(ctx, target, restart)
+	sent := time.Now()
+	return sent, op.run(ctx, target, restart)
 }
 
 // restartAfterSync restarts FTL so that CNAME records the sync saved without

@@ -240,3 +240,43 @@ func TestApplyPlan_DNSWritesWaitForTheSettingLock(t *testing.T) {
 		t.Errorf("after the lock was released the sync applied %d, want 1 (%+v)", res.Applied, res.Ops)
 	}
 }
+
+func TestApplyPlan_ARestartWhileWaitingForTheLockIsNotTheSyncs(t *testing.T) {
+	// Another writer holds the CNAME setting and restarts FTL while the sync
+	// waits for it. The sync's own write then fails to restart FTL. Timed
+	// from before the wait, the earlier restart passed for the sync's.
+	src := cnameSource(t, "a.home,nas.home")
+	f := piholefake.New()
+	t.Cleanup(f.Close)
+	inner := f.Handler()
+	noRestart := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			r = r.Clone(r.Context())
+			r.URL.RawQuery = "restart=false" // saved, but FTL does not restart
+		}
+		inner.ServeHTTP(w, r)
+	})
+	srv := httptest.NewServer(noRestart)
+	t.Cleanup(srv.Close)
+	tgt := pihole.New(srv.URL, "test", pihole.WithRetry(0, time.Second), pihole.WithRestartWait(400*time.Millisecond))
+	d, err := pihole.ComputeDiff(context.Background(), src, tgt, []pihole.SyncCategory{pihole.CategoryCNAME})
+	if err != nil {
+		t.Fatalf("ComputeDiff: %v", err)
+	}
+
+	unlock := tgt.LockSettings("dns.cnameRecords")
+	done := make(chan pihole.ApplyResult)
+	go func() { done <- pihole.ApplyPlan(context.Background(), tgt, d, false) }()
+	time.Sleep(50 * time.Millisecond)
+	other := pihole.New(f.URL(), "test", pihole.WithRetry(0, time.Second))
+	if err := other.Post(context.Background(), "/action/restartdns", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	unlock()
+
+	if res := <-done; res.Restarted || res.RestartError == "" {
+		t.Errorf("Restarted = %v, RestartError = %q; the restart before the sync's write is not its own",
+			res.Restarted, res.RestartError)
+	}
+}
