@@ -21,6 +21,16 @@ func toolError(action string, err error) *mcp.CallToolResult {
 }
 
 // toolErrorText is toolError's message, for a caller that has more to add.
+// withAdvice appends a sentence of advice to an error text, ending the text
+// with a full stop first if it has none.
+func withAdvice(text, advice string) string {
+	text = strings.TrimSpace(text)
+	if !strings.HasSuffix(text, ".") {
+		text += "."
+	}
+	return text + " " + advice
+}
+
 func toolErrorText(action string, err error) string {
 	msg := fmt.Sprintf("Failed to %s", action)
 
