@@ -40,10 +40,15 @@ backoff() {
 }
 
 # run_tool <mode> <name> <args>
-# Spawns one server, sends initialize + tools/call, and leaves the outcome in
-# RESULT_IS_ERROR ("True"/"False") and RESULT_TEXT. <mode> selects which
-# credentials the child sees: "single" for PIHOLE_URL, "multi" for the
-# PIHOLE_1_*/PIHOLE_2_* pair.
+# Spawns one server, completes the initialize handshake, makes one tools/call,
+# and leaves the outcome in RESULT_IS_ERROR ("True"/"False") and RESULT_TEXT.
+# <mode> selects which credentials the child sees: "single" for PIHOLE_URL,
+# "multi" for the PIHOLE_1_*/PIHOLE_2_* pair.
+#
+# The conversation itself is driven by scripts/e2e-call.py, which keeps stdin
+# open until the tools/call response arrives. Piping both requests in and
+# closing stdin at once, as this used to, races the server: from mcp-go 1.1.0
+# end of input cancels requests still in flight.
 #
 # Every assertion helper goes through this one copy on purpose. The retry policy
 # is subtle enough (transient classification, six attempts, exponential backoff)
@@ -51,27 +56,23 @@ backoff() {
 # quietly swallowing failures.
 RESULT_IS_ERROR=""
 RESULT_TEXT=""
+E2E_CALL="$(cd "$(dirname "$0")" && pwd)/e2e-call.py"
 
 run_tool() {
     local mode="$1"
     local name="$2"
     local args="$3"
 
-    local request
-    request=$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"%s","arguments":%s}}\n' "$name" "$args")
-
     local result attempt=0
     while :; do
         if [ "$mode" = "multi" ]; then
-            result=$(printf '%s\n' "$request" \
-                | env -u PIHOLE_URL -u PIHOLE_PASSWORD \
-                    PIHOLE_1_URL="${PIHOLE_1_URL}" PIHOLE_1_PASSWORD="${PIHOLE_1_PASSWORD}" PIHOLE_2_URL="${PIHOLE_2_URL}" PIHOLE_2_PASSWORD="${PIHOLE_2_PASSWORD}" timeout 30 "$BINARY" 2>/dev/null \
-                | tail -1)
+            result=$(env -u PIHOLE_URL -u PIHOLE_PASSWORD \
+                    PIHOLE_1_URL="${PIHOLE_1_URL}" PIHOLE_1_PASSWORD="${PIHOLE_1_PASSWORD}" PIHOLE_2_URL="${PIHOLE_2_URL}" PIHOLE_2_PASSWORD="${PIHOLE_2_PASSWORD}" \
+                    python3 "$E2E_CALL" "$BINARY" "$name" "$args" 2>/dev/null)
         else
-            result=$(printf '%s\n' "$request" \
-                | env -u PIHOLE_1_URL -u PIHOLE_1_PASSWORD -u PIHOLE_2_URL -u PIHOLE_2_PASSWORD \
-                    PIHOLE_URL="${PIHOLE_URL}" PIHOLE_PASSWORD="${PIHOLE_PASSWORD}" timeout 30 "$BINARY" 2>/dev/null \
-                | tail -1)
+            result=$(env -u PIHOLE_1_URL -u PIHOLE_1_PASSWORD -u PIHOLE_2_URL -u PIHOLE_2_PASSWORD \
+                    PIHOLE_URL="${PIHOLE_URL}" PIHOLE_PASSWORD="${PIHOLE_PASSWORD}" \
+                    python3 "$E2E_CALL" "$BINARY" "$name" "$args" 2>/dev/null)
         fi
         if is_transient "$result" && [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
             attempt=$((attempt+1)); backoff "$attempt"; continue
