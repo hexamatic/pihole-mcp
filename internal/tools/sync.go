@@ -334,9 +334,11 @@ func writePlanStep(b *strings.Builder, step pihole.PlanStep) {
 }
 
 // exportSnapshot downloads a teleporter backup of the client to a temp file and
-// returns its path. Used as a rollback point before a sync applies changes.
-func exportSnapshot(ctx context.Context, c *pihole.Client) (string, error) {
-	reapStaleBackups()
+// returns its path. Used as a rollback point before a sync or an import
+// changes the client. keep names files the stale-backup clean-up must leave
+// alone, such as the archive an import is about to read.
+func exportSnapshot(ctx context.Context, c *pihole.Client, keep ...string) (string, error) {
+	reapStaleBackups(keep...)
 
 	archive, done, err := openBackupStream(ctx, c)
 	if err != nil {

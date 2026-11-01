@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/hexamatic/pihole-mcp/internal/pihole/piholefake"
@@ -271,7 +272,9 @@ func TestTeleporterImport_PlanListsWhatWouldBeReplaced(t *testing.T) {
 	}
 	_ = out.Close()
 
-	rec := piholeHandler(nil)
+	rec := piholeHandler(map[string]any{
+		"/config/files/gravity": map[string]any{"config": map[string]any{"files": map[string]any{"gravity": "/etc/pihole/gravity.db"}}},
+	})
 	text := callTool(t, teleporterImportHandler, newTestClient(t, rec), map[string]any{
 		"file_path": path, "mode": "plan", "dhcp_leases": false,
 	})
@@ -286,7 +289,106 @@ func TestTeleporterImport_PlanListsWhatWouldBeReplaced(t *testing.T) {
 			t.Errorf("expected %q in the plan, got:\n%s", want, text)
 		}
 	}
-	if n := len(rec.Requests()); n != 0 {
-		t.Errorf("a plan reads the archive locally, but %d request(s) reached Pi-hole", n)
+	// The archive is read locally; the only request is for where this
+	// Pi-hole keeps its gravity database.
+	rec.Only(t, "GET", "/config/files/gravity")
+	if n := len(rec.Requests()); n != 1 {
+		t.Errorf("a plan changes nothing, but %d request(s) reached Pi-hole:\n%s", n, rec.Dump())
 	}
+}
+
+// writeArchive writes a zip holding the named entries and returns its path.
+func writeArchive(t *testing.T, dir string, pattern string, names ...string) string {
+	t.Helper()
+	out, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(out)
+	for _, name := range names {
+		w, _ := zw.Create(name)
+		_, _ = w.Write([]byte("data"))
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_ = out.Close()
+	return out.Name()
+}
+
+func TestTeleporterImport_PlanFollowsThePiholesGravityPath(t *testing.T) {
+	// FTL takes the gravity database from the archive entry named by its own
+	// files.gravity setting, so a Pi-hole keeping it elsewhere imports a
+	// different entry from the default one.
+	path := writeArchive(t, t.TempDir(), "backup-*.zip", "data/gravity.db", "etc/pihole/gravity.db")
+	rec := piholeHandler(map[string]any{
+		"/config/files/gravity": map[string]any{"config": map[string]any{"files": map[string]any{"gravity": "/data/gravity.db"}}},
+	})
+	text := callTool(t, teleporterImportHandler, newTestClient(t, rec), map[string]any{
+		"file_path": path, "mode": "plan", "config": false, "dhcp_leases": false,
+	})
+	if !strings.Contains(text, "data/gravity.db: replaces the lists") || !strings.Contains(text, "etc/pihole/gravity.db: not imported") {
+		t.Errorf("expected the plan to follow files.gravity, got:\n%s", text)
+	}
+}
+
+func TestTeleporterImport_PlanSaysWhenItAssumesTheGravityPath(t *testing.T) {
+	path := writeArchive(t, t.TempDir(), "backup-*.zip", "etc/pihole/gravity.db")
+	text := callTool(t, teleporterImportHandler, newTestClient(t, piholeHandler(nil)), map[string]any{"file_path": path, "mode": "plan"})
+	if !strings.Contains(text, "could not be read, so this assumes the default") {
+		t.Errorf("expected the plan to say it assumed the default path, got:\n%s", text)
+	}
+}
+
+func TestTeleporterImport_PlanWarnsOfTheRestartEvenWhenNothingIsReplaced(t *testing.T) {
+	// FTL restarts after every import, whatever it replaced.
+	path := writeArchive(t, t.TempDir(), "backup-*.zip", "etc/hosts")
+	text := callTool(t, teleporterImportHandler, newTestClient(t, piholeHandler(nil)), map[string]any{"file_path": path, "mode": "plan"})
+	if !strings.Contains(text, "replace nothing, but Pi-hole still restarts FTL") {
+		t.Errorf("expected a restart warning, got:\n%s", text)
+	}
+}
+
+func TestTeleporterImport_KeepsAnOldExportItIsImporting(t *testing.T) {
+	// The backup taken before an import clears day-old backups from the temp
+	// directory, and used to delete the very export being imported.
+	input := writeArchive(t, os.TempDir(), "pihole-backup-*.zip", "etc/pihole/pihole.toml")
+	t.Cleanup(func() { _ = os.Remove(input) })
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(input, old, old); err != nil {
+		t.Fatal(err)
+	}
+	f := piholefake.New()
+	t.Cleanup(f.Close)
+
+	text := callTool(t, teleporterImportHandler, newTestClient(t, f.Handler()), map[string]any{"file_path": input})
+	if _, err := os.Stat(input); err != nil {
+		t.Errorf("the archive being imported was deleted: %v", err)
+	}
+	if _, after, ok := strings.Cut(text, "backed up at "); ok {
+		snapshot, _, _ := strings.Cut(after, ";")
+		_ = os.Remove(snapshot)
+	}
+}
+
+func TestTeleporterImport_NothingImportedStillNamesTheBackup(t *testing.T) {
+	// The backup holds the password hash and the query database, and an
+	// error that did not mention it left a file nobody would delete.
+	f := piholefake.New()
+	t.Cleanup(f.Close)
+	inner := f.Handler()
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/teleporter" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"files":[],"took":0.1}`))
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
+	text := callToolExpectError(t, teleporterImportHandler, newTestClient(t, h), map[string]any{"file_path": writeTestBackup(t)})
+	_, after, ok := strings.Cut(text, "The backup taken before the import is at ")
+	if !ok {
+		t.Fatalf("expected the error to name the backup, got: %s", text)
+	}
+	_ = os.Remove(strings.TrimSuffix(after, "."))
 }

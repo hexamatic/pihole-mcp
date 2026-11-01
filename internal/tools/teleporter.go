@@ -36,17 +36,35 @@ var backupFileGlobs = []string{"pihole-backup-*.zip", "pihole-*-snapshot-*.zip"}
 // glob, stat or remove one file is skipped rather than failing the caller —
 // this runs ahead of every new export, and a full temp directory is a worse
 // failure mode to compound than a few stale files left behind.
-func reapStaleBackups() {
+//
+// keep names files to leave alone whatever their age: the archive an import
+// is about to read may be an old export, and the backup taken before that
+// import used to delete it first.
+func reapStaleBackups(keep ...string) {
+	var kept []os.FileInfo
+	for _, k := range keep {
+		if info, err := os.Stat(k); err == nil {
+			kept = append(kept, info)
+		}
+	}
 	cutoff := time.Now().Add(-staleBackupAge)
 	for _, pattern := range backupFileGlobs {
 		matches, err := filepath.Glob(filepath.Join(os.TempDir(), pattern))
 		if err != nil {
 			continue
 		}
+	files:
 		for _, m := range matches {
 			info, statErr := os.Stat(m)
 			if statErr != nil || info.ModTime().After(cutoff) {
 				continue
+			}
+			// Compared as files, not paths: the temp directory has more than
+			// one spelling on some systems (/var and /private/var on macOS).
+			for _, k := range kept {
+				if os.SameFile(info, k) {
+					continue files
+				}
 			}
 			_ = os.Remove(m)
 		}
@@ -190,14 +208,14 @@ func teleporterImportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 
 		if req.GetString("mode", "apply") == "plan" {
-			return importPlan(filePath, importConfig, importGravity, importDHCP), nil
+			return importPlan(filePath, gravityArchivePath(ctx, c), importConfig, importGravity, importDHCP), nil
 		}
 
 		// An import replaces whole parts of the configuration and cannot be
 		// undone through the API, so the current state is kept first.
 		var snapshot string
 		if req.GetBool("snapshot", true) {
-			path, serr := exportSnapshot(ctx, c)
+			path, serr := exportSnapshot(ctx, c, filePath)
 			if serr != nil {
 				return mcp.NewToolResultError(withAdvice(toolErrorText("back up the current configuration before importing, so nothing was imported", serr),
 					"To import without a rollback point, pass snapshot=false.")), nil
@@ -217,8 +235,15 @@ func teleporterImportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		imported := result.ImportedFiles()
 		if len(imported) == 0 && (importConfig || importGravity || importDHCP) {
-			return mcp.NewToolResultError("Pi-hole accepted the archive but reported importing nothing from it. " +
-				"Check that the file is a Pi-hole v6 teleporter export and that the parts you asked for are in it."), nil
+			text := "Pi-hole accepted the archive but reported importing nothing from it. " +
+				"Check that the file is a Pi-hole v6 teleporter export and that the parts you asked for are in it."
+			if snapshot != "" {
+				// Said on every path after the backup exists: it holds the
+				// password hash and the query database, and an unmentioned
+				// file is one nobody deletes.
+				text += " The backup taken before the import is at " + snapshot + "."
+			}
+			return mcp.NewToolResultError(text), nil
 		}
 
 		var b strings.Builder
@@ -236,41 +261,69 @@ func teleporterImportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	}
 }
 
-// teleporterParts maps the archive entries FTL imports to the option that
-// controls each (src/zip/teleporter.c, v6.7 and v6.8).
-var teleporterParts = map[string]struct{ option, what string }{
-	"etc/pihole/pihole.toml": {"config", "Pi-hole configuration"},
-	"etc/pihole/gravity.db":  {"gravity", "lists, rules, groups and clients"},
-	"etc/pihole/dhcp.leases": {"dhcp_leases", "DHCP leases"},
+// gravityArchivePath is the archive entry FTL reads the gravity database
+// from: its files.gravity setting without the leading slash
+// (src/zip/teleporter.c), so a Pi-hole with the database elsewhere looks for
+// a different entry. "" when the setting cannot be read.
+func gravityArchivePath(ctx context.Context, c *pihole.Client) string {
+	var resp pihole.ConfigResponse
+	if err := c.Get(ctx, "/config/files/gravity", &resp); err != nil {
+		return ""
+	}
+	files, _ := resp.Config["files"].(map[string]any)
+	path, _ := files["gravity"].(string)
+	return strings.TrimPrefix(path, "/")
 }
 
 // importPlan lists what an archive holds and what an import with the given
 // options would replace, reading the archive locally and changing nothing.
-func importPlan(filePath string, config, gravity, dhcp bool) *mcp.CallToolResult {
+// gravityEntry is the entry FTL takes the gravity database from on this
+// Pi-hole; "" means it could not be read and the default is assumed.
+func importPlan(filePath, gravityEntry string, config, gravity, dhcp bool) *mcp.CallToolResult {
 	zr, err := zip.OpenReader(filePath)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("%s is not a readable zip archive: %v", filePath, err))
 	}
 	defer func() { _ = zr.Close() }()
 
-	enabled := map[string]bool{"config": config, "gravity": gravity, "dhcp_leases": dhcp}
+	assumed := gravityEntry == ""
+	if assumed {
+		gravityEntry = "etc/pihole/gravity.db"
+	}
+	// The entries FTL imports, and the option that controls each
+	// (src/zip/teleporter.c, v6.7 and v6.8).
+	parts := map[string]struct {
+		enabled bool
+		option  string
+		what    string
+	}{
+		"etc/pihole/pihole.toml": {config, "config", "Pi-hole configuration"},
+		gravityEntry:             {gravity, "gravity", "lists, rules, groups and clients"},
+		"etc/pihole/dhcp.leases": {dhcp, "dhcp_leases", "DHCP leases"},
+	}
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "**Import plan for %s.** Nothing has been changed.\n", filepath.Base(filePath))
 	replaces := 0
 	for _, f := range zr.File {
-		part, known := teleporterParts[f.Name]
+		part, known := parts[f.Name]
 		switch {
 		case !known:
 			fmt.Fprintf(&b, "- %s: not imported\n", f.Name)
-		case enabled[part.option]:
+		case part.enabled:
 			fmt.Fprintf(&b, "- %s: replaces the %s (%s)\n", f.Name, part.what, format.Bytes(float64(f.UncompressedSize64)))
 			replaces++
 		default:
 			fmt.Fprintf(&b, "- %s: skipped, since %s=false\n", f.Name, part.option)
 		}
 	}
+	if assumed {
+		fmt.Fprintf(&b, "\nPi-hole's gravity database location (files.gravity) could not be read, so this assumes the default, %s.\n", gravityEntry)
+	}
+	// FTL restarts after every import, whatever it replaced
+	// (src/api/teleporter.c).
 	if replaces == 0 {
-		b.WriteString("\nWith these options the import would change nothing.")
+		b.WriteString("\nWith these options the import would replace nothing, but Pi-hole still restarts FTL after any import.")
 		return mcp.NewToolResultText(b.String())
 	}
 	b.WriteString("\nImporting restarts FTL. Call again without mode=plan to import; the current configuration is backed up first unless snapshot=false.")
