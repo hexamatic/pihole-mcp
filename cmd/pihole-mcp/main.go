@@ -175,6 +175,11 @@ func runCheck(out io.Writer) bool {
 			ftl = "unknown"
 		}
 		say("PASS  %s (%s)  core %s, FTL %s\n", ic.Name, config.RedactURL(ic.URL), core, ftl)
+		// A warning, not a failure: the server works, but the Pi-hole it
+		// manages has published vulnerabilities its owner may not know of.
+		if warning := pihole.AdvisoryWarning(ftl); warning != "" {
+			say("      warning: %s\n", warning)
+		}
 	}
 
 	say("\n")

@@ -255,3 +255,21 @@ func TestTypeAndKindAreChecked(t *testing.T) {
 	}
 	rec.AssertNone(t, "", "")
 }
+
+func TestListsAdd_FileListsNeedAFixedRelease(t *testing.T) {
+	// Before FTL v6.5 a file:// list could read any file Pi-hole could read.
+	version := func(v string) map[string]any {
+		return map[string]any{"version": map[string]any{"ftl": map[string]any{"local": map[string]any{"version": v}}}}
+	}
+	old := piholeHandler(map[string]any{"/info/version": version("v6.4.1")})
+	callToolExpectError(t, listsAddHandler, newTestClient(t, old), map[string]any{"type": "block", "address": "file:///etc/pihole/pihole.toml"})
+	old.AssertNone(t, "POST", "")
+
+	fixed := piholeHandler(map[string]any{"/info/version": version("v6.8"), "POST /lists": map[string]any{"lists": []any{}}})
+	callTool(t, listsAddHandler, newTestClient(t, fixed), map[string]any{"type": "block", "address": "file:///opt/lists/local.txt"})
+	fixed.AssertCount(t, "POST", "/lists", 1)
+
+	web := piholeHandler(map[string]any{"POST /lists": map[string]any{"lists": []any{}}})
+	callTool(t, listsAddHandler, newTestClient(t, web), map[string]any{"type": "block", "address": "https://example.com/list.txt"})
+	web.AssertNone(t, "GET", "/info/version")
+}

@@ -150,6 +150,9 @@ func listsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err := validateURL(address); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid address: %v", err)), nil
 		}
+		if res := refuseUnsafeFileList(ctx, c, address); res != nil {
+			return res, nil
+		}
 
 		body, err := crudAddBody(req, "address", address)
 		if err != nil {
@@ -244,4 +247,29 @@ func listsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 func listsBatchDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return batchDeleteHandler(r, "lists")
+}
+
+// fileListsSafeFrom is the first FTL release that restricts which files a
+// file:// list may read. Before it, an authenticated caller could add any
+// file the Pi-hole could read as a list and read it back through the list's
+// errors (GHSA-667h-gpmh-7gxc).
+var fileListsSafeFrom = pihole.FTLVersion{Major: 6, Minor: 5}
+
+// refuseUnsafeFileList refuses a file:// list on an FTL release that lets one
+// read any file, or one whose release cannot be determined. Web lists, and
+// file lists on a fixed release, pass.
+func refuseUnsafeFileList(ctx context.Context, c *pihole.Client, address string) *mcp.CallToolResult {
+	if !strings.HasPrefix(strings.ToLower(address), "file:") {
+		return nil
+	}
+	var ver pihole.VersionInfo
+	if err := c.Get(ctx, "/info/version", &ver); err != nil {
+		return toolError("check Pi-hole's version before adding a local list", err)
+	}
+	if v, ok := pihole.ParseFTLVersion(ver.Version.FTL.Local.Version); ok && !v.Before(fileListsSafeFrom) {
+		return nil
+	}
+	return mcp.NewToolResultError(fmt.Sprintf("Refusing to add a file:// list: this Pi-hole runs FTL %s, which lets a local list "+
+		"read any file Pi-hole can read (GHSA-667h-gpmh-7gxc, fixed in FTL %s). Nothing was changed. Update Pi-hole, or add the "+
+		"list in its web interface.", format.ValueOr(ver.Version.FTL.Local.Version, "of an unknown version"), fileListsSafeFrom))
 }
