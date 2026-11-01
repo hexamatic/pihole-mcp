@@ -34,7 +34,7 @@ func RegisterActions(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_action_flush_logs",
 		mcp.WithTitleAnnotation("Flush Query Logs"),
-		mcp.WithDescription("Permanently delete all DNS logs — purges last 24 hours from memory and database. Irreversible."),
+		mcp.WithDescription("Permanently delete the DNS query log: the last 24 hours, from memory and the long-term database. Before FTL v6.8, every query in the long-term database is deleted too. Irreversible."),
 		mcp.WithDestructiveHintAnnotation(true),
 	), actionFlushLogsHandler(r))
 

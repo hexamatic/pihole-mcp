@@ -63,12 +63,12 @@ _No parameters._
 
 *destructive*
 
-Enable or disable DNS blocking. Set a timer (seconds) to automatically revert after a duration; repeating the call restarts the countdown.
+Enable or disable DNS blocking. With a timer, Pi-hole switches to the opposite state when it expires, so blocking=false with a timer pauses blocking; repeating the call restarts the countdown.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `blocking` | boolean | Yes | True to enable blocking, false to disable. |
-| `timer` | number | No | Seconds until automatic revert. Omit for permanent change. |
+| `timer` | number | No | Seconds until Pi-hole switches to the opposite state. Omit for a permanent change. |
 
 ## Local DNS
 
@@ -329,7 +329,7 @@ _No parameters._
 
 *read-only*
 
-FTL engine process info: PID, privacy level, client and domain counts, and database query total.
+FTL engine process info: PID, uptime, privacy level, client and gravity counts, and at full detail dnsmasq's internal DNS and DHCP counters.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -809,7 +809,7 @@ _No parameters._
 
 *destructive*
 
-Permanently delete all DNS logs — purges last 24 hours from memory and database. Irreversible.
+Permanently delete the DNS query log: the last 24 hours, from memory and the long-term database. Before FTL v6.8, every query in the long-term database is deleted too. Irreversible.
 
 _No parameters._
 

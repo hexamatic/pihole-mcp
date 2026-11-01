@@ -24,13 +24,13 @@ func RegisterDNS(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r,
 		mcp.NewTool("pihole_dns_set_blocking",
 			mcp.WithTitleAnnotation("Set Blocking"),
-			mcp.WithDescription("Enable or disable DNS blocking. Set a timer (seconds) to automatically revert after a duration; repeating the call restarts the countdown."),
+			mcp.WithDescription("Enable or disable DNS blocking. With a timer, Pi-hole switches to the opposite state when it expires, so blocking=false with a timer pauses blocking; repeating the call restarts the countdown."),
 			mcp.WithBoolean("blocking",
 				mcp.Required(),
 				mcp.Description("True to enable blocking, false to disable."),
 			),
 			mcp.WithNumber("timer",
-				mcp.Description("Seconds until automatic revert. Omit for permanent change."),
+				mcp.Description("Seconds until Pi-hole switches to the opposite state. Omit for a permanent change."),
 			),
 			mcp.WithDestructiveHintAnnotation(true),
 			// Not idempotent: FTL restarts the countdown on every call with a
@@ -85,6 +85,23 @@ func dnsSetBlockingHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			body.Timer = &timer
 		}
 
+		// A timer switches blocking to the opposite of the requested state
+		// when it expires. From FTL v6.8 that holds even when the requested
+		// state is already in effect (src/api/dns.c), so enabling blocking
+		// with a timer while it is on turns it off for the whole network
+		// later. FTL v6.7 left it alone. Refuse rather than schedule that.
+		if blocking && timer > 0 {
+			var current pihole.BlockingStatus
+			if err := c.Get(ctx, "/dns/blocking", &current); err != nil {
+				return toolError("check blocking before setting a timer", err), nil
+			}
+			if current.Blocking == "enabled" {
+				return mcp.NewToolResultError(fmt.Sprintf("Blocking is already enabled, so nothing was changed. With a timer, "+
+					"Pi-hole would turn blocking off when the %.0f seconds run out. To keep blocking on, call again without a timer; "+
+					"to pause it, set blocking=false with the timer.", timer)), nil
+			}
+		}
+
 		var status pihole.BlockingStatus
 		if err := c.Post(ctx, "/dns/blocking", body, &status); err != nil {
 			return toolError("set blocking", err), nil
@@ -96,7 +113,7 @@ func dnsSetBlockingHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 		text := fmt.Sprintf("**Blocking %s.** Status: %s", action, status.Blocking)
 		if status.Timer != nil {
-			text += fmt.Sprintf(" (reverts in %.0fs)", *status.Timer)
+			text += fmt.Sprintf(" (switches back in %.0fs)", *status.Timer)
 		}
 
 		return mcp.NewToolResultText(text), nil

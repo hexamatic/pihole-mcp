@@ -44,6 +44,13 @@ func (c *Client) login(ctx context.Context) error {
 		if !errors.As(apiErr, &authErr) {
 			return &loginError{apiErr}
 		}
+		// FTL refuses a login with its session object rather than its error
+		// envelope ({"session":{"valid":false,"message":"password incorrect"}}),
+		// so the parsed error carried only "HTTP 401" and the reason was lost.
+		var refused authResponse
+		if json.Unmarshal(respBody, &refused) == nil && refused.Session.Message != "" {
+			authErr.Message = refused.Session.Message
+		}
 		authErr.Message = "authentication failed: " + authErr.Message
 		return authErr
 	}

@@ -57,7 +57,7 @@ func RegisterInfo(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_info_ftl",
 		mcp.WithTitleAnnotation("FTL Engine Info"),
-		mcp.WithDescription("FTL engine process info: PID, privacy level, client and domain counts, and database query total."),
+		mcp.WithDescription("FTL engine process info: PID, uptime, privacy level, client and gravity counts, and at full detail dnsmasq's internal DNS and DHCP counters."),
 		detailParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 	), infoFTLHandler(r))
@@ -323,7 +323,9 @@ func infoFTLHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		var b strings.Builder
 		fmt.Fprintf(&b, "**PID:** %s\n", format.Number(d.PID))
-		fmt.Fprintf(&b, "**Uptime:** %.0fs\n", d.Uptime)
+		// FTL reports its uptime in milliseconds (src/api/info.c); it was
+		// printed as seconds, a thousand times too long.
+		fmt.Fprintf(&b, "**Uptime:** %s\n", format.Duration(d.Uptime/1000))
 		fmt.Fprintf(&b, "**Privacy level:** %d\n", d.PrivacyLevel)
 		fmt.Fprintf(&b, "**Query frequency:** %.2f/s\n", d.QueryFrequency)
 		fmt.Fprintf(&b, "**Active clients:** %s of %s known\n",
@@ -332,6 +334,23 @@ func infoFTLHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			format.Number(d.Database.Gravity), format.Number(d.Database.Lists), format.Number(d.Database.Groups))
 		fmt.Fprintf(&b, "**Memory:** %.2f%% | **CPU:** %.2f%%\n", d.MemPercent, d.CPUPercent)
 		fmt.Fprintf(&b, "**Destructive operations allowed:** %v\n", d.AllowDestructive)
+
+		// dnsmasq's own counters are what this tool offers beyond
+		// pihole_info_system, and the server instructions say so; they were
+		// decoded and never shown.
+		if detail == "full" && len(d.Dnsmasq) > 0 {
+			keys := make([]string, 0, len(d.Dnsmasq))
+			for k := range d.Dnsmasq {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			b.WriteString("**dnsmasq counters:**\n")
+			for _, k := range keys {
+				if n, ok := d.Dnsmasq[k].(float64); ok {
+					fmt.Fprintf(&b, "- %s: %s\n", k, format.Number(int(n)))
+				}
+			}
+		}
 
 		return mcp.NewToolResultText(b.String()), nil
 	}

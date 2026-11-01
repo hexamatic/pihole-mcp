@@ -452,3 +452,25 @@ func TestInfoDatabase_ZeroTimestampsNotRendered(t *testing.T) {
 		t.Errorf("rendered a zero timestamp as a date: %s", text)
 	}
 }
+
+func TestInfoFTL_FullShowsDnsmasqCountersAndUptime(t *testing.T) {
+	// dnsmasq's counters were decoded and never shown, and the uptime, which
+	// FTL reports in milliseconds, was printed as seconds.
+	eachFixture(t, "info_ftl", func(t *testing.T, _ string, fixture any) {
+		c := newTestClient(t, piholeHandler(map[string]any{"/info/ftl": fixture}))
+		text := callTool(t, infoFTLHandler, c, map[string]any{"detail": "full"})
+
+		uptime := fixtureValue(t, fixture, "ftl.uptime").(float64) / 1000
+		if want := "**Uptime:** " + format.Duration(uptime); !strings.Contains(text, want) {
+			t.Errorf("expected %q, got:\n%s", want, text)
+		}
+		inserted := fixtureInt(t, fixture, "ftl.dnsmasq.dns_cache_inserted")
+		if want := "- dns_cache_inserted: " + format.Number(inserted); !strings.Contains(text, want) {
+			t.Errorf("expected %q, got:\n%s", want, text)
+		}
+		normal := callTool(t, infoFTLHandler, c, nil)
+		if strings.Contains(normal, "dnsmasq counters") {
+			t.Errorf("the counters belong to full detail only, got:\n%s", normal)
+		}
+	})
+}
