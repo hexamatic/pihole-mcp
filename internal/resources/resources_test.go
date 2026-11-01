@@ -223,3 +223,46 @@ func TestInstanceURI_EscapesTheName(t *testing.T) {
 		t.Errorf("instanceURI = %q", got)
 	}
 }
+
+// rawPathAPI answers every API request with body and records the escaped
+// path each one used.
+func rawPathAPI(t *testing.T, body string) (*pihole.Client, *[]string) {
+	t.Helper()
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/auth" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"session": map[string]any{"valid": true, "sid": "s"}})
+			return
+		}
+		paths = append(paths, r.URL.EscapedPath())
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return pihole.New(srv.URL, "test", pihole.WithRetry(0, time.Second)), &paths
+}
+
+func TestTemplateResources_EscapeWhatTheyPutInThePath(t *testing.T) {
+	// A template value was spliced into the API path raw, so one carrying
+	// "/" or "?" read a different route from the one the URI named.
+	c, paths := rawPathAPI(t, `{"clients":[],"lists":[]}`)
+	mustReadTemplate(t, clientResourceHandler(c), "pihole://clients/a%2F..%2Fdomains")
+	mustReadTemplate(t, listDetailResourceHandler(c), "pihole://lists/https%3A%2F%2Fexample.com%2Fads.txt%3Fx%3D1")
+	want := []string{"/api/clients/a%2F..%2Fdomains", "/api/lists/https:%2F%2Fexample.com%2Fads.txt%3Fx=1"}
+	if strings.Join(*paths, " ") != strings.Join(want, " ") {
+		t.Errorf("API paths = %q, want %q", *paths, want)
+	}
+}
+
+func TestDomainListResource_OnlyTheFourLists(t *testing.T) {
+	c, paths := rawPathAPI(t, `{"domains":[]}`)
+	for _, uri := range []string{"pihole://domains/deny/regex%3Fx", "pihole://domains/deny", "pihole://domains/deny/exact/extra"} {
+		if _, err := domainListResourceHandler(c)(context.Background(), readRequest(uri)); err == nil {
+			t.Errorf("%s should be refused", uri)
+		}
+	}
+	if len(*paths) != 0 {
+		t.Errorf("refused URIs still reached the API: %q", *paths)
+	}
+	mustReadTemplate(t, domainListResourceHandler(c), "pihole://domains/allow/exact")
+}

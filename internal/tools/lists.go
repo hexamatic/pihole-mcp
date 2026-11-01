@@ -77,7 +77,10 @@ func listsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 		path := "/lists"
 		if t := req.GetString("type", ""); t != "" {
-			path += "?type=" + t
+			if err := checkEnum("type", t, listTypes); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			path += "?type=" + url.QueryEscape(t)
 		}
 
 		var result pihole.ListsResponse
@@ -140,6 +143,9 @@ func listsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		address, t := vals[0], vals[1]
+		if err := checkEnum("type", t, listTypes); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		if err := validateURL(address); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid address: %v", err)), nil
@@ -171,6 +177,9 @@ func listsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		address, t := vals[0], vals[1]
+		if err := checkEnum("type", t, listTypes); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		if err := validateURL(address); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid address: %v", err)), nil
@@ -216,6 +225,9 @@ func listsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		address, t := vals[0], vals[1]
+		if err := checkEnum("type", t, listTypes); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		if err := validateURL(address); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid address: %v", err)), nil

@@ -192,3 +192,32 @@ func validateIntRange(name string, v, minVal, maxVal int) error {
 	}
 	return nil
 }
+
+// The values the type and kind parameters may take. They go into the request
+// path or query, so any other value addressed something else: a type of
+// "deny/regex" stored an exact-match rule as a regex while the tool reported
+// the exact one, and an approval prompt showed one entry while another changed.
+var (
+	domainTypes = []string{"allow", "deny"}
+	domainKinds = []string{"exact", "regex"}
+	listTypes   = []string{"allow", "block"}
+)
+
+// checkEnum returns an error naming the allowed values when v is not one of
+// them.
+func checkEnum(name, v string, allowed []string) error {
+	for _, a := range allowed {
+		if v == a {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s must be one of %s (got %q)", name, strings.Join(allowed, ", "), v)
+}
+
+// checkDomainTypeKind validates a domain rule's type and kind.
+func checkDomainTypeKind(t, k string) error {
+	if err := checkEnum("type", t, domainTypes); err != nil {
+		return err
+	}
+	return checkEnum("kind", k, domainKinds)
+}

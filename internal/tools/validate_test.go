@@ -4,6 +4,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/hexamatic/pihole-mcp/internal/pihole"
+
+	"github.com/mark3labs/mcp-go/server"
 )
 
 // writeTestFile creates a file of exactly size bytes at path. It truncates
@@ -226,4 +230,28 @@ func TestOpenBackupForImport_OverSizeCap(t *testing.T) {
 	if !strings.Contains(err.Error(), "at most") {
 		t.Errorf("expected a size-cap message, got: %v", err)
 	}
+}
+
+func TestTypeAndKindAreChecked(t *testing.T) {
+	// type and kind go into the request path or query, so a value such as
+	// "deny/regex" addressed a different list from the one the tool named.
+	rec := piholeHandler(nil)
+	c := newTestClient(t, rec)
+	for _, tc := range []struct {
+		name    string
+		handler func(*pihole.Registry) server.ToolHandlerFunc
+		args    map[string]any
+	}{
+		{"domains_add type", domainsAddHandler, map[string]any{"type": "deny/regex", "kind": "exact", "domain": "a.example"}},
+		{"domains_delete kind", domainsDeleteHandler, map[string]any{"type": "deny", "kind": "exact/../regex", "domain": "a.example"}},
+		{"domains_list kind", domainsListHandler, map[string]any{"kind": "regex?x"}},
+		{"lists_list type", listsListHandler, map[string]any{"type": "block&type=allow"}},
+		{"lists_add type", listsAddHandler, map[string]any{"type": "gravity", "address": "https://example.com/a.txt"}},
+		{"dhcp lease ip", dhcpDeleteLeaseHandler, map[string]any{"ip": "10.0.0.5/../../config"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			callToolExpectError(t, tc.handler, c, tc.args)
+		})
+	}
+	rec.AssertNone(t, "", "")
 }
