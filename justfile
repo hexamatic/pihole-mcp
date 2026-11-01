@@ -25,8 +25,9 @@ default:
 [group('setup')]
 setup:
     mise install
-    go mod download
-    lefthook install
+    # Resolve the newly installed tools after mise install, not from the initial PATH.
+    mise exec -- go mod download
+    mise exec -- lefthook install
     @echo "\033[32m✓ Setup complete. Run 'just dev-up' to start Pi-hole.\033[0m"
 
 # Download Go module dependencies
