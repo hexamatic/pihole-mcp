@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -169,15 +170,29 @@ func SizeWithUnit(value float64, unit string) string {
 	return fmt.Sprintf("%.1f %s", value, unit)
 }
 
-// ResponseTime formats a response time in milliseconds.
-func ResponseTime(ms float64) string {
-	if ms < 0 {
+// ResponseTime formats a time FTL reports in seconds, such as a query's
+// reply time or an upstream's average response, in milliseconds. Zero, which
+// FTL sends for the cache and the blocklist, and anything negative read as
+// N/A. The function used to take milliseconds while every caller passed
+// seconds, so a 95 ms reply printed as 0.1ms and a 1.2 s average as 1.2ms.
+func ResponseTime(secs float64) string {
+	if secs <= 0 {
 		return "N/A"
 	}
+	ms := secs * 1000
 	if ms < 1 {
-		return fmt.Sprintf("%.2fms", ms*1000)
+		return fmt.Sprintf("%.2fms", ms)
 	}
 	return fmt.Sprintf("%.1fms", ms)
+}
+
+// Milliseconds renders a time FTL reports in seconds as a bare number of
+// milliseconds for a CSV column whose header names the unit, or "" for zero.
+func Milliseconds(secs float64) string {
+	if secs <= 0 {
+		return ""
+	}
+	return strconv.FormatFloat(secs*1000, 'f', 2, 64)
 }
 
 // QueryParams builds a URL query string from non-empty key-value pairs.

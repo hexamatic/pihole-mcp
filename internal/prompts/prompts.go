@@ -228,13 +228,13 @@ func weeklyTrendsHandler(_ context.Context, req mcp.GetPromptRequest) (*mcp.GetP
 					"2. Use pihole_stats_database with last week's equivalent date range for comparison\n"+
 					"3. Use pihole_stats_database_top_domains with blocked=true for both periods to compare top blocked domains\n"+
 					"4. Use pihole_stats_database_top_clients for both periods to compare client activity\n"+
-					"5. Use pihole_stats_database_upstreams for both periods to compare upstream performance\n\n"+
+					"5. Use pihole_stats_database_upstreams for both periods to compare how many queries each upstream answered\n\n"+
 					"Present your findings as a trend report:\n"+
 					"- Query volume change (increase/decrease percentage)\n"+
 					"- Blocking rate change\n"+
 					"- New domains appearing in top blocked that weren't there last week\n"+
 					"- Client activity changes (new high-volume clients, departures)\n"+
-					"- Upstream DNS performance changes\n"+
+					"- Changes in how queries were spread across upstream servers\n"+
 					"- Overall assessment and recommendations",
 					weeksBack),
 			)),
@@ -252,14 +252,14 @@ func upstreamHealthHandler(_ context.Context, _ mcp.GetPromptRequest) (*mcp.GetP
 					"1. Use pihole_stats_upstreams to get current upstream DNS server performance metrics\n"+
 					"2. Use pihole_info_ftl to check FTL engine status, cache statistics, and DNSSEC configuration\n"+
 					"3. Use pihole_info_metrics for detailed DNS operational counters\n"+
-					"4. Use pihole_stats_database_upstreams with a 7-day range to see upstream performance trends\n"+
+					"4. Use pihole_stats_database_upstreams with a 7-day range to see how query volume per upstream changed (the long-term database keeps no response times)\n"+
 					"5. Use pihole_stats_query_types to understand the query type distribution\n\n"+
 					"Based on the data, analyse:\n"+
 					"- Individual upstream server health (response times, variance, reliability)\n"+
 					"- Cache hit ratio and efficiency\n"+
 					"- DNSSEC validation status\n"+
 					"- Query type distribution anomalies\n"+
-					"- Historical performance trends (improving or degrading)\n"+
+					"- Historical trends in query volume per upstream\n"+
 					"- Recommend specific actions: replace slow upstreams, adjust cache settings, or add redundant resolvers",
 			)),
 		},

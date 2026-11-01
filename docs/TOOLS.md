@@ -180,7 +180,7 @@ Most active network clients ranked by query count. Use blocked=true for clients 
 
 *read-only*
 
-Upstream DNS server performance: query counts, average response time, and standard deviation per server.
+Upstream DNS server performance: query counts and average response time per server, with the uncertainty of that average.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -250,7 +250,7 @@ Most active clients from the long-term database for a date range. Use blocked=tr
 
 *read-only*
 
-Historical upstream DNS server performance for a date range: query counts and average response times.
+Historical upstream DNS server use for a date range: how many queries each server answered. The long-term database keeps no response times.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
