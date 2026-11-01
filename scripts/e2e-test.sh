@@ -80,8 +80,11 @@ run_tool() {
         break
     done
 
-    RESULT_IS_ERROR=$(echo "$result" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print(d.get('result',{}).get('isError',False))" 2>/dev/null)
-    RESULT_TEXT=$(echo "$result" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());[print(c.get('text','')) for c in d.get('result',{}).get('content',[])]" 2>/dev/null)
+    # A JSON-RPC error (an unknown tool, a tool hidden by read-only mode, bad
+    # params) carries no result at all. It counts as an error, with its message
+    # as the text; reading only result.isError would score it as a pass.
+    RESULT_IS_ERROR=$(echo "$result" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print(True if 'error' in d else d.get('result',{}).get('isError',False))" 2>/dev/null)
+    RESULT_TEXT=$(echo "$result" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());e=d.get('error');print(e.get('message','')) if e else [print(c.get('text','')) for c in d.get('result',{}).get('content',[])]" 2>/dev/null)
 }
 
 record_pass() {
@@ -647,6 +650,25 @@ else
 fi
 
 echo ""
+echo "--- Protocol 2026-07-28 ---"
+# A client on revision 2026-07-28 sends no initialize handshake and carries the
+# protocol version, client identity and capabilities in _meta on each request.
+# These cases drive the same binary that way: a read, a write that is read
+# back, and a write tool refused by read-only mode with no session behind it.
+export E2E_PROTOCOL=2026-07-28
+call_tool_expect "pihole_dns_get_blocking" '{}' "modern: dns_get_blocking" "**Blocking:**"
+call_tool "pihole_domains_add" '{"domain":"e2e-modern.example.com","type":"deny","kind":"exact"}' "modern: domains_add"
+call_tool_expect "pihole_domains_list" '{"type":"deny","kind":"exact"}' "modern: domains_list (write reached FTL)" "e2e-modern.example.com"
+call_tool "pihole_domains_delete" '{"type":"deny","kind":"exact","domain":"e2e-modern.example.com"}' "modern: domains_delete"
+call_tool_expect_absent "pihole_domains_list" '{"type":"deny","kind":"exact"}' "modern: domains_list (delete reached FTL)" "e2e-modern.example.com"
+export PIHOLE_READ_ONLY=true
+call_tool_expect_error "pihole_domains_add" '{"domain":"e2e-readonly.example.com","type":"deny","kind":"exact"}' "modern: read-only refuses a write tool" "not found"
+call_tool_expect "pihole_dns_get_blocking" '{}' "modern: read-only still serves a read tool" "**Blocking:**"
+unset PIHOLE_READ_ONLY E2E_PROTOCOL
+# The harness itself: a JSON-RPC error carries no result, and used to be
+# scored as a pass because only result.isError was read.
+call_tool_expect_error "pihole_no_such_tool" '{}' "harness: an unknown tool counts as an error" "not found"
+
 echo "--- Actions ---"
 call_tool "pihole_action_restart_dns"
 

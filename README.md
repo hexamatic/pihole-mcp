@@ -158,7 +158,7 @@ It exits non-zero if any instance fails, and prints what to change. Worth runnin
 | `PIHOLE_RETRY_MAX_DELAY` | No | `8s` | Upper bound on a single backoff wait. |
 | `PIHOLE_HTTP_AUTH_TOKEN` | No | - | Shared bearer token required on every HTTP/SSE request. Minimum 16 characters. Unset means no authentication. |
 | `PIHOLE_HTTP_AUTH_TOKEN_FILE` | No | - | Path to a file holding the bearer token, so it stays out of `ps`. Mutually exclusive with `PIHOLE_HTTP_AUTH_TOKEN`. |
-| `PIHOLE_RATE_LIMIT` | No | `120` | Per-session requests-per-minute cap on the HTTP/SSE transports, under a per-address ceiling of four times that. `0` disables. |
+| `PIHOLE_RATE_LIMIT` | No | `120` | Requests per minute per MCP session on the HTTP/SSE transports, under a per-address ceiling of four times that. Clients on MCP revision `2026-07-28` send no session, so only the ceiling applies to them. `0` disables. |
 | `PIHOLE_ALLOWED_ORIGINS` | No | `localhost,127.0.0.1,[::1]` | Comma-separated Origin/Host allowlist for HTTP/SSE transports. The literal `*` disables enforcement (unsafe). Not authentication. |
 | `PIHOLE_TRUSTED_PROXIES` | No | - | Comma-separated IPs or CIDR blocks whose `X-Forwarded-For` the rate limiter believes. Unset means the header is ignored. |
 | `PIHOLE_TLS_SKIP_VERIFY` | No | `false` | Disable TLS certificate verification for Pi-hole connections. Only for instances serving self-signed certificates. A trusted certificate is preferable where possible. |
@@ -677,8 +677,9 @@ network.
 
   The address ceiling is what actually bounds a caller, because `Mcp-Session-Id` is a header the
   client writes: without a ceiling, a caller sending a fresh session id on every request would never
-  be limited at all. The header is also being removed from the transport in MCP revision
-  `2026-07-28`, after which the ceiling is the whole limiter. Every request is charged to the
+  be limited at all. MCP revision `2026-07-28` removes the header from the transport, so for a
+  client on that revision the ceiling is the whole limiter, shared by every such client behind one
+  address; clients on earlier revisions still get a session bucket beneath it. Every request is charged to the
   ceiling first, including one the session bucket then rejects, so a client that is already being
   throttled keeps drawing on the budget its neighbours share. IPv6 clients are counted per `/64`,
   since a single host is routinely given a whole one.

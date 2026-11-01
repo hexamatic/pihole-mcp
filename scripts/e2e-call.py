@@ -3,6 +3,10 @@
 
 Usage: e2e-call.py <binary> <tool-name> <arguments-json>
 
+Set E2E_PROTOCOL=2026-07-28 to talk to the server the way a client on that
+revision does: no initialize handshake, and the protocol version, client
+identity and capabilities carried in _meta on the request itself.
+
 Prints the JSON-RPC response to the tools/call request on stdout, or nothing
 if no response arrived in time. scripts/e2e-test.sh treats empty output as a
 transient failure and retries, so this script never prints a partial result.
@@ -17,6 +21,7 @@ session and free the seat.
 """
 
 import json
+import os
 import queue
 import subprocess
 import sys
@@ -25,6 +30,7 @@ import time
 
 TIMEOUT_SECONDS = 30
 PROTOCOL_VERSION = "2025-11-25"
+MODERN_PROTOCOL = "2026-07-28"
 
 
 def main() -> int:
@@ -79,6 +85,26 @@ def main() -> int:
                 return line.strip()
 
     try:
+        if os.environ.get("E2E_PROTOCOL") == MODERN_PROTOCOL:
+            send({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": name,
+                    "arguments": arguments,
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": MODERN_PROTOCOL,
+                        "io.modelcontextprotocol/clientInfo": {"name": "e2e", "version": "1"},
+                        "io.modelcontextprotocol/clientCapabilities": {},
+                    },
+                },
+            })
+            response = await_response(2)
+            if response is not None:
+                print(response)
+            return 0
+
         send({
             "jsonrpc": "2.0",
             "id": 1,

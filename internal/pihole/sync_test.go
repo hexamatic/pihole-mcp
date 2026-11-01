@@ -2,6 +2,7 @@ package pihole_test
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -243,6 +244,70 @@ func TestApplyPlan_CancelledContext(t *testing.T) {
 	for _, op := range res.Ops {
 		if !strings.Contains(op.Err, "context canceled") {
 			t.Errorf("op error = %q, want context cancellation", op.Err)
+		}
+	}
+}
+
+// cancelAfterFirstWrite is a transport that cancels the sync's context as soon
+// as the first write to the target has completed, and counts every write it
+// carries, so a test can see whether any were sent after the cancellation.
+type cancelAfterFirstWrite struct {
+	base   http.RoundTripper
+	cancel context.CancelFunc
+	writes int
+}
+
+func (c *cancelAfterFirstWrite) RoundTrip(r *http.Request) (*http.Response, error) {
+	isWrite := r.Method != http.MethodGet && !strings.HasSuffix(r.URL.Path, "/api/auth")
+	resp, err := c.base.RoundTrip(r)
+	if isWrite {
+		c.writes++
+		if c.writes == 1 {
+			c.cancel()
+		}
+	}
+	return resp, err
+}
+
+// TestApplyPlan_CancelledPartwayStopsWriting covers what mcp-go 1.1 made real:
+// a client that cancels, or closes stdin, while a sync is running now cancels
+// the request context mid-plan. The sync must stop changing the target at that
+// point rather than carry on, and must say which operations it did not run.
+// It deliberately does not shield the writes with context.WithoutCancel: a user
+// who cancels a destructive sync means stop, and the snapshot taken before the
+// plan runs is the way back.
+func TestApplyPlan_CancelledPartwayStopsWriting(t *testing.T) {
+	srcFake, tgtFake, src, _ := newSyncPair(t)
+	seedSource(srcFake)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt := &cancelAfterFirstWrite{base: http.DefaultTransport, cancel: cancel}
+	tgt := pihole.New(tgtFake.URL(), "test", pihole.WithName("secondary"), pihole.WithRetry(0, time.Second),
+		pihole.WithHTTPClient(&http.Client{Transport: rt}))
+
+	d, err := pihole.ComputeDiff(context.Background(), src, tgt, pihole.DefaultSyncCategories)
+	if err != nil {
+		t.Fatalf("ComputeDiff: %v", err)
+	}
+	if n := len(d.Plan(false)); n < 3 {
+		t.Fatalf("the plan has %d operations; this test needs several to cancel between", n)
+	}
+
+	res := pihole.ApplyPlan(ctx, tgt, d, false)
+
+	if rt.writes != 1 {
+		t.Errorf("%d writes reached the target, want exactly 1: the sync kept writing after it was cancelled", rt.writes)
+	}
+	if res.Applied != 1 {
+		t.Errorf("Applied = %d, want 1 (the write that finished before the cancellation)", res.Applied)
+	}
+	if res.Failed != len(res.Ops)-1 {
+		t.Errorf("Failed = %d of %d ops, want every operation after the first", res.Failed, len(res.Ops))
+	}
+	for _, op := range res.Ops[1:] {
+		if !strings.Contains(op.Err, "context canceled") {
+			t.Errorf("op %s %s (%s) error = %q, want it reported as cancelled", op.Action, op.Category, op.Item, op.Err)
 		}
 	}
 }
