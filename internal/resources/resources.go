@@ -4,6 +4,7 @@ package resources
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/hexamatic/pihole-mcp/internal/format"
@@ -92,7 +93,7 @@ func registerPerInstance(s *server.MCPServer, r *pihole.Registry) {
 		}
 
 		s.AddResource(
-			mcp.NewResource(fmt.Sprintf("pihole://%s/status", name),
+			mcp.NewResource(instanceURI(name, "status"),
 				fmt.Sprintf("Pi-hole Status (%s)", name),
 				mcp.WithResourceDescription(fmt.Sprintf("Blocking status, version and health for the %q instance.", name)),
 				mcp.WithMIMEType("text/markdown"),
@@ -101,7 +102,7 @@ func registerPerInstance(s *server.MCPServer, r *pihole.Registry) {
 		)
 
 		s.AddResource(
-			mcp.NewResource(fmt.Sprintf("pihole://%s/summary", name),
+			mcp.NewResource(instanceURI(name, "summary"),
 				fmt.Sprintf("Query Summary (%s)", name),
 				mcp.WithResourceDescription(fmt.Sprintf("Query statistics for the %q instance.", name)),
 				mcp.WithMIMEType("text/markdown"),
@@ -109,6 +110,13 @@ func registerPerInstance(s *server.MCPServer, r *pihole.Registry) {
 			summaryResourceHandler(client, name),
 		)
 	}
+}
+
+// instanceURI is the URI of one instance's own copy of a resource. The name
+// is escaped, so an instance called "Living Room" publishes
+// pihole://Living%20Room/status rather than a URI with a space in it.
+func instanceURI(name, resource string) string {
+	return "pihole://" + url.PathEscape(name) + "/" + resource
 }
 
 func instancesResourceHandler(r *pihole.Registry) server.ResourceHandlerFunc {
@@ -122,7 +130,7 @@ func instancesResourceHandler(r *pihole.Registry) server.ResourceHandlerFunc {
 			if i == 0 {
 				b.WriteString(" (default)")
 			}
-			fmt.Fprintf(&b, " — `pihole://%s/status`, `pihole://%s/summary`\n", name, name)
+			fmt.Fprintf(&b, " — `%s`, `%s`\n", instanceURI(name, "status"), instanceURI(name, "summary"))
 		}
 		b.WriteString("\nPass `instance` to any tool to target one, or `instance=all` " +
 			"on a read-only tool to query them all at once.")

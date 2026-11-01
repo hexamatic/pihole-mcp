@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/hexamatic/pihole-mcp/internal/toolsets"
 )
@@ -315,6 +316,9 @@ func loadNumberedInstances() ([]InstanceConfig, error) {
 		if err != nil {
 			return nil, err
 		}
+		if err := validateInstanceName(ic.Name); err != nil {
+			return nil, fmt.Errorf("%s_NAME %w", prefix, err)
+		}
 		if seen[ic.Name] {
 			return nil, fmt.Errorf("duplicate instance name %q; set a unique %s_NAME", ic.Name, prefix)
 		}
@@ -335,7 +339,8 @@ func loadInstance(prefix, name string) (InstanceConfig, error) {
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return InstanceConfig{}, fmt.Errorf("%s_URL is not a valid URL: %w", prefix, err)
+		// url.Parse quotes the whole input in its error, credentials and all.
+		return InstanceConfig{}, fmt.Errorf("%s_URL is not a valid URL (%q)", prefix, RedactURL(rawURL))
 	}
 	// url.Parse accepts almost anything, so a bare host or a typo in the scheme
 	// used to be carried all the way to the first tool call and surface there as
@@ -344,12 +349,12 @@ func loadInstance(prefix, name string) (InstanceConfig, error) {
 	switch strings.ToLower(u.Scheme) {
 	case "http", "https":
 		if u.Host == "" {
-			return InstanceConfig{}, fmt.Errorf("%s_URL must include a host, for example http://192.168.1.2 (got %q)", prefix, rawURL)
+			return InstanceConfig{}, fmt.Errorf("%s_URL must include a host, for example http://192.168.1.2 (got %q)", prefix, RedactURL(rawURL))
 		}
 	case "":
-		return InstanceConfig{}, fmt.Errorf("%s_URL must start with http:// or https://, for example http://192.168.1.2 (got %q)", prefix, rawURL)
+		return InstanceConfig{}, fmt.Errorf("%s_URL must start with http:// or https://, for example http://192.168.1.2 (got %q)", prefix, RedactURL(rawURL))
 	default:
-		return InstanceConfig{}, fmt.Errorf("%s_URL has scheme %q, but only http and https are supported. If that is a host and port, add the scheme: http://%s", prefix, u.Scheme, rawURL)
+		return InstanceConfig{}, fmt.Errorf("%s_URL has scheme %q, but only http and https are supported. If that is a host and port, add the scheme: http://%s", prefix, u.Scheme, RedactURL(rawURL))
 	}
 	pw, ok := os.LookupEnv(prefix + "_PASSWORD")
 	if !ok {
@@ -455,4 +460,63 @@ func parseTrustedProxies(raw string) ([]netip.Prefix, error) {
 		return nil, fmt.Errorf("PIHOLE_TRUSTED_PROXIES must contain at least one IP address or CIDR block, or be unset")
 	}
 	return out, nil
+}
+
+// RedactURL hides the credentials in a URL such as http://user:secret@host,
+// which a Pi-hole behind a reverse proxy with basic authentication needs, so
+// the URL can be printed. Error messages, -check output and logs all print
+// the configured URL, and used to print the password with it.
+func RedactURL(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.User != nil {
+		return u.Redacted()
+	}
+	// Unparseable, or parsed without seeing the userinfo (no scheme): hide
+	// anything before an @ in the authority all the same.
+	at := strings.LastIndex(raw, "@")
+	if at < 0 {
+		return raw
+	}
+	start := 0
+	if i := strings.Index(raw, "://"); i >= 0 && i < at {
+		start = i + 3
+	}
+	if slash := strings.IndexAny(raw[start:], "/?#"); slash >= 0 && start+slash < at {
+		return raw // the @ is in the path or query, not the authority
+	}
+	return raw[:start] + "xxxxx" + raw[at:]
+}
+
+// reservedInstanceNames cannot name an instance. "all" is what the instance
+// argument uses for every instance at once, so an instance called that could
+// never be addressed on its own. The rest are the first segment of a resource
+// template: an instance called "clients" would publish pihole://clients/status,
+// which pihole://clients/{client} also matches.
+var reservedInstanceNames = []string{"all", "clients", "domains", "lists", "instances", "status", "summary"}
+
+// maxInstanceNameLen bounds an instance name, which appears in every result
+// labelled with its instance and in its resource URIs.
+const maxInstanceNameLen = 64
+
+// validateInstanceName rejects a PIHOLE_<n>_NAME that cannot work. Anything
+// else is accepted, spaces included: names are escaped where they appear in
+// resource URIs, and an existing configuration with a name such as
+// "Living Room" keeps working.
+func validateInstanceName(name string) error {
+	for _, r := range reservedInstanceNames {
+		if strings.EqualFold(name, r) {
+			return fmt.Errorf("%q is reserved: %q addresses every instance at once or begins a resource URI. Choose another name", name, r)
+		}
+	}
+	if len(name) > maxInstanceNameLen {
+		return fmt.Errorf("is %d characters long; the limit is %d", len(name), maxInstanceNameLen)
+	}
+	if strings.TrimSpace(name) != name {
+		return fmt.Errorf("%q starts or ends with a space", name)
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("%q contains a control character", name)
+		}
+	}
+	return nil
 }

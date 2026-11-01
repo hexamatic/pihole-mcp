@@ -213,3 +213,13 @@ func TestInstanceResources_AnswerWithTheURIThatWasRead(t *testing.T) {
 		}
 	}
 }
+
+func TestInstanceURI_EscapesTheName(t *testing.T) {
+	// A name with a space or a slash made a URI that was not one.
+	if got := instanceURI("Living Room", "status"); got != "pihole://Living%20Room/status" {
+		t.Errorf("instanceURI = %q", got)
+	}
+	if got := instanceURI("a/b", "summary"); got != "pihole://a%2Fb/summary" {
+		t.Errorf("instanceURI = %q", got)
+	}
+}

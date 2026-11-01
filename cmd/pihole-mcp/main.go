@@ -30,9 +30,22 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-const (
+// The HTTP transport's timeouts. They are variables so tests can shorten them.
+var (
 	httpReadHeaderTimeout = 10 * time.Second
-	shutdownGracePeriod   = 5 * time.Second
+	// httpReadTimeout bounds reading a whole request, body included. Without
+	// it a client sending a body a byte at a time held a connection open for
+	// as long as it liked, before authentication, since net/http reads the
+	// body before the handler can refuse it. Go's server clears the read
+	// deadline once the body is read, so long-lived responses such as SSE
+	// streams are not cut. No write timeout is set, for the same streams.
+	httpReadTimeout = 30 * time.Second
+	// httpIdleTimeout closes kept-alive connections that send nothing more.
+	httpIdleTimeout = 2 * time.Minute
+)
+
+const (
+	shutdownGracePeriod = 5 * time.Second
 
 	// drainInterval is how often shutdown re-closes MCP sessions. Sessions
 	// registered after the first sweep would otherwise hold a long-lived GET
@@ -138,14 +151,14 @@ func runCheck(out io.Writer) bool {
 	for _, ic := range cfg.Instances {
 		client, err := registry.Get(ic.Name)
 		if err != nil {
-			say("FAIL  %s (%s)\n      %v\n", ic.Name, ic.URL, err)
+			say("FAIL  %s (%s)\n      %v\n", ic.Name, config.RedactURL(ic.URL), err)
 			ok = false
 			continue
 		}
 
 		var ver pihole.VersionInfo
 		if err := client.Get(context.Background(), "/info/version", &ver); err != nil {
-			say("FAIL  %s (%s)\n      %v\n", ic.Name, ic.URL, err)
+			say("FAIL  %s (%s)\n      %v\n", ic.Name, config.RedactURL(ic.URL), err)
 			if hint := tools.TransportHint(err); hint != "" {
 				say("      %s\n", hint)
 			}
@@ -161,7 +174,7 @@ func runCheck(out io.Writer) bool {
 		if ftl == "" {
 			ftl = "unknown"
 		}
-		say("PASS  %s (%s)  core %s, FTL %s\n", ic.Name, ic.URL, core, ftl)
+		say("PASS  %s (%s)  core %s, FTL %s\n", ic.Name, config.RedactURL(ic.URL), core, ftl)
 	}
 
 	say("\n")
@@ -260,11 +273,7 @@ func serveHTTPContext(ctx context.Context, cfg *config.Config, address string, m
 		rl.Middleware,
 	)(mcpHandler)
 
-	s := &http.Server{
-		Addr:              address,
-		Handler:           handler,
-		ReadHeaderTimeout: httpReadHeaderTimeout,
-	}
+	s := newHTTPServer(address, handler)
 
 	log.Printf("starting %T on %s (auth=%s, rate-limit=%d/min, allowed-origins=%v, trusted-proxies=%v)",
 		mcpHandler, address, authState(auth.Enabled()), cfg.RateLimit, cfg.AllowedOrigins, cfg.TrustedProxies)
@@ -397,4 +406,15 @@ func isLoopbackAddress(address string) bool {
 		}
 	}
 	return true
+}
+
+// newHTTPServer builds the server for the HTTP and SSE transports.
+func newHTTPServer(address string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              address,
+		Handler:           handler,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		ReadTimeout:       httpReadTimeout,
+		IdleTimeout:       httpIdleTimeout,
+	}
 }
