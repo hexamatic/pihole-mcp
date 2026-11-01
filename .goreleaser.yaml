@@ -165,11 +165,11 @@ homebrew_casks:
       post:
         # Release binaries are cosign-signed but not Apple-notarised, so macOS
         # quarantines them on first run and Gatekeeper refuses to execute.
-        # Guarded on OS.mac? so the cask stays installable under Linuxbrew,
+        # Guarded by on_macos so the cask stays installable under Linuxbrew,
         # where the attribute does not exist and `xattr` is absent.
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/pihole-mcp"]
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/pihole-mcp"]
           end
 
 # Scoop bucket — publishes a manifest to hexamatic/scoop-bucket so Windows
