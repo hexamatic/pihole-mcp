@@ -436,3 +436,16 @@ func TestNetworkDeleteDevice_NegativeID(t *testing.T) {
 	// the API to refuse.
 	h.AssertNone(t, "", "")
 }
+
+func TestNetworkInfo_FailureIsReported(t *testing.T) {
+	// Both requests' errors were discarded, so a Pi-hole that refused them
+	// was reported as having no network information.
+	c := newTestClient(t, piholeErrorServer(http.StatusUnauthorized, "unauthorized", "Unauthorized", ""))
+	callToolExpectError(t, networkInfoHandler, c, nil)
+
+	c = newTestClient(t, piholeHandler(map[string]any{"/network/routes": loadFixture(t, "network_routes")}))
+	text := callTool(t, networkInfoHandler, c, nil)
+	if !strings.Contains(text, "Interfaces could not be read") || !strings.Contains(text, "routes:**") {
+		t.Errorf("one failed request should be named alongside what did come back, got:\n%s", text)
+	}
+}

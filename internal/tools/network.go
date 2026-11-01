@@ -156,10 +156,21 @@ func networkInfoHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		var routes pihole.NetworkRoutesResponse
 		var interfaces pihole.NetworkInterfacesResponse
 
-		_ = c.Get(ctx, "/network/routes", &routes)
-		_ = c.Get(ctx, "/network/interfaces", &interfaces)
+		routesErr := c.Get(ctx, "/network/routes", &routes)
+		interfacesErr := c.Get(ctx, "/network/interfaces", &interfaces)
+		// Both errors used to be discarded, so a Pi-hole that refused both
+		// requests was reported as having "No network info available".
+		if routesErr != nil && interfacesErr != nil {
+			return toolError("get network routes and interfaces", routesErr), nil
+		}
 
 		var b strings.Builder
+		if routesErr != nil {
+			fmt.Fprintf(&b, "_Routes could not be read: %v._\n", routesErr)
+		}
+		if interfacesErr != nil {
+			fmt.Fprintf(&b, "_Interfaces could not be read: %v._\n", interfacesErr)
+		}
 
 		if len(routes.Routes) > 0 {
 			fmt.Fprintf(&b, "**%d routes:**\n", len(routes.Routes))
