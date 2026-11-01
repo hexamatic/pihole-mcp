@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -499,7 +500,8 @@ type ApplyResult struct {
 // such write asks for a restart, and the sync waits for FTL to come back
 // before it goes on. If that write fails after earlier ones succeeded, the
 // sync asks for the restart separately, since without one those records
-// would be saved but not served.
+// would be saved but not served. A write that lost its reply may have been
+// saved, so it counts as needing the restart too.
 func ApplyPlan(ctx context.Context, target *Client, d *Diff, prune bool) ApplyResult {
 	ops := d.plan(prune)
 	res := ApplyResult{Ops: make([]OpResult, 0, len(ops))}
@@ -520,31 +522,61 @@ func ApplyPlan(ctx context.Context, target *Client, d *Diff, prune bool) ApplyRe
 		restart := i == last
 		sent := time.Now()
 		or := OpResult{Category: string(op.category), Action: op.action, Item: op.label}
-		if err := op.run(ctx, target, restart); err != nil {
+		err := op.run(ctx, target, restart)
+		var uncertain *UncertainError
+		mayBeSaved := err == nil || errors.As(err, &uncertain)
+		if err != nil {
 			or.Err = err.Error()
 			res.Failed++
 		} else {
 			res.Applied++
-			if restartingCategories[op.category] {
-				awaitingRestart = true
-			}
 		}
 		res.Ops = append(res.Ops, or)
-		if restart && or.Err == "" {
+		if !restartingCategories[op.category] || !mayBeSaved {
+			continue
+		}
+		if !restart {
+			awaitingRestart = true
+			continue
+		}
+		// The write that asked for the restart. If it lost its reply, FTL
+		// may have saved it and restarted, or may have seen nothing, so wait
+		// for a restart and ask for one only if none comes.
+		if waitErr := target.AwaitRestart(ctx, sent); waitErr == nil {
 			awaitingRestart = false
-			res.recordRestart(target.AwaitRestart(ctx, sent))
+			res.recordRestart(nil)
+		} else if err == nil {
+			awaitingRestart = false
+			res.recordRestart(waitErr)
+		} else {
+			awaitingRestart = true
 		}
 	}
 	if awaitingRestart {
-		sent := time.Now()
-		if err := target.Post(ctx, "/action/restartdns", nil, nil); err != nil {
-			res.RestartError = "Pi-hole saved the CNAME changes but they take effect only after FTL restarts, " +
-				"and the request to restart it failed: " + err.Error()
-		} else {
-			res.recordRestart(target.AwaitRestart(ctx, sent))
-		}
+		res.restartAfterSync(ctx, target)
 	}
 	return res
+}
+
+// restartAfterSync restarts FTL so that CNAME records the sync saved without
+// a restart take effect. It runs even when ctx has been cancelled, since by
+// then the records are saved and only the restart is missing, and it is
+// bounded by its own timeout instead.
+func (r *ApplyResult) restartAfterSync(ctx context.Context, target *Client) {
+	wait := target.restartWait
+	if wait <= 0 {
+		wait = restartWaitTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*wait)
+	defer cancel()
+
+	sent := time.Now()
+	if err := target.Post(ctx, "/action/restartdns", nil, nil); err != nil {
+		r.RestartError = "Pi-hole saved the CNAME changes but they take effect only after FTL restarts, " +
+			"and the request to restart it failed: " + err.Error()
+		return
+	}
+	r.recordRestart(target.AwaitRestart(ctx, sent))
 }
 
 func (r *ApplyResult) recordRestart(err error) {

@@ -1,10 +1,17 @@
 package tools
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
+	"github.com/hexamatic/pihole-mcp/internal/pihole/piholefake"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
@@ -122,11 +129,11 @@ func TestLocalDNSAdd_RejectsABadAddress(t *testing.T) {
 func TestLocalDNSDelete_KeepsTheOtherNamesOnTheLine(t *testing.T) {
 	// FTL deletes an array item only as a whole, and a line migrated from a
 	// Pi-hole v5 custom.list can carry several names. Deleting one used to
-	// delete them all.
+	// delete them all. The setting is written back whole with the line
+	// reduced in place, in one request that FTL applies or refuses entirely.
 	rec := piholeHandler(map[string]any{
-		"/config/dns":                                        nestedDNS([]any{"192.168.1.50 nas nas.home", "10.0.0.5 pi.home"}, nil),
-		"PUT /config/dns/hosts/192.168.1.50 nas":             map[string]any{},
-		"DELETE /config/dns/hosts/192.168.1.50 nas nas.home": map[string]any{},
+		"/config/dns":   nestedDNS([]any{"192.168.1.50 nas nas.home", "10.0.0.5 pi.home"}, nil),
+		"PATCH /config": map[string]any{},
 	})
 	c := newTestClient(t, rec)
 
@@ -136,21 +143,25 @@ func TestLocalDNSDelete_KeepsTheOtherNamesOnTheLine(t *testing.T) {
 	if !strings.Contains(text, "192.168.1.50 nas`") {
 		t.Errorf("expected the reply to name the record that remains, got: %s", text)
 	}
+	patch := rec.Only(t, "PATCH", "/config")
+	patch.AssertField(t, "config.dns.hosts", []any{"192.168.1.50 nas", "10.0.0.5 pi.home"})
+	patch.AssertBodyKeys(t, "config")
+	patch.AssertNoQueryString(t)
+	rec.AssertNone(t, "PUT", "")
+	rec.AssertNone(t, "DELETE", "")
+}
 
-	reqs := rec.Requests()
-	var writes []string
-	for _, r := range reqs {
-		if r.Method != "GET" {
-			writes = append(writes, r.Method+" "+r.RawPath+"?"+r.RawQuery)
-		}
-	}
-	want := []string{
-		"PUT /config/dns/hosts/192.168.1.50%20nas?restart=false",
-		"DELETE /config/dns/hosts/192.168.1.50%20nas%20nas.home?",
-	}
-	if strings.Join(writes, "\n") != strings.Join(want, "\n") {
-		t.Errorf("writes = %q, want the reduced line added before the original is deleted: %q", writes, want)
-	}
+func TestLocalDNSDelete_ReducedLineAlreadyStored(t *testing.T) {
+	// The line without the name is already stored on its own, so the
+	// original goes and nothing is stored twice.
+	rec := piholeHandler(map[string]any{
+		"/config/dns":   nestedDNS([]any{"192.168.1.50 nas nas.home", "192.168.1.50 nas"}, nil),
+		"PATCH /config": map[string]any{},
+	})
+	c := newTestClient(t, rec)
+
+	callTool(t, localDNSDeleteHandler, c, map[string]any{"ip": "192.168.1.50", "hostname": "nas.home"})
+	rec.Only(t, "PATCH", "/config").AssertField(t, "config.dns.hosts", []any{"192.168.1.50 nas"})
 }
 
 func TestLocalDNSDelete_DeletesASingleNameLine(t *testing.T) {
@@ -180,19 +191,64 @@ func TestLocalDNSDelete_MatchesAnIPv6AddressHoweverItIsWritten(t *testing.T) {
 }
 
 func TestLocalCNAMEDelete_KeepsTheOtherAliases(t *testing.T) {
+	// Adding the reduced record before deleting the original cannot work for
+	// CNAMEs: FTL tests each change against dnsmasq, which refuses an alias
+	// named twice ("duplicate CNAME"). The whole setting is written instead.
 	rec := piholeHandler(map[string]any{
-		"/config/dns": nestedDNS(nil, []any{"a.home,b.home,nas.home,300"}),
-		"PUT /config/dns/cnameRecords/b.home,nas.home,300":           map[string]any{},
-		"DELETE /config/dns/cnameRecords/a.home,b.home,nas.home,300": map[string]any{},
+		"/config/dns":   nestedDNS(nil, []any{"a.home,b.home,nas.home,300", "x.home,nas.home"}),
+		"PATCH /config": map[string]any{},
+		"/info/ftl":     map[string]any{"ftl": map[string]any{"uptime": 0}},
 	})
 	c := newTestClient(t, rec)
 
-	text := callTool(t, localCNAMEDeleteHandler, c, map[string]any{"alias": "a.home"})
+	text := callTool(t, localCNAMEDeleteHandler, c, map[string]any{"alias": "a.home", "restart": false})
 	if !strings.Contains(text, "b.home,nas.home,300") {
 		t.Errorf("expected the remaining alias to be kept, got: %s", text)
 	}
-	rec.Only(t, "PUT", "/config/dns/cnameRecords/b.home,nas.home,300")
-	rec.Only(t, "DELETE", "/config/dns/cnameRecords/a.home,b.home,nas.home,300")
+	patch := rec.Only(t, "PATCH", "/config")
+	patch.AssertField(t, "config.dns.cnameRecords", []any{"b.home,nas.home,300", "x.home,nas.home"})
+	patch.AssertQuery(t, "restart", "false")
+	rec.AssertNone(t, "PUT", "")
+	rec.AssertNone(t, "DELETE", "")
+}
+
+func TestLocalCNAMEDelete_ConcurrentDeletesFromOneRecordBothApply(t *testing.T) {
+	// Two calls each remove one alias from the same record. Each rewrites the
+	// setting from what it read, so with slow reads and no lock both read the
+	// original and the second write put back the alias the first removed.
+	f := piholefake.New()
+	t.Cleanup(f.Close)
+	f.SetCNAMEs("a.home,b.home,nas.home")
+
+	inner := f.Handler()
+	slowReads := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/config/dns" {
+			time.Sleep(100 * time.Millisecond)
+		}
+		inner.ServeHTTP(w, r)
+	})
+	srv := httptest.NewServer(slowReads)
+	t.Cleanup(srv.Close)
+	reg := pihole.SingleRegistry(pihole.New(srv.URL, "x"))
+	h := localCNAMEDeleteHandler(reg)
+
+	var wg sync.WaitGroup
+	for _, alias := range []string{"a.home", "b.home"} {
+		wg.Add(1)
+		go func(alias string) {
+			defer wg.Done()
+			req := mcp.CallToolRequest{}
+			req.Params.Arguments = map[string]any{"alias": alias}
+			if res, err := h(context.Background(), req); err != nil || res.IsError {
+				t.Errorf("delete %s failed: %v %v", alias, err, res)
+			}
+		}(alias)
+	}
+	wg.Wait()
+
+	if got := f.CNAMEs(); len(got) != 0 {
+		t.Errorf("after deleting both aliases the records are %q; want none", got)
+	}
 }
 
 func TestLocalDNSDelete_NoMatchDeletesNothing(t *testing.T) {

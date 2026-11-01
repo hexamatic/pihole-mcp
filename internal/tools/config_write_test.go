@@ -168,3 +168,78 @@ func TestToolError_UncertainWriteSaysToCheckFirst(t *testing.T) {
 		t.Errorf("an unanswered write should warn against a blind retry, got: %s", text)
 	}
 }
+
+func TestConfigSet_DottedKeysAreSentNested(t *testing.T) {
+	// FTL reads only nested objects. It skipped a dotted key as unknown and
+	// still answered 200, and the tool reported the change as made.
+	rec := piholeHandler(map[string]any{
+		"GET /config":   detailedConfig(),
+		"PATCH /config": configAfter(20000),
+		"/info/ftl":     map[string]any{"ftl": map[string]any{"uptime": 0}},
+	})
+	c := newTestClient(t, rec)
+
+	text := callTool(t, configSetHandler, c, map[string]any{"config": `{"dns.cache.size":20000}`})
+	if !strings.Contains(text, "dns.cache.size: 10000 → 20000") {
+		t.Errorf("reply should report the change, got:\n%s", text)
+	}
+	patch := rec.Only(t, "PATCH", "/config")
+	patch.AssertField(t, "config.dns.cache.size", 20000.0)
+	if _, ok := patch.JSON(t)["config"].(map[string]any)["dns.cache.size"]; ok {
+		t.Error("the dotted key was sent as it was given, which FTL ignores")
+	}
+}
+
+func TestConfigSet_ASettingNamedTwiceIsRefused(t *testing.T) {
+	for name, payload := range map[string]string{
+		"dotted and nested":   `{"dns.cache.size":1,"dns":{"cache":{"size":2}}}`,
+		"differing in case":   `{"dns":{"cache":{"size":1}},"DNS":{"cache":{"size":2}}}`,
+		"value and a section": `{"dns.cache":5,"dns.cache.size":1}`,
+		"empty segment":       `{"dns..size":1}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := piholeHandler(map[string]any{"GET /config": detailedConfig()})
+			c := newTestClient(t, rec)
+			callToolExpectError(t, configSetHandler, c, map[string]any{"config": payload})
+			rec.AssertNone(t, "PATCH", "")
+		})
+	}
+}
+
+func TestConfigSet_KeysMatchIgnoringCaseAsFTLDoes(t *testing.T) {
+	// FTL finds config keys ignoring case, so it applied this write while the
+	// tool reported the key as unknown and skipped the restart wait.
+	rec := piholeHandler(map[string]any{
+		"GET /config":   detailedConfig(),
+		"PATCH /config": configAfter(20000),
+		"/info/ftl":     map[string]any{"ftl": map[string]any{"uptime": 0}},
+	})
+	c := newTestClient(t, rec)
+
+	text := callTool(t, configSetHandler, c, map[string]any{"config": `{"DNS":{"Cache":{"Size":20000}}}`})
+	if !strings.Contains(text, "dns.cache.size: 10000 → 20000") {
+		t.Errorf("reply should report the change under FTL's spelling, got:\n%s", text)
+	}
+	if rec.Count("GET", "/info/ftl") == 0 {
+		t.Error("dns.cache.size restarts FTL, but the tool did not wait for it")
+	}
+}
+
+func TestExpandConfigKeys_MergesSectionsSpelledDifferently(t *testing.T) {
+	got, err := expandConfigKeys(map[string]any{
+		"dns.cache.size": 1.0,
+		"DNS":            map[string]any{"blocking": map[string]any{"active": true}},
+		"webserver":      map[string]any{"api.password": "x"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected two sections, got %v", got)
+	}
+	leaves := map[string]any{}
+	configLeaves("", got, leaves)
+	if len(leaves) != 3 {
+		t.Errorf("leaves = %v, want three settings", leaves)
+	}
+}

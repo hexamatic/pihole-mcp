@@ -256,6 +256,10 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if !ok {
 			return mcp.NewToolResultError(`Parameter 'config' must be a JSON object, e.g. {"dns":{"blocking":{"active":true}}}`), nil
 		}
+		payload, err = expandConfigKeys(payload)
+		if err != nil {
+			return mcp.NewToolResultError("Parameter 'config': " + err.Error()), nil
+		}
 
 		// Accept a payload that already carries the API envelope. Pi-hole has no
 		// top-level "config" section, so a lone "config" key can only be the
@@ -354,8 +358,91 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	}
 }
 
+// expandConfigKeys rewrites a config_set payload so that every key is a
+// single path segment, nesting a dotted key such as "dns.blocking.active" the
+// way its caller meant it. FTL reads only nested objects. It skips a dotted
+// key as unknown and still answers 200, so such a write changed nothing and
+// was reported as a success. FTL ignores case in these keys, so keys that
+// differ only in case are merged as one, and naming one setting twice, or
+// both as a setting and as a section, is an error rather than a guess.
+func expandConfigKeys(in map[string]any) (map[string]any, error) {
+	out := map[string]any{}
+	if err := mergeConfigKeys(out, in, ""); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func mergeConfigKeys(dst, src map[string]any, prefix string) error {
+	keys := make([]string, 0, len(src))
+	for k := range src {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		parts := strings.Split(k, ".")
+		node, path := dst, prefix
+		for _, part := range parts[:len(parts)-1] {
+			section, err := configSection(node, part, &path, k)
+			if err != nil {
+				return err
+			}
+			node = section
+		}
+		last := parts[len(parts)-1]
+		if child, ok := src[k].(map[string]any); ok && len(child) > 0 {
+			section, err := configSection(node, last, &path, k)
+			if err != nil {
+				return err
+			}
+			if err := mergeConfigKeys(section, child, path); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := addConfigSegment(&path, last, k); err != nil {
+			return err
+		}
+		if _, _, found := pihole.ConfigChild(node, last); found {
+			return fmt.Errorf("%s is set more than once", path)
+		}
+		node[last] = src[k]
+	}
+	return nil
+}
+
+// configSection returns the section named part inside node, creating it if
+// it is not there yet, and extends path with it.
+func configSection(node map[string]any, part string, path *string, key string) (map[string]any, error) {
+	if err := addConfigSegment(path, part, key); err != nil {
+		return nil, err
+	}
+	_, existing, found := pihole.ConfigChild(node, part)
+	if !found {
+		section := map[string]any{}
+		node[part] = section
+		return section, nil
+	}
+	section, ok := existing.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s is given both a value and settings inside it", *path)
+	}
+	return section, nil
+}
+
+func addConfigSegment(path *string, part, key string) error {
+	if strings.TrimSpace(part) == "" {
+		return fmt.Errorf("key %q has an empty segment", key)
+	}
+	if *path != "" {
+		*path += "."
+	}
+	*path += part
+	return nil
+}
+
 // configLeaves flattens a config payload into dotted keys and the values set
-// at them. A dotted key in the payload is split the way FTL reads it.
+// at them.
 func configLeaves(prefix string, v any, out map[string]any) {
 	m, ok := v.(map[string]any)
 	if !ok || len(m) == 0 {
@@ -406,17 +493,20 @@ func compareConfigWrite(before, after map[string]any, leaves map[string]any) con
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	for _, key := range keys {
-		item, ok := pihole.DetailedConfigItem(before, key)
+	for _, requested := range keys {
+		item, ok := pihole.DetailedConfigItem(before, requested)
 		if !ok {
-			r.unknown = append(r.unknown, key)
+			r.unknown = append(r.unknown, requested)
 			continue
 		}
+		// Reported as FTL spells it, which can differ in case from the
+		// request: FTL matches these keys ignoring case.
+		key := item.Key
 		now, _ := configValueAt(after, key)
 		// FTL reads a write-only setting such as the password back as
 		// "********" before and after, so a new value looks unchanged. Any
 		// value other than the placeholder itself is a change.
-		masked := item.Value == maskedValue && now == maskedValue && leaves[key] != maskedValue
+		masked := item.Value == maskedValue && now == maskedValue && leaves[requested] != maskedValue
 		if !masked && reflect.DeepEqual(item.Value, now) {
 			r.unchanged = append(r.unchanged, key)
 			continue
@@ -439,7 +529,8 @@ func compareConfigWrite(before, after map[string]any, leaves map[string]any) con
 	return r
 }
 
-// configValueAt returns the value at a dotted key in a plain config tree.
+// configValueAt returns the value at a dotted key in a plain config tree,
+// matching keys as FTL does.
 func configValueAt(cfg map[string]any, key string) (any, bool) {
 	var node any = cfg
 	for _, part := range strings.Split(key, ".") {
@@ -447,11 +538,18 @@ func configValueAt(cfg map[string]any, key string) (any, bool) {
 		if !ok {
 			return nil, false
 		}
-		if node, ok = m[part]; !ok {
+		if _, node, ok = pihole.ConfigChild(m, part); !ok {
 			return nil, false
 		}
 	}
 	return node, true
+}
+
+// configLock locks a config setting on c from a read to the write that
+// depends on it, and returns the unlock. Every tool that changes a setting
+// item by item takes the same lock, however it spells the setting's path.
+func configLock(c *pihole.Client, element string) func() {
+	return lockEntry(c, "/config/"+normaliseConfigPath(element))
 }
 
 func pluralIt(n int) string {
@@ -549,6 +647,7 @@ func configAddValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if !restart {
 			path += "?restart=false"
 		}
+		defer configLock(c, element)()
 		waits := restartsFor(ctx, c, element, restart)
 
 		sent := time.Now()
@@ -595,6 +694,7 @@ func configRemoveValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if !restart {
 			path += "?restart=false"
 		}
+		defer configLock(c, element)()
 		waits := restartsFor(ctx, c, element, restart)
 
 		sent := time.Now()

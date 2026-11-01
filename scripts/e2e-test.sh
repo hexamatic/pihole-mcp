@@ -25,9 +25,11 @@ ERRORS=()
 # with "already present" or delete something twice, which hides what happened.
 # That outcome is reported as it stands. It used to be resent, which is how an
 # FTL restart racing the next write surfaced in CI as a duplicate-item error.
+# A gravity run whose stream broke off says it "may still be running", and is
+# reported as it stands for the same reason: a second run would collide with it.
 is_transient() {
     case "$1" in
-        *"may already have made this change"*)
+        *"may already have made this change"*|*"may still be running"*)
             return 1 ;;
         ""|*"read tcp"*|*"connection refused"*|*"sending auth request"*|*"i/o timeout"*|*"connection reset"*|*"Parse error"*|*"EOF"*)
             return 0 ;;

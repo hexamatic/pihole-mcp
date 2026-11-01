@@ -3,6 +3,7 @@
 package pihole
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -157,13 +158,22 @@ func (e *UncertainError) Unwrap() error { return e.Err }
 // mayHaveApplied reports whether err leaves it unknown whether a sent request
 // was processed: the connection ended or timed out with the request already
 // sent. A refused connection or a failed login means nothing was sent.
-func mayHaveApplied(err error) bool {
+//
+// live says whether the request's context was still live when the request
+// began. A context that ends while the request is out, such as a client
+// cancelling the tool call, abandons the reply but not the change, so that
+// outcome is uncertain too. A context that had already ended stopped the
+// request before anything was sent.
+func mayHaveApplied(err error, live bool) bool {
 	if err == nil {
 		return false
 	}
 	var le *loginError
 	if errors.As(err, &le) || errors.Is(err, syscall.ECONNREFUSED) {
 		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return live
 	}
 	switch {
 	case errors.Is(err, io.EOF),

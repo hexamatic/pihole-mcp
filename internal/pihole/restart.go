@@ -69,6 +69,9 @@ func (c *Client) RestartsFTL(ctx context.Context, element string) (bool, error) 
 
 // DetailedItem is one setting from a detailed config read.
 type DetailedItem struct {
+	// Key is the setting's dotted path as FTL spells it, which can differ in
+	// case from the path that was looked up.
+	Key         string
 	Value       any
 	RestartsFTL bool
 	// EndsSessions is set for a setting whose change logs every API session
@@ -78,15 +81,16 @@ type DetailedItem struct {
 
 // DetailedConfigItem finds the dotted element in a config tree read with
 // ?detailed=true, where each setting is an object carrying "value" and
-// "flags" in place of its bare value.
+// "flags" in place of its bare value. Keys match as ConfigChild matches them.
 func DetailedConfigItem(cfg map[string]any, element string) (DetailedItem, bool) {
 	var node any = cfg
-	for _, part := range strings.Split(element, ".") {
+	parts := strings.Split(element, ".")
+	for i, part := range parts {
 		m, ok := node.(map[string]any)
 		if !ok {
 			return DetailedItem{}, false
 		}
-		node, ok = m[part]
+		parts[i], node, ok = ConfigChild(m, part)
 		if !ok {
 			return DetailedItem{}, false
 		}
@@ -102,16 +106,40 @@ func DetailedConfigItem(cfg map[string]any, element string) (DetailedItem, bool)
 	flags, _ := leaf["flags"].(map[string]any)
 	restarts, _ := flags["restart_dnsmasq"].(bool)
 	endsSessions, _ := flags["session_reset"].(bool)
-	return DetailedItem{Value: value, RestartsFTL: restarts, EndsSessions: endsSessions}, true
+	return DetailedItem{Key: strings.Join(parts, "."), Value: value, RestartsFTL: restarts, EndsSessions: endsSessions}, true
+}
+
+// ConfigChild looks a key up in one level of a config tree the way FTL
+// matches the keys of a config write: exactly if it can, otherwise ignoring
+// case, since FTL finds them with cJSON_GetObjectItem, which ignores case. It
+// returns the key as FTL spells it.
+func ConfigChild(m map[string]any, key string) (string, any, bool) {
+	if v, ok := m[key]; ok {
+		return key, v, true
+	}
+	for k, v := range m {
+		if strings.EqualFold(k, key) {
+			return k, v, true
+		}
+	}
+	return "", nil, false
 }
 
 // AwaitRestart waits until FTL has restarted after a request sent at sent.
 //
-// It polls /info/ftl until a reply reports an uptime shorter than the time
-// since sent, which only a process started after the request can do. The old
-// process keeps answering for a moment before it stops, and nothing answers
-// while the new one starts, so both are polled through. It gives up after
-// restartWaitTimeout, or when ctx ends.
+// It polls /info/ftl until the process answering is one that started after
+// the request. The old process keeps answering for a moment before it stops,
+// and nothing answers while the new one starts, so both are polled through.
+// It gives up after restartWaitTimeout, or when ctx ends.
+//
+// A process started after the request reports an uptime shorter than the time
+// since the request, but FTL measures its uptime when it answers, and the
+// reply can take a while to arrive. Measured when the reply arrives, an FTL
+// that last started just before the request could pass for a new one;
+// measured when the probe is sent, a restart quicker than one round trip
+// could never be confirmed. So the bound from before the probe counts on its
+// own, and the bound from after it counts once FTL has been seen to go away,
+// which the old process cannot follow with an answer.
 func (c *Client) AwaitRestart(ctx context.Context, sent time.Time) error {
 	wait := c.restartWait
 	if wait <= 0 {
@@ -122,8 +150,14 @@ func (c *Client) AwaitRestart(ctx context.Context, sent time.Time) error {
 
 	tick := time.NewTicker(restartPollInterval)
 	defer tick.Stop()
+	wentAway := false
 	for {
-		if up, err := c.ftlUptime(ctx); err == nil && up < time.Since(sent) {
+		before := time.Since(sent)
+		up, err := c.ftlUptime(ctx)
+		switch {
+		case err != nil:
+			wentAway = true
+		case up < before, wentAway && up < time.Since(sent):
 			return nil
 		}
 		select {

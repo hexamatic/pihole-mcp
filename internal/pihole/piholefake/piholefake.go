@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -132,6 +133,11 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 		f.handleTeleporter(w, r)
 	case "info":
 		if len(rest) == 2 && rest[1] == "ftl" && r.Method == http.MethodGet {
+			if time.Now().Before(f.started) {
+				// Still restarting: FTL answers nothing until it is back.
+				writeAPIError(w, http.StatusServiceUnavailable, "restarting", "FTL is restarting")
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{"ftl": map[string]any{
 				// FTL reports uptime in milliseconds.
 				"uptime": float64(time.Since(f.started)) / float64(time.Millisecond),
@@ -552,6 +558,10 @@ func (f *Fake) handleBatchDelete(w http.ResponseWriter, r *http.Request, categor
 }
 
 func (f *Fake) handleConfig(w http.ResponseWriter, r *http.Request, p []string) {
+	if len(p) == 0 && r.Method == http.MethodPatch {
+		f.patchConfig(w, r)
+		return
+	}
 	// Only the dns section is emulated (hosts and cnameRecords). Anything else
 	// 404s rather than returning an empty but valid-looking envelope: a bare
 	// GET /config and a GET /config/_properties used to come back as
@@ -638,11 +648,54 @@ func (f *Fake) handleConfig(w http.ResponseWriter, r *http.Request, p []string) 
 	}
 }
 
-// restart records an emulated FTL restart. The real one takes a couple of
-// seconds; this one is instant, so a client that waits for it sees the new
-// uptime on its first check. Caller holds f.mu.
+// patchConfig handles PATCH /config for the two emulated arrays, each
+// replaced whole by the value sent, as FTL does. Any other setting is refused,
+// so a test cannot pass by writing one this fake would silently drop. FTL
+// restarts only when a flagged setting actually changed, and not when the
+// request says restart=false.
+func (f *Fake) patchConfig(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Config map[string]map[string][]string `json:"config"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "this fake accepts only dns.hosts and dns.cnameRecords arrays")
+		return
+	}
+	dns, ok := body.Config["dns"]
+	if !ok || len(body.Config) != 1 || len(dns) == 0 {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "this fake accepts only dns.hosts and dns.cnameRecords arrays")
+		return
+	}
+	for field := range dns {
+		if f.fieldSlice(field) == nil {
+			writeAPIError(w, http.StatusBadRequest, "bad_request", "this fake accepts only dns.hosts and dns.cnameRecords arrays")
+			return
+		}
+	}
+	changed := false
+	for field, v := range dns {
+		if field == "cnameRecords" && !slices.Equal(f.cnames, v) {
+			changed = true
+		}
+		f.setFieldSlice(field, append([]string(nil), v...))
+	}
+	if changed && r.URL.Query().Get("restart") != "false" {
+		f.restart()
+	}
+	writeJSON(w, http.StatusOK, pihole.ConfigResponse{Config: map[string]any{
+		"dns": map[string]any{"hosts": toAnySlice(f.hosts), "cnameRecords": toAnySlice(f.cnames)},
+	}})
+}
+
+// restartOutage is how long the emulated FTL is away while it restarts. The
+// real one takes a couple of seconds; this is long enough that a client
+// waiting for the restart sees FTL go away and come back.
+const restartOutage = 20 * time.Millisecond
+
+// restart records an emulated FTL restart. /info/ftl answers 503 until the
+// new process has started. Caller holds f.mu.
 func (f *Fake) restart() {
-	f.started = time.Now()
+	f.started = time.Now().Add(restartOutage)
 	f.restarts++
 }
 
@@ -822,6 +875,13 @@ func (f *Fake) Hosts() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.hosts...)
+}
+
+// CNAMEs returns the current dns.cnameRecords entries.
+func (f *Fake) CNAMEs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.cnames...)
 }
 
 // --- internal helpers ---

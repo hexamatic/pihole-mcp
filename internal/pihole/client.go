@@ -106,8 +106,9 @@ func New(baseURL, password string, opts ...Option) *Client {
 // A change request that was sent but got no reply returns an *UncertainError,
 // since Pi-hole may already have applied it.
 func (c *Client) Do(ctx context.Context, method, path string, body, result any) error {
+	live := ctx.Err() == nil
 	err := c.do(ctx, method, path, body, result)
-	if !idempotentMethod(method) && mayHaveApplied(err) {
+	if !idempotentMethod(method) && mayHaveApplied(err, live) {
 		return &UncertainError{err}
 	}
 	return err
@@ -172,6 +173,7 @@ func (c *Client) PostMultipart(ctx context.Context, path, filePath string, impor
 	if err != nil {
 		return err
 	}
+	live := ctx.Err() == nil
 
 	err = c.withRetry(ctx, false, func() error {
 		sid, err := c.ensureAuth(ctx)
@@ -193,7 +195,7 @@ func (c *Client) PostMultipart(ctx context.Context, path, filePath string, impor
 		}
 		return c.sendMultipart(ctx, path, newSID, body, contentType, result)
 	})
-	if mayHaveApplied(err) {
+	if mayHaveApplied(err, live) {
 		return &UncertainError{err}
 	}
 	return err

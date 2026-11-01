@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -131,5 +132,113 @@ func TestDo_ARefusedConnectionIsNotUncertain(t *testing.T) {
 	var uncertain *UncertainError
 	if err == nil || errors.As(err, &uncertain) {
 		t.Errorf("a refused connection sent nothing, so it is not uncertain: %T %v", err, err)
+	}
+}
+
+func TestAwaitRestart_ASlowReplyFromTheOldProcessIsNotARestart(t *testing.T) {
+	// FTL last started just before the write, and its replies take longer to
+	// arrive than that. Measured once the reply was in, its uptime looked
+	// shorter than the time since the write, and it passed for a restart.
+	sent := time.Now()
+	started := sent.Add(-20 * time.Millisecond)
+	c, _ := ftlUptimeServerWith(t, func(int) (float64, time.Duration) {
+		return float64(time.Since(started)) / float64(time.Millisecond), 80 * time.Millisecond
+	})
+	c.restartWait = 400 * time.Millisecond
+
+	if err := c.AwaitRestart(context.Background(), sent); err == nil {
+		t.Fatal("an FTL that started before the write was taken for a restart")
+	}
+}
+
+func TestAwaitRestart_AQuickRestartIsConfirmedOnceFTLWentAway(t *testing.T) {
+	// The new process started 5 ms after the write, sooner than a probe takes
+	// to come back, so its uptime is never below the time since the write
+	// as measured before the probe. Having seen FTL go away, the wait
+	// accepts it.
+	sent := time.Now()
+	started := sent.Add(5 * time.Millisecond)
+	c, probes := ftlUptimeServerWith(t, func(n int) (float64, time.Duration) {
+		if n == 1 {
+			return -1, 0
+		}
+		time.Sleep(20 * time.Millisecond) // FTL is slow to answer
+		return float64(time.Since(started)) / float64(time.Millisecond), 0
+	})
+
+	if err := c.AwaitRestart(context.Background(), sent); err != nil {
+		t.Fatalf("AwaitRestart: %v", err)
+	}
+	if n := probes.Load(); n != 2 {
+		t.Errorf("confirmed after %d probes, want 2", n)
+	}
+}
+
+// ftlUptimeServerWith is ftlUptimeServer with a delay after the uptime is
+// measured and before the reply is sent.
+func ftlUptimeServerWith(t *testing.T, probe func(n int) (float64, time.Duration)) (*Client, *atomic.Int32) {
+	t.Helper()
+	var probes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/auth" {
+			writeJSON(w, authResponse{Session: sessionInfo{Valid: true, SID: "s"}})
+			return
+		}
+		up, delay := probe(int(probes.Add(1)))
+		if up < 0 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		time.Sleep(delay)
+		writeJSON(w, map[string]any{"ftl": map[string]any{"uptime": up}})
+	}))
+	t.Cleanup(srv.Close)
+	return New(srv.URL, "test", WithRetry(0, time.Second), WithRestartWait(2*time.Second)), &probes
+}
+
+func TestDo_AWriteCancelledInFlightIsUncertain(t *testing.T) {
+	// The client cancels the tool call after the write reached Pi-hole. The
+	// reply is abandoned, but the change may have been made.
+	received, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	_, c := newAuthedServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJSON(w, map[string]any{})
+			return
+		}
+		once.Do(func() { close(received) })
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	})
+	defer close(release)
+	// Log in first, so the cancelled call below fails on the write itself.
+	if err := c.Get(context.Background(), "/info/version", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-received; cancel() }()
+	err := c.Post(ctx, "/domains/deny/exact", map[string]any{"domain": "a.example"}, nil)
+	var uncertain *UncertainError
+	if !errors.As(err, &uncertain) {
+		t.Fatalf("a POST cancelled after it was sent returned %T %v, want *UncertainError", err, err)
+	}
+
+	// A context that had already ended stopped the request before it went.
+	err = c.Post(ctx, "/domains/deny/exact", map[string]any{"domain": "a.example"}, nil)
+	if err == nil || errors.As(err, &uncertain) {
+		t.Errorf("a POST with an ended context sent nothing, so it is not uncertain: %T %v", err, err)
+	}
+}
+
+func TestDetailedConfigItem_MatchesKeysAsFTLDoes(t *testing.T) {
+	cfg := map[string]any{"dns": map[string]any{"cache": map[string]any{
+		"size": map[string]any{"value": 10000.0, "flags": map[string]any{"restart_dnsmasq": true}},
+	}}}
+	item, ok := DetailedConfigItem(cfg, "DNS.Cache.size")
+	if !ok || item.Key != "dns.cache.size" || !item.RestartsFTL {
+		t.Errorf("DetailedConfigItem(DNS.Cache.size) = %+v, %v; want dns.cache.size, which FTL matches ignoring case", item, ok)
 	}
 }

@@ -108,3 +108,111 @@ func TestApplyPlan_HostRecordsDoNotRestartFTL(t *testing.T) {
 	}
 	rec.AssertCount(t, "GET", "/info/ftl", 0)
 }
+
+// cnameTarget is a target fake whose CNAME writes pass through intercept
+// first, with a recorder in front.
+func cnameTarget(t *testing.T, intercept func(inner http.Handler, w http.ResponseWriter, r *http.Request) bool) (*piholefake.Fake, *pihole.Client, *wiretest.Recorder) {
+	t.Helper()
+	f := piholefake.New()
+	t.Cleanup(f.Close)
+	inner := f.Handler()
+	rec := wiretest.Proxy(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && intercept(inner, w, r) {
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	srv := httptest.NewServer(rec)
+	t.Cleanup(srv.Close)
+	return f, pihole.New(srv.URL, "test", pihole.WithName("secondary"), pihole.WithRetry(0, time.Second)), rec
+}
+
+// applyThenDrop applies the request to the fake and then drops the
+// connection without a reply, as FTL does when it exits mid-request.
+func applyThenDrop(inner http.Handler, w http.ResponseWriter, r *http.Request) {
+	inner.ServeHTTP(httptest.NewRecorder(), r)
+	if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+		_ = conn.Close()
+	}
+}
+
+func TestApplyPlan_AnUncertainCNAMEWriteStillGetsItsRestart(t *testing.T) {
+	// The first record was saved but its reply was lost, and the write that
+	// would have restarted FTL failed. Saved without a restart, the record
+	// would not be served.
+	src := cnameSource(t, "a.home,nas.home", "z.home,nas.home")
+	tgtFake, tgt, rec := cnameTarget(t, func(inner http.Handler, w http.ResponseWriter, r *http.Request) bool {
+		switch {
+		case strings.Contains(r.URL.Path, "a.home"):
+			applyThenDrop(inner, w, r)
+		case strings.Contains(r.URL.Path, "z.home"):
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"key":"bad_request","message":"Invalid CNAME"}}`))
+		default:
+			return false
+		}
+		return true
+	})
+
+	d, err := pihole.ComputeDiff(context.Background(), src, tgt, []pihole.SyncCategory{pihole.CategoryCNAME})
+	if err != nil {
+		t.Fatalf("ComputeDiff: %v", err)
+	}
+	res := pihole.ApplyPlan(context.Background(), tgt, d, false)
+	if res.Failed != 2 {
+		t.Fatalf("failed %d, want both reported (%+v)", res.Failed, res.Ops)
+	}
+	rec.AssertCount(t, "POST", "/action/restartdns", 1)
+	if n := tgtFake.Restarts(); n != 1 || !res.Restarted {
+		t.Errorf("restarts = %d, Restarted = %v; the saved record needs one restart", n, res.Restarted)
+	}
+}
+
+func TestApplyPlan_AnUncertainRestartingWriteWaitsForItsOwnRestart(t *testing.T) {
+	// The write that asked for the restart lost its reply after FTL saved it
+	// and restarted. The sync sees the restart and does not ask for another.
+	src := cnameSource(t, "a.home,nas.home")
+	tgtFake, tgt, rec := cnameTarget(t, func(inner http.Handler, w http.ResponseWriter, r *http.Request) bool {
+		applyThenDrop(inner, w, r)
+		return true
+	})
+
+	d, err := pihole.ComputeDiff(context.Background(), src, tgt, []pihole.SyncCategory{pihole.CategoryCNAME})
+	if err != nil {
+		t.Fatalf("ComputeDiff: %v", err)
+	}
+	res := pihole.ApplyPlan(context.Background(), tgt, d, false)
+	rec.AssertCount(t, "POST", "/action/restartdns", 0)
+	if n := tgtFake.Restarts(); n != 1 || !res.Restarted {
+		t.Errorf("restarts = %d, Restarted = %v; want the write's own restart confirmed", n, res.Restarted)
+	}
+}
+
+func TestApplyPlan_RestartsFTLEvenWhenCancelledPartWay(t *testing.T) {
+	// The sync is cancelled after the first record was saved with
+	// restart=false. That record still needs the restart, which used to be
+	// sent with the cancelled context and so never went.
+	src := cnameSource(t, "a.home,nas.home", "z.home,nas.home")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tgtFake, tgt, rec := cnameTarget(t, func(inner http.Handler, w http.ResponseWriter, r *http.Request) bool {
+		if !strings.Contains(r.URL.Path, "a.home") {
+			return false
+		}
+		inner.ServeHTTP(w, r)
+		cancel()
+		return true
+	})
+
+	d, err := pihole.ComputeDiff(context.Background(), src, tgt, []pihole.SyncCategory{pihole.CategoryCNAME})
+	if err != nil {
+		t.Fatalf("ComputeDiff: %v", err)
+	}
+	res := pihole.ApplyPlan(ctx, tgt, d, false)
+	rec.AssertCount(t, "PUT", "/config/dns/cnameRecords/z.home,nas.home", 0)
+	rec.AssertCount(t, "POST", "/action/restartdns", 1)
+	if n := tgtFake.Restarts(); n != 1 || !res.Restarted {
+		t.Errorf("restarts = %d, Restarted = %v, RestartError = %q; the saved record needs one restart",
+			n, res.Restarted, res.RestartError)
+	}
+}

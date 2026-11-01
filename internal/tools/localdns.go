@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -177,6 +178,7 @@ func localDNSAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 
 		record := addr.String() + " " + hostname
+		defer configLock(c, "dns."+hostsField)()
 		restart := req.GetBool("restart", true)
 		waits := restartsFor(ctx, c, "dns."+hostsField, restart)
 		sent := time.Now()
@@ -212,6 +214,9 @@ func localDNSDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
+		// Held from the read to the write, so a concurrent change to the same
+		// setting cannot be lost between them.
+		defer configLock(c, "dns."+hostsField)()
 		records, err := readLocalRecords(ctx, c, hostsField)
 		if err != nil {
 			return toolError("read local DNS records", err), nil
@@ -237,9 +242,8 @@ func localDNSDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		// FTL allows several names on one line ("IP HOSTNAME [HOSTNAME ...]"),
 		// which is how a Pi-hole v5 custom.list arrives after migration, and
 		// it deletes an array item only as a whole. Deleting the line removed
-		// every other name on it too. Keep the rest by writing the line
-		// without this name first, so a failure part way leaves a duplicate
-		// rather than a lost name.
+		// every other name on it too, so the line is rewritten without this
+		// name instead.
 		fields := strings.Fields(match)
 		var kept []string
 		for _, name := range fields[1:] {
@@ -258,8 +262,7 @@ func localDNSDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 				restartNoteIf(ctx, c, waits, sent)), nil
 		}
 		remaining := fields[0] + " " + strings.Join(kept, " ")
-		res = replaceLocalRecord(ctx, c, hostsField, match, remaining, restart, waits, hostname)
-		return res, nil
+		return replaceLocalRecord(ctx, c, hostsField, records, match, remaining, restart, waits, hostname), nil
 	}
 }
 
@@ -270,17 +273,39 @@ func sameAddr(stored string, addr netip.Addr) bool {
 }
 
 // replaceLocalRecord removes one name from a stored record that carries
-// several, by adding the record without it and then deleting the original.
-// Adding first means a failure between the two steps leaves both records in
-// place, never one with names missing.
-func replaceLocalRecord(ctx context.Context, c *pihole.Client, field, original, remaining string, restart, waits bool, removed string) *mcp.CallToolResult {
-	if err := c.Put(ctx, recordPath(field, remaining, false), nil, nil); err != nil {
-		return toolError(fmt.Sprintf("remove %s from `%s` (writing `%s` failed, so nothing changed)", removed, original, remaining), err)
+// several, by writing the whole setting back with that record replaced in
+// place.
+//
+// FTL deletes an array item only as a whole, and adding the reduced record
+// before deleting the original does not work for CNAMEs: FTL tests every
+// change against dnsmasq, which refuses a configuration that names an alias
+// twice, so the reduced record cannot be added while the original is still
+// there. A single PATCH of the array is applied or refused as a unit, so no
+// failure leaves a name missing or stored twice. records is the setting as
+// read under the lock the caller holds; a change made outside this server
+// between that read and this write would be overwritten.
+func replaceLocalRecord(ctx context.Context, c *pihole.Client, field string, records []string, original, remaining string, restart, waits bool, removed string) *mcp.CallToolResult {
+	updated := make([]string, 0, len(records))
+	for _, rec := range records {
+		if rec != original {
+			updated = append(updated, rec)
+			continue
+		}
+		// The reduced record may already be stored on its own line, in which
+		// case the original only needs to go.
+		if !slices.Contains(records, remaining) {
+			updated = append(updated, remaining)
+		}
 	}
+
+	path := "/config"
+	if !restart {
+		path += "?restart=false"
+	}
+	body := map[string]any{"config": map[string]any{"dns": map[string]any{field: updated}}}
 	sent := time.Now()
-	if err := c.Delete(ctx, recordPath(field, original, restart)); err != nil {
-		return toolError(fmt.Sprintf("remove %s: `%s` was added, but the original `%s` could not be deleted, so both are now stored. "+
-			"Delete the original with pihole_config_remove_value", removed, remaining, original), err)
+	if err := c.Do(ctx, "PATCH", path, body, nil); err != nil {
+		return toolError(fmt.Sprintf("remove %s from `%s`", removed, original), err)
 	}
 	return mcp.NewToolResultText(fmt.Sprintf("**Removed** `%s` from `%s`. The other names stay, as `%s`.", removed, original, remaining) +
 		restartNoteIf(ctx, c, waits, sent))
@@ -315,6 +340,7 @@ func localCNAMEAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			record += "," + strconv.Itoa(ttl)
 		}
 
+		defer configLock(c, "dns."+cnamesField)()
 		restart := req.GetBool("restart", true)
 		waits := restartsFor(ctx, c, "dns."+cnamesField, restart)
 		sent := time.Now()
@@ -337,6 +363,7 @@ func localCNAMEDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError("Parameter 'alias' is required"), nil
 		}
 
+		defer configLock(c, "dns."+cnamesField)()
 		records, err := readLocalRecords(ctx, c, cnamesField)
 		if err != nil {
 			return toolError("read local CNAME records", err), nil
@@ -368,7 +395,7 @@ func localCNAMEDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 		if len(kept) > 0 {
 			remaining := strings.Join(append(kept, rest...), ",")
-			return replaceLocalRecord(ctx, c, cnamesField, match, remaining, restart, waits, alias), nil
+			return replaceLocalRecord(ctx, c, cnamesField, records, match, remaining, restart, waits, alias), nil
 		}
 
 		sent := time.Now()
