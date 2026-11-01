@@ -173,9 +173,21 @@ jobs:
   # only ever sequenced behind it to avoid spending a runner on a build that
   # would not compile — which cost every green run the full length of validate,
   # roughly 45% of CI wall-clock, to save a runner-minute on the rare red one.
-  integration:
+  #
+  # One leg per supported Pi-hole release. FTL v6.8 is the current release and
+  # moves with Dependabot; FTL v6.7 is held back on purpose, because it predates
+  # the v6.8 changes to /history and /config that the server still has to cope
+  # with on older installs. Each compose file starts its own two-instance pair.
+  integration-pihole:
+    name: integration (FTL ${{ matrix.ftl }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        ftl: ["v6.8", "v6.7"]
+    env:
+      COMPOSE: ci/compose/pihole-${{ matrix.ftl }}.yml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -186,7 +198,7 @@ jobs:
           go-version-file: "go.mod"
 
       - name: Start Pi-hole instances
-        run: docker compose -f .github/docker-compose.ci.yml up -d --wait
+        run: docker compose -f "$COMPOSE" up -d --wait
 
       # A Pi-hole nobody has sent a query to answers the stats, history and
       # suggestion endpoints with nothing, and an assertion against an empty
@@ -200,7 +212,7 @@ jobs:
           SEED_SKIP_MESSAGES: "1"
         run: |
           for svc in pihole pihole-secondary; do
-            scripts/seed-dev.sh "$(docker compose -f .github/docker-compose.ci.yml ps -q "$svc")"
+            scripts/seed-dev.sh "$(docker compose -f "$COMPOSE" ps -q "$svc")"
           done
 
       - name: Integration tests
@@ -252,4 +264,23 @@ jobs:
 
       - name: Pi-hole logs
         if: failure()
-        run: docker compose -f .github/docker-compose.ci.yml logs
+        run: docker compose -f "$COMPOSE" logs
+
+  # The required status check is named `integration`, and the ruleset matches
+  # check names exactly, so the matrix legs above cannot satisfy it. This job
+  # carries that name and passes only when every leg succeeded. `if: always()`
+  # matters: without it a failed leg would skip this job, and GitHub treats a
+  # skipped required check as passing.
+  integration:
+    name: integration
+    needs: integration-pihole
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every Pi-hole version to pass
+        env:
+          RESULT: ${{ needs.integration-pihole.result }}
+        run: |
+          echo "integration-pihole: $RESULT"
+          test "$RESULT" = "success"
