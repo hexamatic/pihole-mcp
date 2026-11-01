@@ -69,6 +69,14 @@ type Option func(*options)
 type options struct {
 	readOnly bool
 	toolsets []string
+	// resultLimit overrides maxToolResultBytes. Unexported: only tests set it,
+	// to trip the limit without building a half-megabyte fixture.
+	resultLimit int
+}
+
+// withResultLimit sets the per-result size cap. For tests.
+func withResultLimit(maxBytes int) Option {
+	return func(o *options) { o.resultLimit = maxBytes }
 }
 
 // WithReadOnly restricts the server to tools annotated read-only.
@@ -190,6 +198,12 @@ func New(registry *pihole.Registry, opts ...Option) *server.MCPServer {
 	for _, f := range o.filters() {
 		serverOpts = append(serverOpts, server.WithToolFilter(f))
 	}
+
+	limit := maxToolResultBytes
+	if o.resultLimit != 0 {
+		limit = o.resultLimit
+	}
+	serverOpts = append(serverOpts, server.WithToolHandlerMiddleware(resultSizeLimit(limit)))
 
 	s := server.NewMCPServer("pihole-mcp", Version, serverOpts...)
 
