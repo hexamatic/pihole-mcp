@@ -203,9 +203,17 @@ func New(registry *pihole.Registry, opts ...Option) *server.MCPServer {
 	if o.resultLimit != 0 {
 		limit = o.resultLimit
 	}
-	serverOpts = append(serverOpts, server.WithToolHandlerMiddleware(resultSizeLimit(limit)))
+	// The middleware looks tools up on the server it is attached to, which
+	// exists only once NewMCPServer returns. It is never called before then:
+	// tools are registered below and no request is served until New returns.
+	var s *server.MCPServer
+	isReadOnly := func(name string) bool {
+		st := s.GetTool(name)
+		return st != nil && tools.IsReadOnly(st.Tool)
+	}
+	serverOpts = append(serverOpts, server.WithToolHandlerMiddleware(resultSizeLimit(limit, isReadOnly)))
 
-	s := server.NewMCPServer("pihole-mcp", Version, serverOpts...)
+	s = server.NewMCPServer("pihole-mcp", Version, serverOpts...)
 
 	tools.RegisterAll(s, registry)
 	resources.RegisterAll(s, registry)

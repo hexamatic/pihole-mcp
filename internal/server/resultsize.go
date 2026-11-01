@@ -21,19 +21,31 @@ import (
 // configuration read is about 6 KiB (measured against FTL v6.8).
 const maxToolResultBytes = 512 * 1024
 
-// resultSizeLimit replaces a tool result larger than maxBytes with an error
-// that tells the model how to ask for less.
+// resultSizeLimit replaces a read-only tool's result larger than maxBytes with
+// an error that tells the model how to ask for less.
+//
+// Only read-only tools are capped. The middleware runs after the handler, so
+// by the time a result is measured a write tool has already changed Pi-hole.
+// Replacing that result would hide what changed: a sync that applied
+// thousands of entries would report only a size error and lose its per-entry
+// outcome and the path of the backup taken before it ran. A read, by contrast,
+// is safe to repeat with narrower arguments, which is what the error says.
+//
+// The size is measured before the SDK adds protocol metadata (resultType and
+// server identity for 2026-07-28 clients), so the bytes on the wire can exceed
+// maxBytes by a few hundred. That is fine for a backstop.
 //
 // mcp-go 1.3 added server.WithToolResultSizeLimit for this, but its
 // replacement reads only "tool result exceeds N bytes", which gives a model
 // nothing to act on, so the check lives here as server-wide middleware. Being
 // server-wide matters: it covers every registration path, including the sync
-// tools that bypass addTool.
-func resultSizeLimit(maxBytes int) server.ToolHandlerMiddleware {
+// tools that bypass addTool. readOnly reports whether the named tool is
+// read-only; an unknown tool counts as not read-only and is never capped.
+func resultSizeLimit(maxBytes int, readOnly func(name string) bool) server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			res, err := next(ctx, req)
-			if err != nil || res == nil || maxBytes <= 0 {
+			if err != nil || res == nil || maxBytes <= 0 || !readOnly(req.Params.Name) {
 				return res, err
 			}
 			encoded, mErr := json.Marshal(res)
