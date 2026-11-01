@@ -27,7 +27,7 @@ Set `PIHOLE_TOOLSETS` to a comma-separated selection of these names to expose on
 | `network` | 6 | 5 | Discovered devices, routes and interfaces |
 | `dhcp` | 2 | 1 | DHCP leases |
 | `logs` | 3 | 3 | dnsmasq, FTL and webserver logs |
-| `teleporter` | 2 | 1 | Configuration backup export and import |
+| `teleporter` | 2 | 0 | Configuration backup export and import |
 | `sessions` | 2 | 1 | Pi-hole API sessions |
 | `instance` | 2 | 1 | Compare and reconcile multiple Pi-holes |
 
@@ -950,13 +950,11 @@ Toolset: `teleporter`
 
 ### `pihole_teleporter_export`
 
-*read-only*
-
-Export a full Pi-hole configuration backup as a zip archive. Returns the saved file path and size. The file persists on disk after the call returns and is the caller's to move or delete; under Docker it is written inside the container unless output_path points at a mounted volume.
+Export a full Pi-hole configuration backup as a zip archive to a new file on the server's host, and return its path and size. It never replaces an existing file. The file persists after the call and is the caller's to move or delete; under Docker it is written inside the container unless output_path points at a mounted volume.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `output_path` | string | No | Absolute path to save the backup to. Defaults to a system temp file. |
+| `output_path` | string | No | Absolute path for the new .zip file, which must not exist yet (inside PIHOLE_BACKUP_DIR when that is set). Defaults to a new file in PIHOLE_BACKUP_DIR or the system temp directory. |
 
 ### `pihole_teleporter_import`
 

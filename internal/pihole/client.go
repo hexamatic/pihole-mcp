@@ -171,7 +171,19 @@ func (c *Client) Delete(ctx context.Context, path string) error {
 // upload, so it is not treated as idempotent: only a rate-limited rejection —
 // which Pi-hole makes before reading the body — is ever re-sent.
 func (c *Client) PostMultipart(ctx context.Context, path, filePath string, importOptions map[string]any, result any) error {
-	body, contentType, err := buildMultipartBody(filePath, importOptions)
+	f, err := os.Open(filePath) //nolint:gosec // file path is user-provided via MCP tool parameter
+	if err != nil {
+		return fmt.Errorf("opening file %s: %w", filePath, err)
+	}
+	defer func() { _ = f.Close() }()
+	return c.PostMultipartReader(ctx, path, filepath.Base(filePath), f, importOptions, result)
+}
+
+// PostMultipartReader is PostMultipart for an archive the caller has already
+// opened, so the file checked is the file sent. name is the upload's
+// filename.
+func (c *Client) PostMultipartReader(ctx context.Context, path, name string, file io.Reader, importOptions map[string]any, result any) error {
+	body, contentType, err := buildMultipartBody(name, file, importOptions)
 	if err != nil {
 		return err
 	}
@@ -238,17 +250,11 @@ func (c *Client) sendMultipart(ctx context.Context, path, sid string, body []byt
 
 // buildMultipartBody encodes filePath (and any import options) as a multipart
 // form, returning the body and its Content-Type.
-func buildMultipartBody(filePath string, importOptions map[string]any) ([]byte, string, error) {
-	file, err := os.Open(filePath) //nolint:gosec // file path is user-provided via MCP tool parameter
-	if err != nil {
-		return nil, "", fmt.Errorf("opening file %s: %w", filePath, err)
-	}
-	defer func() { _ = file.Close() }()
-
+func buildMultipartBody(name string, file io.Reader, importOptions map[string]any) ([]byte, string, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
-	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+	part, err := writer.CreateFormFile("file", name)
 	if err != nil {
 		return nil, "", fmt.Errorf("creating form file: %w", err)
 	}

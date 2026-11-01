@@ -6,7 +6,7 @@ import (
 )
 
 func TestRedactURL_HidesCredentials(t *testing.T) {
-	for raw, want := range map[string]string{
+	for raw, want := range map[string]string{ //nolint:gosec // G101: made-up credentials, there to be redacted
 		"http://admin:s3cret@pi.hole":         "http://admin:xxxxx@pi.hole",
 		"https://admin@pi.hole:8443/admin":    "https://admin@pi.hole:8443/admin",
 		"admin:s3cret@pi.hole":                "xxxxx@pi.hole",
@@ -54,5 +54,22 @@ func TestLoad_RefusesAnInstanceNamedAll(t *testing.T) {
 	t.Setenv("PIHOLE_1_NAME", "all")
 	if _, err := loadNumberedInstances(); err == nil || !strings.Contains(err.Error(), "PIHOLE_1_NAME") {
 		t.Errorf("err = %v, want PIHOLE_1_NAME refused", err)
+	}
+}
+
+func TestLoad_BackupDir(t *testing.T) {
+	t.Setenv("PIHOLE_URL", "http://pi.hole")
+	t.Setenv("PIHOLE_PASSWORD", "x")
+
+	dir := t.TempDir()
+	t.Setenv("PIHOLE_BACKUP_DIR", dir)
+	if cfg, err := Load(); err != nil || cfg.BackupDir != dir {
+		t.Fatalf("Load = %+v, %v; want BackupDir %s", cfg, err, dir)
+	}
+	for _, bad := range []string{"relative/dir", dir + "/missing"} {
+		t.Setenv("PIHOLE_BACKUP_DIR", bad)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PIHOLE_BACKUP_DIR") {
+			t.Errorf("PIHOLE_BACKUP_DIR=%q: err = %v, want it refused", bad, err)
+		}
 	}
 }

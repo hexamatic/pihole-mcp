@@ -34,7 +34,8 @@ func TestHTTPServer_CutsASlowRequestBody(t *testing.T) {
 		_, _ = io.Copy(io.Discard, r.Body)
 	}))
 
-	conn, err := net.Dial("tcp", ts.Listener.Addr().String())
+	var d net.Dialer
+	conn, err := d.DialContext(t.Context(), "tcp", ts.Listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,11 @@ func TestHTTPServer_LongResponsesOutliveTheReadTimeout(t *testing.T) {
 		_, _ = fmt.Fprint(w, "data: second\n\n")
 	}))
 
-	resp, err := http.Get(ts.URL)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

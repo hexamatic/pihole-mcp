@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -135,6 +136,12 @@ type Config struct {
 	// connections. Off by default; intended only for instances serving
 	// self-signed certificates.
 	TLSSkipVerify bool
+
+	// BackupDir, from PIHOLE_BACKUP_DIR, is the only directory the teleporter
+	// tools write backups to and import them from. Empty means backups go to
+	// the system temp directory by default and may be read from or written to
+	// any absolute path.
+	BackupDir string
 }
 
 // Load reads configuration from environment variables and validates it.
@@ -218,6 +225,20 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("PIHOLE_TLS_SKIP_VERIFY is not a valid boolean (use true or false): %w", err)
 		}
 		cfg.TLSSkipVerify = b
+	}
+
+	if v := os.Getenv("PIHOLE_BACKUP_DIR"); v != "" {
+		if !filepath.IsAbs(v) {
+			return nil, fmt.Errorf("PIHOLE_BACKUP_DIR must be an absolute path (got %q)", v)
+		}
+		info, err := os.Stat(v) //nolint:gosec // G703: the operator's own configuration, naming a directory to use
+		if err != nil {
+			return nil, fmt.Errorf("PIHOLE_BACKUP_DIR: %w", err)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("PIHOLE_BACKUP_DIR must be a directory (%s is not)", v)
+		}
+		cfg.BackupDir = filepath.Clean(v)
 	}
 
 	if v := os.Getenv("PIHOLE_READ_ONLY"); v != "" {

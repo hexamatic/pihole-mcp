@@ -3,8 +3,6 @@ package tools
 import (
 	"fmt"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -169,35 +167,6 @@ func validateURL(s string) error {
 		return fmt.Errorf("must include a scheme (http, https, or file)")
 	default:
 		return fmt.Errorf("unsupported scheme %q (expected http, https, or file)", u.Scheme)
-	}
-	return nil
-}
-
-// validateBackupFilePath returns nil if path looks like a safe teleporter
-// import target: an absolute path to an existing, regular .zip file under
-// maxTeleporterFileSize. file_path is the only tool parameter passed straight
-// to os.Open (see the //nolint:gosec at buildMultipartBody), so this is the
-// one place that risk is caught before the open, rather than trusting the
-// caller.
-func validateBackupFilePath(path string) error {
-	if path == "" {
-		return fmt.Errorf("must not be empty")
-	}
-	if !filepath.IsAbs(path) {
-		return fmt.Errorf("must be an absolute path")
-	}
-	if !strings.EqualFold(filepath.Ext(path), ".zip") {
-		return fmt.Errorf("must be a .zip file")
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("cannot access file: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("must be a regular file")
-	}
-	if info.Size() > maxTeleporterFileSize {
-		return fmt.Errorf("must be at most %d bytes (got %d)", maxTeleporterFileSize, info.Size())
 	}
 	return nil
 }

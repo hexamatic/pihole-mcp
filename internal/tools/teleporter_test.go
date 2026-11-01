@@ -112,18 +112,22 @@ func TestReapStaleBackups(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("TMPDIR", dir)
 
-	stale := filepath.Join(dir, "pihole-backup-stale.zip")
-	fresh := filepath.Join(dir, "pihole-backup-fresh.zip")
-	staleSnapshot := filepath.Join(dir, "pihole-myinstance-snapshot-stale.zip")
+	stale := filepath.Join(dir, "pihole-mcp-backup-123456.zip")
+	fresh := filepath.Join(dir, "pihole-mcp-backup-654321.zip")
+	staleSnapshot := filepath.Join(dir, "pihole-mcp-myinstance-snapshot-777.zip")
+	// Names a person might choose. The clean-up used to match these too.
+	chosen := filepath.Join(dir, "pihole-backup-before-upgrade.zip")
+	chosenToo := filepath.Join(dir, "pihole-mcp-backup-keep.zip")
 	unrelated := filepath.Join(dir, "unrelated-file.zip")
 
-	for _, p := range []string{stale, fresh, staleSnapshot, unrelated} {
+	all := []string{stale, fresh, staleSnapshot, chosen, chosenToo, unrelated}
+	for _, p := range all {
 		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil { //nolint:gosec // test fixture under t.TempDir()
 			t.Fatalf("writing fixture %s: %v", p, err)
 		}
 	}
 	old := time.Now().Add(-48 * time.Hour)
-	for _, p := range []string{stale, staleSnapshot} {
+	for _, p := range []string{stale, staleSnapshot, chosen, chosenToo, unrelated} {
 		if err := os.Chtimes(p, old, old); err != nil {
 			t.Fatalf("backdating %s: %v", p, err)
 		}
@@ -136,7 +140,7 @@ func TestReapStaleBackups(t *testing.T) {
 			t.Errorf("expected %s to be reaped, stat err = %v", p, err)
 		}
 	}
-	for _, p := range []string{fresh, unrelated} {
+	for _, p := range []string{fresh, chosen, chosenToo, unrelated} {
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("expected %s to survive, stat err = %v", p, err)
 		}

@@ -161,6 +161,7 @@ It exits non-zero if any instance fails, and prints what to change. Worth runnin
 | `PIHOLE_RATE_LIMIT` | No | `120` | Requests per minute per MCP session on the HTTP/SSE transports, under a per-address ceiling of four times that. Clients on MCP revision `2026-07-28` send no session, so only the ceiling applies to them. `0` disables. |
 | `PIHOLE_ALLOWED_ORIGINS` | No | `localhost,127.0.0.1,[::1]` | Comma-separated Origin/Host allowlist for HTTP/SSE transports. The literal `*` disables enforcement (unsafe). Not authentication. |
 | `PIHOLE_TRUSTED_PROXIES` | No | - | Comma-separated IPs or CIDR blocks whose `X-Forwarded-For` the rate limiter believes. Unset means the header is ignored. |
+| `PIHOLE_BACKUP_DIR` | No | - | Absolute path of a directory to keep teleporter backups in. When set, `pihole_teleporter_export` writes only inside it and `pihole_teleporter_import` reads only from it. Unset, backups go to the system temp directory by default and any absolute path is accepted. |
 | `PIHOLE_TLS_SKIP_VERIFY` | No | `false` | Disable TLS certificate verification for Pi-hole connections. Only for instances serving self-signed certificates. A trusted certificate is preferable where possible. |
 | `TZ` | No | System timezone (UTC in Docker) | IANA timezone for rendered timestamps (e.g. `Australia/Adelaide`). Timezone data is embedded in the binary, so this works in the Docker image out of the box. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | - | OpenTelemetry collector endpoint. Setting it enables tracing; ignored in slim builds. |
@@ -174,12 +175,13 @@ Application passwords are recommended for automation: they bypass TOTP 2FA and c
 By default the server offers every tool, including 34 that change Pi-hole and 27 that are
 destructive. Two variables narrow that.
 
-`PIHOLE_READ_ONLY=true` exposes only tools that cannot change anything. Write tools are absent from
-`tools/list` **and** rejected if called anyway, so a client working from a cached listing cannot
-reach one either.
+`PIHOLE_READ_ONLY=true` exposes only tools that cannot change anything, on Pi-hole or on the host
+the server runs on, so it leaves out `pihole_teleporter_export`, which writes a file. Write tools are
+absent from `tools/list` **and** rejected if called anyway, so a client working from a cached listing
+cannot reach one either.
 
 ```bash
-PIHOLE_READ_ONLY=true    # 49 tools instead of 82
+PIHOLE_READ_ONLY=true    # 48 tools instead of 82
 ```
 
 `PIHOLE_TOOLSETS` selects which families of tools exist at all, which is worth doing on its own

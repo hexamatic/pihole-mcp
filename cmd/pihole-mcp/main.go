@@ -197,6 +197,7 @@ func run(transport, address string) error {
 		log.Printf("warning: %v — timestamps will use %s", tzErr, loc)
 	}
 	format.SetLocation(loc)
+	tools.SetBackupDir(cfg.BackupDir)
 
 	registry := newRegistry(cfg)
 	defer registry.Close()

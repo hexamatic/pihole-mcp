@@ -352,7 +352,8 @@ func TestTeleporterImport_PlanWarnsOfTheRestartEvenWhenNothingIsReplaced(t *test
 func TestTeleporterImport_KeepsAnOldExportItIsImporting(t *testing.T) {
 	// The backup taken before an import clears day-old backups from the temp
 	// directory, and used to delete the very export being imported.
-	input := writeArchive(t, os.TempDir(), "pihole-backup-*.zip", "etc/pihole/pihole.toml")
+	// Named as the server names its own exports, so the clean-up would take it.
+	input := writeArchive(t, os.TempDir(), "pihole-mcp-backup-*.zip", "etc/pihole/pihole.toml")
 	t.Cleanup(func() { _ = os.Remove(input) })
 	old := time.Now().Add(-48 * time.Hour)
 	if err := os.Chtimes(input, old, old); err != nil {

@@ -303,6 +303,7 @@ func TestConfigVarsReachServerJSON(t *testing.T) {
 		"PIHOLE_TRUSTED_PROXIES":      "HTTP and SSE only",
 		"PIHOLE_TOOLSETS":             "free text with no choices key available, so a form would show a box whose valid values are invisible and a typo fails startup; documented in the README instead",
 		"PIHOLE_1_URL":                "the numbered multi-instance form is documented in the README; a registry form cannot express a repeating group",
+		"PIHOLE_BACKUP_DIR":           "an optional host path most users never set, and a path that does not exist fails startup; documented in the README instead",
 	}
 
 	source, err := os.ReadFile("config.go")

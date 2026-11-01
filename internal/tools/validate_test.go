@@ -175,13 +175,16 @@ func TestValidateDomainName_ExactStillRejectsRegexSyntax(t *testing.T) {
 	}
 }
 
-func TestValidateBackupFilePath(t *testing.T) {
+func TestOpenBackupForImport(t *testing.T) {
 	dir := t.TempDir()
 	zipPath := dir + "/backup.zip"
 	if err := writeTestFile(t, zipPath, 1024); err != nil {
 		t.Fatalf("writing test fixture: %v", err)
 	}
-	dirPath := dir // a directory, not a regular file
+	dirPath := dir + "/folder.zip" // a directory, not a regular file
+	if err := os.Mkdir(dirPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name    string
@@ -197,23 +200,27 @@ func TestValidateBackupFilePath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateBackupFilePath(tt.in)
+			f, _, err := openBackupForImport(tt.in)
+			if err == nil {
+				_ = f.Close()
+			}
 			if (err != nil) != tt.wantErr {
-				t.Errorf("validateBackupFilePath(%q) error = %v, wantErr %v", tt.in, err, tt.wantErr)
+				t.Errorf("openBackupForImport(%q) error = %v, wantErr %v", tt.in, err, tt.wantErr)
 			}
 		})
 	}
 }
 
-func TestValidateBackupFilePath_OverSizeCap(t *testing.T) {
+func TestOpenBackupForImport_OverSizeCap(t *testing.T) {
 	dir := t.TempDir()
 	zipPath := dir + "/huge.zip"
 	if err := writeTestFile(t, zipPath, maxTeleporterFileSize+1); err != nil {
 		t.Fatalf("writing oversized fixture: %v", err)
 	}
 
-	err := validateBackupFilePath(zipPath)
+	f, _, err := openBackupForImport(zipPath)
 	if err == nil {
+		_ = f.Close()
 		t.Fatal("expected an error for a file over the size cap")
 	}
 	if !strings.Contains(err.Error(), "at most") {

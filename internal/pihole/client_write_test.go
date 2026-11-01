@@ -129,7 +129,12 @@ func TestBuildMultipartBody_NoOptions(t *testing.T) {
 	if err := os.WriteFile(f, []byte("payload"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	body, contentType, err := buildMultipartBody(f, nil)
+	file, err := os.Open(f) //nolint:gosec // test fixture path
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = file.Close() }()
+	body, contentType, err := buildMultipartBody(filepath.Base(f), file, nil)
 	if err != nil {
 		t.Fatalf("buildMultipartBody: %v", err)
 	}
