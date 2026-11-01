@@ -17,7 +17,7 @@ import (
 func RegisterInfo(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_info_system",
 		mcp.WithTitleAnnotation("System Health"),
-		mcp.WithDescription("System health: hostname, OS, CPU/memory/disk usage, load averages, temperature, and DNS service status."),
+		mcp.WithDescription("System health: hostname, OS, uptime, CPU and memory usage, load averages, temperatures, and FTL's own resource use."),
 		detailParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithOutputSchema[InfoSystemOutput](),
@@ -71,7 +71,7 @@ func RegisterInfo(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_info_sensors",
 		mcp.WithTitleAnnotation("Hardware Sensors"),
-		mcp.WithDescription("Hardware temperature sensors with names, values, units, and paths."),
+		mcp.WithDescription("Hardware temperature readings from each sensor, with their warning and critical limits, in the unit Pi-hole is set to show."),
 		mcp.WithReadOnlyHintAnnotation(true),
 	), infoSensorsHandler(r))
 }
@@ -89,70 +89,91 @@ func infoSystemHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err := c.Get(ctx, "/info/system", &sysInfo); err != nil {
 			return toolError("get system info", err), nil
 		}
+		// Host details and temperatures add to the report but are not
+		// essential to it, so a failure leaves their lines out.
 		_ = c.Get(ctx, "/info/host", &hostInfo)
 		_ = c.Get(ctx, "/info/sensors", &sensors)
 
 		sys := sysInfo.System
+		host := hostInfo.Host.Uname
+		ram := sys.Memory.RAM
 		detail := getDetail(req)
 
 		output := InfoSystemOutput{
-			Hostname:    hostInfo.Host.Name,
+			Hostname:    host.Nodename,
 			Uptime:      sys.Uptime,
-			LoadAverage: sys.Load[0],
+			LoadAverage: sys.CPU.Load.Raw[0],
 			CPUCores:    sys.CPU.Nprocs,
-			CPUPercent:  sys.CPU.Perc,
-			MemoryUsed:  sys.Memory.RAM.Used,
-			MemoryTotal: sys.Memory.RAM.Total,
-			MemoryUnit:  sys.Memory.RAM.Unit,
-			MemoryPerc:  sys.Memory.RAM.Perc,
-			DiskPercent: sys.Disk.Perc,
-			DNSRunning:  sys.DNS.Running,
+			CPUPercent:  sys.CPU.PercentUsed,
+			MemoryUsed:  ram.Used,
+			MemoryTotal: ram.Total,
+			MemoryUnit:  "KiB",
+			MemoryPerc:  ram.PercentUsed,
 		}
 
 		if detail == "minimal" {
-			mem := format.SizeWithUnit(sys.Memory.RAM.Used, sys.Memory.RAM.Unit)
-			dns := "up"
-			if !sys.DNS.Running {
-				dns = "down"
-			}
 			text := fmt.Sprintf(
-				"Load: %.2f | Memory: %s (%.0f%%) | DNS: %s | Uptime: %s",
-				sys.Load[0], mem, sys.Memory.RAM.Perc, dns, format.Duration(float64(sys.Uptime)))
+				"Load: %.2f | CPU: %.0f%% | Memory: %s (%.0f%%) | Uptime: %s",
+				sys.CPU.Load.Raw[0], sys.CPU.PercentUsed, kibibytes(ram.Used), ram.PercentUsed,
+				format.Duration(float64(sys.Uptime)))
 			return mcp.NewToolResultStructured(output, text), nil
 		}
 
 		var b strings.Builder
-		if hostInfo.Host.Name != "" {
-			fmt.Fprintf(&b, "**Host:** %s (%s %s)\n", hostInfo.Host.Name, hostInfo.Host.OS, hostInfo.Host.Arch)
+		if host.Nodename != "" {
+			fmt.Fprintf(&b, "**Host:** %s (%s %s)\n", host.Nodename, host.Sysname, host.Machine)
 		}
 		fmt.Fprintf(&b, "**Uptime:** %s\n", format.Duration(float64(sys.Uptime)))
-		fmt.Fprintf(&b, "**Load:** %.2f, %.2f, %.2f\n", sys.Load[0], sys.Load[1], sys.Load[2])
-		fmt.Fprintf(&b, "**CPU:** %d cores, %.1f%% used\n", sys.CPU.Nprocs, sys.CPU.Perc)
-		fmt.Fprintf(&b, "**Memory:** %s / %s (%.1f%%)\n",
-			format.SizeWithUnit(sys.Memory.RAM.Used, sys.Memory.RAM.Unit),
-			format.SizeWithUnit(sys.Memory.RAM.Total, sys.Memory.RAM.Unit),
-			sys.Memory.RAM.Perc)
-		fmt.Fprintf(&b, "**Disk:** %s / %s (%.1f%%)\n",
-			format.SizeWithUnit(sys.Disk.Used, sys.Disk.Unit),
-			format.SizeWithUnit(sys.Disk.Total, sys.Disk.Unit),
-			sys.Disk.Perc)
-
-		if sys.DNS.Running {
-			b.WriteString("**DNS:** running\n")
-		} else {
-			b.WriteString("**DNS:** not running (expected in Docker — Pi-hole manages DNS internally)\n")
+		load := sys.CPU.Load.Raw
+		fmt.Fprintf(&b, "**Load:** %.2f, %.2f, %.2f\n", load[0], load[1], load[2])
+		fmt.Fprintf(&b, "**CPU:** %d cores, %.1f%% used\n", sys.CPU.Nprocs, sys.CPU.PercentUsed)
+		fmt.Fprintf(&b, "**Memory:** %s of %s used (%.1f%%), %s available\n",
+			kibibytes(ram.Used), kibibytes(ram.Total), ram.PercentUsed, kibibytes(ram.Available))
+		if swap := sys.Memory.Swap; swap.Total > 0 {
+			fmt.Fprintf(&b, "**Swap:** %s of %s used (%.1f%%)\n",
+				kibibytes(swap.Used), kibibytes(swap.Total), swap.PercentUsed)
+		}
+		fmt.Fprintf(&b, "**FTL:** %.1f%% CPU, %.1f%% memory\n", sys.FTL.CPU, sys.FTL.Memory)
+		if t := sensors.Sensors.CPUTemp; t != nil {
+			fmt.Fprintf(&b, "**CPU temperature:** %s", temperature(*t, sensors.Sensors.Unit))
+			if limit := sensors.Sensors.HotLimit; limit > 0 {
+				fmt.Fprintf(&b, " (warns above %s)", temperature(limit, sensors.Sensors.Unit))
+			}
+			b.WriteString("\n")
 		}
 
-		for _, t := range sensors.Sensors.Temperatures {
-			fmt.Fprintf(&b, "**%s:** %.1f%s\n", t.Name, t.Value, t.Unit)
-		}
-
-		if detail == "full" && hostInfo.Host.Kernel != "" {
-			fmt.Fprintf(&b, "**Kernel:** %s\n", hostInfo.Host.Kernel)
-			fmt.Fprintf(&b, "**Domain:** %s\n", format.ValueOr(hostInfo.Host.Domain, "N/A"))
+		if detail == "full" {
+			if host.Release != "" {
+				fmt.Fprintf(&b, "**Kernel:** %s %s\n", host.Sysname, host.Release)
+			}
+			// uname reports an unset NIS domain as "(none)".
+			if d := host.Domainname; d != "" && d != "(none)" {
+				fmt.Fprintf(&b, "**Domain:** %s\n", d)
+			}
+			if m := deref(hostInfo.Host.Model); m != "" {
+				fmt.Fprintf(&b, "**Model:** %s\n", m)
+			}
+			fmt.Fprintf(&b, "**Processes:** %d\n", sys.Procs)
 		}
 
 		return mcp.NewToolResultStructured(output, b.String()), nil
+	}
+}
+
+// kibibytes formats a memory figure FTL reports in KiB.
+func kibibytes(kib float64) string {
+	return format.Bytes(kib * 1024)
+}
+
+// temperature formats a reading in the unit FTL is set to report.
+func temperature(v float64, unit string) string {
+	switch unit {
+	case "K":
+		return fmt.Sprintf("%.1f K", v)
+	case "":
+		return fmt.Sprintf("%.1f°C", v)
+	default:
+		return fmt.Sprintf("%.1f°%s", v, unit)
 	}
 }
 
@@ -369,20 +390,42 @@ func infoSensorsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		var sensors pihole.SensorsInfo
-		if err := c.Get(ctx, "/info/sensors", &sensors); err != nil {
+		var resp pihole.SensorsInfo
+		if err := c.Get(ctx, "/info/sensors", &resp); err != nil {
 			return toolError("get sensors", err), nil
 		}
-
-		if len(sensors.Sensors.Temperatures) == 0 {
-			return mcp.NewToolResultText("No sensor data available."), nil
-		}
+		sensors := resp.Sensors
 
 		var b strings.Builder
-		for _, t := range sensors.Sensors.Temperatures {
-			fmt.Fprintf(&b, "**%s:** %.1f%s\n", t.Name, t.Value, t.Unit)
+		for _, group := range sensors.List {
+			if len(group.Temps) == 0 {
+				continue
+			}
+			fmt.Fprintf(&b, "**%s:**\n", format.ValueOr(deref(group.Name), group.Path))
+			for _, t := range group.Temps {
+				fmt.Fprintf(&b, "- %s: %s", format.ValueOr(deref(t.Name), t.Sensor), temperature(t.Value, sensors.Unit))
+				var limits []string
+				if t.Max != nil {
+					limits = append(limits, "high "+temperature(*t.Max, sensors.Unit))
+				}
+				if t.Crit != nil {
+					limits = append(limits, "critical "+temperature(*t.Crit, sensors.Unit))
+				}
+				if len(limits) > 0 {
+					fmt.Fprintf(&b, " (%s)", strings.Join(limits, ", "))
+				}
+				b.WriteString("\n")
+			}
 		}
-
+		if b.Len() == 0 {
+			if sensors.CPUTemp != nil {
+				return mcp.NewToolResultText("**CPU temperature:** " + temperature(*sensors.CPUTemp, sensors.Unit)), nil
+			}
+			return mcp.NewToolResultText("No temperature sensors are visible to Pi-hole. That is usual in a container or virtual machine."), nil
+		}
+		if sensors.HotLimit > 0 {
+			fmt.Fprintf(&b, "\nPi-hole's web interface warns above %s.", temperature(sensors.HotLimit, sensors.Unit))
+		}
 		return mcp.NewToolResultText(b.String()), nil
 	}
 }

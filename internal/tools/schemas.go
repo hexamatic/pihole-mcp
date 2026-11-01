@@ -76,10 +76,8 @@ type InfoSystemOutput struct {
 	CPUPercent  float64 `json:"cpu_percent" jsonschema:"CPU usage percentage"`
 	MemoryUsed  float64 `json:"memory_used" jsonschema:"Used memory in the reported unit"`
 	MemoryTotal float64 `json:"memory_total" jsonschema:"Total memory in the reported unit"`
-	MemoryUnit  string  `json:"memory_unit,omitempty" jsonschema:"Unit for the memory values (e.g. B, KiB, MiB)"`
+	MemoryUnit  string  `json:"memory_unit,omitempty" jsonschema:"Unit for the memory values (KiB, as Pi-hole reports them)"`
 	MemoryPerc  float64 `json:"memory_percent" jsonschema:"Memory usage percentage"`
-	DiskPercent float64 `json:"disk_percent" jsonschema:"Disk usage percentage"`
-	DNSRunning  bool    `json:"dns_running" jsonschema:"Whether the DNS resolver is running"`
 }
 
 // TopItemOutput represents a single ranked item (domain or client).

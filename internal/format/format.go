@@ -82,6 +82,16 @@ func TimestampIn(unix float64, loc *time.Location) string {
 	return time.Unix(int64(unix), 0).In(loc).Format("2 Jan 2006, 3:04 PM MST")
 }
 
+// Clock formats a Unix timestamp as a time of day (15:04:05) in the
+// configured location, for lines whose date the reader already knows.
+func Clock(unix float64) string {
+	loc := location.Load()
+	if loc == nil {
+		loc = time.Local
+	}
+	return time.Unix(int64(unix), 0).In(loc).Format("15:04:05")
+}
+
 // CSV renders comma-separated values from headers and rows.
 // ~29% fewer tokens than Markdown tables for tabular data.
 //

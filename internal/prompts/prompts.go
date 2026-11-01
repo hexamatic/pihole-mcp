@@ -179,7 +179,7 @@ func dailyReportHandler(_ context.Context, _ mcp.GetPromptRequest) (*mcp.GetProm
 					"3. Use pihole_stats_top_domains with blocked=true and count=10 for top blocked domains\n"+
 					"4. Use pihole_stats_top_clients with count=10 for most active clients\n"+
 					"5. Use pihole_stats_upstreams for upstream DNS performance\n"+
-					"6. Use pihole_info_system for system health (CPU, memory, disk)\n\n"+
+					"6. Use pihole_info_system for system health (CPU, memory, load, temperature)\n\n"+
 					"Format the report with clear sections, highlighting:\n"+
 					"- Key metrics and any notable changes\n"+
 					"- Upstream DNS health and response times\n"+

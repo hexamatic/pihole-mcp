@@ -95,15 +95,26 @@ func TestStructuredOutput_TopDomainsCSV(t *testing.T) {
 }
 
 func TestStructuredOutput_InfoSystem(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
-		"/info/system": loadFixture(t, "info_system"),
-	}))
-	res := callToolResult(t, infoSystemHandler, c, nil)
-	out, ok := res.StructuredContent.(InfoSystemOutput)
-	if !ok {
-		t.Fatalf("expected InfoSystemOutput structured content, got %T", res.StructuredContent)
-	}
-	if out.CPUCores == 0 && out.MemoryTotal == 0 {
-		t.Errorf("expected populated system fields, got %+v", out)
-	}
+	eachFixture(t, "info_system", func(t *testing.T, version string, sys any) {
+		c := newTestClient(t, piholeHandler(systemRoutes(t, version)))
+		res := callToolResult(t, infoSystemHandler, c, nil)
+		out, ok := res.StructuredContent.(InfoSystemOutput)
+		if !ok {
+			t.Fatalf("expected InfoSystemOutput structured content, got %T", res.StructuredContent)
+		}
+		want := InfoSystemOutput{
+			Hostname:    fixtureString(t, loadVersionFixture(t, version, "info_host"), "host.uname.nodename"),
+			Uptime:      fixtureInt(t, sys, "system.uptime"),
+			LoadAverage: fixtureValue(t, sys, "system.cpu.load.raw").([]any)[0].(float64),
+			CPUCores:    fixtureInt(t, sys, "system.cpu.nprocs"),
+			CPUPercent:  fixtureValue(t, sys, "system.cpu.%cpu").(float64),
+			MemoryUsed:  fixtureValue(t, sys, "system.memory.ram.used").(float64),
+			MemoryTotal: fixtureValue(t, sys, "system.memory.ram.total").(float64),
+			MemoryUnit:  "KiB",
+			MemoryPerc:  fixtureValue(t, sys, "system.memory.ram.%used").(float64),
+		}
+		if out != want {
+			t.Errorf("structured values = %+v, want %+v", out, want)
+		}
+	})
 }
