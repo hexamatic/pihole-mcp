@@ -3,6 +3,8 @@ package tools
 import (
 	"strings"
 	"testing"
+
+	"github.com/hexamatic/pihole-mcp/internal/format"
 )
 
 func TestHistoryGraph_InMemory(t *testing.T) {
@@ -357,4 +359,60 @@ func TestHistoryDatabaseClients_DoesNotInventClientsFromBucketIDs(t *testing.T) 
 	if !strings.Contains(full, ",0,1,1") {
 		t.Errorf("expected the bucket counts, got: %s", full)
 	}
+}
+
+func TestHistoryClients_HiddenByPrivacy(t *testing.T) {
+	// At privacy level 2 or above FTL keeps no per-client data. v6.7 sends
+	// the client list as an empty array, which failed to decode; v6.8 sends
+	// an empty object, which read as a network with no clients.
+	for name, clients := range map[string]any{"v6.7 array": []any{}, "v6.8 object": map[string]any{}} {
+		t.Run(name, func(t *testing.T) {
+			c := newTestClient(t, piholeHandler(map[string]any{
+				"/history/clients":          map[string]any{"clients": clients, "history": []any{}},
+				"/config/misc/privacylevel": map[string]any{"config": map[string]any{"misc": map[string]any{"privacylevel": 2}}},
+			}))
+			text := callTool(t, historyClientsHandler, c, nil)
+			if !strings.Contains(text, "No client history") || !strings.Contains(text, "privacy level (misc.privacylevel) is 2") {
+				t.Errorf("expected the empty history to be put down to the privacy level, got: %s", text)
+			}
+		})
+	}
+}
+
+func TestHistoryClients_EmptyWithoutPrivacyIsNotBlamedOnIt(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/history/clients":          map[string]any{"clients": map[string]any{}, "history": []any{}},
+		"/config/misc/privacylevel": map[string]any{"config": map[string]any{"misc": map[string]any{"privacylevel": 0}}},
+	}))
+	if text := callTool(t, historyClientsHandler, c, nil); strings.Contains(text, "privacy") {
+		t.Errorf("privacy level 0 hides nothing, got: %s", text)
+	}
+}
+
+func TestHistoryClients_CountZeroAsksForEveryClient(t *testing.T) {
+	// FTL reads N=0 as every client; leaving N out applies its default.
+	rec := piholeHandler(map[string]any{"/history/clients": loadFixture(t, "history_clients")})
+	callTool(t, historyClientsHandler, newTestClient(t, rec), map[string]any{"count": 0.0})
+	rec.Only(t, "GET", "/history/clients").AssertQuery(t, "N", "0")
+}
+
+func TestHistoryDatabaseClients_RealFixtures(t *testing.T) {
+	// v6.8 gives each client a total. v6.7 gives none and keys its buckets
+	// by database row, and every client used to be reported with 0 queries.
+	eachFixture(t, "history_database_clients", func(t *testing.T, version string, fixture any) {
+		c := newTestClient(t, piholeHandler(map[string]any{"/history/database/clients": fixture}))
+		text := callTool(t, historyDatabaseClientsHandler, c, nil)
+		for key, raw := range fixtureValue(t, fixture, "clients").(map[string]any) {
+			total, ok := raw.(map[string]any)["total"].(float64)
+			if !ok {
+				if strings.Contains(text, " 0 queries") || !strings.Contains(text, "does not report a query count per client") {
+					t.Errorf("%s: a client with no total should not be shown with 0 queries, got:\n%s", key, text)
+				}
+				continue
+			}
+			if want := key + ") — " + format.Number(int(total)) + " queries"; !strings.Contains(text, want) {
+				t.Errorf("%s: expected %q, got:\n%s", version, want, text)
+			}
+		}
+	})
 }

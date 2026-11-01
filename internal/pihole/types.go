@@ -403,17 +403,20 @@ type HistoryEntry struct {
 	Forwarded int     `json:"forwarded"`
 }
 
-// ClientHistoryResponse is the response from GET /api/history/clients.
+// ClientHistoryResponse is the response from GET /api/history/clients and
+// GET /api/history/database/clients.
 type ClientHistoryResponse struct {
-	Clients map[string]ClientHistoryInfo `json:"clients"`
-	History []ClientHistoryEntry         `json:"history"`
-	Took    float64                      `json:"took"`
+	Clients HistoryClients       `json:"clients"`
+	History []ClientHistoryEntry `json:"history"`
+	Took    float64              `json:"took"`
 }
 
 // ClientHistoryInfo contains client metadata in history responses.
 type ClientHistoryInfo struct {
-	Name  *string `json:"name"`
-	Total int     `json:"total"`
+	Name *string `json:"name"`
+	// Total is the client's query count. FTL v6.7's long-term client history
+	// leaves it out, so nil means unknown rather than zero.
+	Total *int `json:"total"`
 }
 
 // ClientHistoryEntry is a single per-client activity data point.
