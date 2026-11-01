@@ -3,7 +3,7 @@
 # is authoritative. Dependabot's `docker` ecosystem maintains both; when
 # bumping Go by hand, re-resolve with:
 #   docker buildx imagetools inspect golang:1.XX-alpine --format '{{.Manifest.Digest}}'
-FROM golang:1.26-alpine@sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468 AS builder
+FROM golang:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS builder
 
 ARG VERSION=dev
 
@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     -ldflags="-s -w -X github.com/hexamatic/pihole-mcp/internal/server.Version=${VERSION}" \
     -o /bin/pihole-mcp ./cmd/pihole-mcp
 
-FROM gcr.io/distroless/static-debian13@sha256:f2ea2709ac8db56323cbd7d014277f32cb572d9ea124b0076f7aafe5980678fe
+FROM gcr.io/distroless/static-debian13@sha256:448810357cc8e67b7208988abdba0f5ec3d3aebee0a5b13eb624979792cffc0f
 
 LABEL org.opencontainers.image.title="pihole-mcp"
 LABEL org.opencontainers.image.description="MCP server for Pi-hole v6"

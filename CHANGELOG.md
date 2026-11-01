@@ -8,9 +8,21 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ## [Unreleased]
 
+### Security
+
+- **Every release up to v0.9.0 was built with a Go toolchain carrying twelve reachable standard-library advisories, all disclosed after v0.9.0 shipped.** Go published eleven of them on 8 October 2026 and the twelfth on 21 October, and scanning this module with the `go1.26.7` toolchain v0.9.0 pinned reports every one as reachable from this code: GO-2026-6599, GO-2026-6600, GO-2026-6603, GO-2026-6605, GO-2026-6607, GO-2026-6608, GO-2026-6610, GO-2026-6611, GO-2026-6612, GO-2026-6613, GO-2026-6617 and GO-2026-6809. Most are in the `net/http` server that the `http` and `sse` transports run: HTTP/1 connection desynchronisation, a memory limit bypass when parsing MIME headers, and HTTP/2 memory exhaustion, CPU exhaustion and a crash. The default stdio transport runs no server, so those matter to anyone exposing the HTTP transports. GO-2026-6809 makes `crypto/x509` distrust compromised intermediate certificates, which applies to every HTTPS connection to a Pi-hole. The toolchain is now `go1.27.3`, against which the same scan reports no vulnerabilities.
+- **`golang.org/x/net` 0.58.0 to 0.62.0**, clearing the four HTTP/2 advisories above in the copy of that code `x/net` carries (GO-2026-6603, GO-2026-6611, GO-2026-6612, GO-2026-6617) and two in its HTML parser (GO-2026-6860, GO-2026-6866) that this server does not call. It arrives as an indirect dependency of the OpenTelemetry exporter.
+
 ### Fixed
 
-- Homebrew installs use declarative `postflight_steps` instead of the deprecated `postflight` hook, removing the warning printed by `brew doctor` and other Homebrew commands.
+- **Every Homebrew install and upgrade printed a deprecation warning and asked the user to report it.** Homebrew has deprecated the cask `postflight` block in favour of declarative `postflight_steps`, and the cask published with each release still used the old form, so `brew install` and `brew upgrade` printed `Calling postflight is deprecated` followed by a request to report the problem to the tap. The cask now uses `postflight_steps`. The step it runs is unchanged: on macOS it removes the quarantine attribute from the unnotarised binary so Gatekeeper lets it start. Takes effect from the cask published with the next release. ([#83](https://github.com/hexamatic/pihole-mcp/pull/83))
+
+### Dependencies
+
+- Go toolchain go1.26.7 to go1.27.3 (see Security above)
+- OpenTelemetry (`go.opentelemetry.io/otel`, its SDK and the OTLP HTTP exporter) 1.46.0 to 1.47.0, `golang.org/x/time` 0.15.0 to 0.16.0, `golang.org/x/sys` 0.47.0 to 0.49.0, `golang.org/x/text` 0.41.0 to 0.43.0
+- `golang:1.27-alpine` builder image for the root `Dockerfile`, and `gcr.io/distroless/static-debian13` base image digest `f2ea270` to `4488103`
+- Development tooling: golangci-lint 2.12 to 2.15, which is the first line with Go 1.27 support, and GoReleaser 2.18.1 to 2.19.0
 
 ## [v0.9.0] - 2026-09-11
 
