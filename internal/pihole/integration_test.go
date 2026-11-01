@@ -19,7 +19,12 @@ func integrationClient(t *testing.T) *Client {
 	if password == "" {
 		password = "test"
 	}
-	return New(url, password, WithTimeout(10*time.Second))
+	c := New(url, password, WithTimeout(10*time.Second))
+	// Log out when the test ends. Each leaked session holds one of Pi-hole's
+	// API seats (16 by default) for half an hour, and a run of these tests
+	// against a shared Pi-hole used to use most of them up.
+	t.Cleanup(c.Close)
+	return c
 }
 
 func TestIntegration_Auth(t *testing.T) {
