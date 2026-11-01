@@ -547,8 +547,13 @@ func TestRateLimiter_SessionlessRequestsShareTheAddressCeiling(t *testing.T) {
 		}
 	}
 
-	if ok < burst*ipCeilingFactor {
-		t.Errorf("sessionless requests got %d through, want at least the address ceiling of %d", ok, burst*ipCeilingFactor)
+	// The ceiling refills at four times 60 a minute, four tokens a second, and
+	// the loop runs in well under a second, so at most one token can arrive
+	// mid-loop. Anything beyond that means sessionless requests are getting a
+	// bucket of their own.
+	ceiling := burst * ipCeilingFactor
+	if ok < ceiling || ok > ceiling+1 {
+		t.Errorf("sessionless requests got %d through, want the address ceiling of %d (at most one refill more)", ok, ceiling)
 	}
 	if limited == 0 {
 		t.Error("sessionless requests were never throttled; nothing limits a modern client")

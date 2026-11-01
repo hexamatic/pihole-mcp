@@ -290,12 +290,19 @@ func TestApplyPlan_CancelledPartwayStopsWriting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ComputeDiff: %v", err)
 	}
-	if n := len(d.Plan(false)); n < 3 {
-		t.Fatalf("the plan has %d operations; this test needs several to cancel between", n)
+	planned := len(d.Plan(false))
+	if planned < 3 {
+		t.Fatalf("the plan has %d operations; this test needs several to cancel between", planned)
 	}
 
 	res := pihole.ApplyPlan(ctx, tgt, d, false)
 
+	// Counted against the plan, not against res.Ops: a sync that returned as
+	// soon as it saw the cancellation would leave the skipped operations out of
+	// Ops altogether, and every check below would then pass on an empty loop.
+	if len(res.Ops) != planned {
+		t.Fatalf("the result reports %d of the %d planned operations; skipped ones must be reported, not dropped", len(res.Ops), planned)
+	}
 	if rt.writes != 1 {
 		t.Errorf("%d writes reached the target, want exactly 1: the sync kept writing after it was cancelled", rt.writes)
 	}

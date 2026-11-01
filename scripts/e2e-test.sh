@@ -80,12 +80,55 @@ run_tool() {
         break
     done
 
-    # A JSON-RPC error (an unknown tool, a tool hidden by read-only mode, bad
-    # params) carries no result at all. It counts as an error, with its message
-    # as the text; reading only result.isError would score it as a pass.
-    RESULT_IS_ERROR=$(echo "$result" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());print(True if 'error' in d else d.get('result',{}).get('isError',False))" 2>/dev/null)
-    RESULT_TEXT=$(echo "$result" | python3 -c "import sys,json;d=json.loads(sys.stdin.read());e=d.get('error');print(e.get('message','')) if e else [print(c.get('text','')) for c in d.get('result',{}).get('content',[])]" 2>/dev/null)
+    RESULT_IS_ERROR=$(printf '%s' "$result" | python3 -c "$PARSE_RESULT" flag 2>/dev/null)
+    RESULT_TEXT=$(printf '%s' "$result" | python3 -c "$PARSE_RESULT" text 2>/dev/null)
+    # If python itself failed, nothing above was decided: count it as an error.
+    [ "$RESULT_IS_ERROR" = "True" ] || [ "$RESULT_IS_ERROR" = "False" ] || RESULT_IS_ERROR="True"
 }
+
+# PARSE_RESULT turns one JSON-RPC response into an outcome. Its argument picks
+# what it prints: "flag" prints True or False for whether the call failed,
+# "text" prints the text to assert on.
+#
+# Anything that is not a clean success counts as a failure, because each of
+# these used to be scored as a pass:
+#   - no response at all, once the retries are spent
+#   - output that is not JSON
+#   - a JSON-RPC error (an unknown tool, a tool hidden by read-only mode, bad
+#     params), which carries no result
+#   - a response with the right id but neither result nor error
+#   - a multi-instance aggregate in which some instances failed: the server
+#     leaves isError false when at least one instance succeeded and records the
+#     failures in structuredContent.summary.failed
+PARSE_RESULT='
+import json, sys
+mode = sys.argv[1]
+raw = sys.stdin.read().strip()
+failed, text = False, ""
+try:
+    d = json.loads(raw) if raw else None
+except ValueError:
+    d = None
+if not raw:
+    failed, text = True, "no response from the server"
+elif not isinstance(d, dict):
+    failed, text = True, "unparseable response: " + raw[:200]
+elif "error" in d:
+    e = d.get("error") or {}
+    failed, text = True, str(e.get("message", "JSON-RPC error"))
+elif not isinstance(d.get("result"), dict):
+    failed, text = True, "response has neither result nor error: " + raw[:200]
+else:
+    r = d["result"]
+    failed = bool(r.get("isError", False))
+    text = "\n".join(c.get("text", "") for c in r.get("content", []) if isinstance(c, dict))
+    sc = r.get("structuredContent")
+    summary = sc.get("summary") if isinstance(sc, dict) else None
+    if isinstance(summary, dict) and summary.get("failed", 0) > 0:
+        failed = True
+        text = "%s of %s instances failed\n%s" % (summary.get("failed"), summary.get("total"), text)
+print(failed if mode == "flag" else text)
+'
 
 record_pass() {
     echo "  PASS: $1"
@@ -231,7 +274,7 @@ call_multi() {
     if [ "$ok" = "True" ]; then
         record_pass "$label"
     else
-        record_fail "$label"
+        record_fail "$label" "$RESULT_TEXT"
     fi
 }
 
