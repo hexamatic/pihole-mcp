@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/hexamatic/pihole-mcp/internal/pihole"
+	"github.com/hexamatic/pihole-mcp/internal/pihole/piholefake"
 )
 
 func TestDomainsList_Normal(t *testing.T) {
@@ -103,8 +106,8 @@ func TestDomainsAdd_Success(t *testing.T) {
 	text := callTool(t, domainsAddHandler, c, map[string]any{
 		"type": "deny", "kind": "exact", "domain": "example.com",
 	})
-	if !strings.Contains(text, "Domain added") {
-		t.Errorf("expected 'Domain added' message, got: %s", text)
+	if !strings.Contains(text, "Added 1 rule") {
+		t.Errorf("expected an added-count message, got: %s", text)
 	}
 	if !strings.Contains(text, "example.com") {
 		t.Errorf("expected processed domain in output, got: %s", text)
@@ -161,7 +164,7 @@ func TestDomainsAdd_SendsCommentAndExplicitDisable(t *testing.T) {
 
 func TestDomainsUpdate_Success(t *testing.T) {
 	rec := piholeHandler(map[string]any{
-		"/domains/deny/exact/example.com": map[string]any{"domains": []any{}},
+		"/domains/deny/exact/example.com": map[string]any{"domains": []any{map[string]any{"domain": "example.com", "type": "deny", "kind": "exact", "comment": "old", "enabled": true}}},
 	})
 	c := newTestClient(t, rec)
 
@@ -193,7 +196,7 @@ func TestDomainsUpdate_Success(t *testing.T) {
 // then treats as truthy.
 func TestDomainsUpdate_ExplicitDisableSendsEnabledFalse(t *testing.T) {
 	rec := piholeHandler(map[string]any{
-		"/domains/deny/exact/example.com": map[string]any{"domains": []any{}},
+		"/domains/deny/exact/example.com": map[string]any{"domains": []any{map[string]any{"domain": "example.com", "type": "deny", "kind": "exact", "comment": "old", "enabled": true}}},
 	})
 	c := newTestClient(t, rec)
 
@@ -238,8 +241,8 @@ func TestDomainsBatchDelete_Success(t *testing.T) {
 	c := newTestClient(t, rec)
 
 	text := callTool(t, domainsBatchDeleteHandler, c, map[string]any{"items": items})
-	if !strings.Contains(text, "Batch delete completed") {
-		t.Errorf("expected 'Batch delete completed' message, got: %s", text)
+	if !strings.Contains(text, "Batch delete done") {
+		t.Errorf("expected the batch delete reply, got: %s", text)
 	}
 
 	// The items string is handed to the client as pre-encoded JSON. If rawJSON
@@ -313,8 +316,9 @@ func TestDomainsUpdate_EnabledOnlyKeepsTheComment(t *testing.T) {
 
 // A caller that supplies both fields replaces both, so there is nothing to
 // carry over and no round trip to pay for.
-func TestDomainsUpdate_BothFieldsSuppliedSkipsTheRead(t *testing.T) {
+func TestDomainsUpdate_BothFieldsSuppliedStillChecksTheEntryExists(t *testing.T) {
 	rec := piholeHandler(map[string]any{
+		"GET /domains/deny/exact/example.com": map[string]any{"domains": []any{map[string]any{"domain": "example.com", "type": "deny", "kind": "exact", "comment": "old", "enabled": true}}},
 		"PUT /domains/deny/exact/example.com": map[string]any{"domains": []any{}},
 	})
 	c := newTestClient(t, rec)
@@ -324,29 +328,29 @@ func TestDomainsUpdate_BothFieldsSuppliedSkipsTheRead(t *testing.T) {
 		"comment": "paused", "enabled": false,
 	})
 
-	rec.AssertNone(t, "GET", "/domains/deny/exact/example.com")
+	rec.AssertCount(t, "GET", "/domains/deny/exact/example.com", 1)
 	req := rec.Only(t, "PUT", "/domains/deny/exact/example.com")
 	req.AssertField(t, "comment", "paused")
 	req.AssertField(t, "enabled", false)
 }
 
 // FTL answers a lookup for a rule that does not exist with 200 and an empty
-// array, and its PUT is an upsert. An update that creates the entry keeps
-// working, with the tool's documented defaults.
-func TestDomainsUpdate_MissingEntryStillWrites(t *testing.T) {
+// array, and its PUT is an upsert, so an update of a misspelt rule used to
+// create it and report it as updated. The update now stops instead.
+func TestDomainsUpdate_MissingEntryIsRefused(t *testing.T) {
 	rec := piholeHandler(map[string]any{
 		"GET /domains/deny/exact/new.example.com": map[string]any{"domains": []any{}},
 		"PUT /domains/deny/exact/new.example.com": map[string]any{"domains": []any{}},
 	})
 	c := newTestClient(t, rec)
 
-	callTool(t, domainsUpdateHandler, c, map[string]any{
+	text := callToolExpectError(t, domainsUpdateHandler, c, map[string]any{
 		"type": "deny", "kind": "exact", "domain": "new.example.com", "comment": "fresh",
 	})
-
-	req := rec.Only(t, "PUT", "/domains/deny/exact/new.example.com")
-	req.AssertField(t, "comment", "fresh")
-	req.AssertField(t, "enabled", true)
+	if !strings.Contains(text, "pihole_domains_add") {
+		t.Errorf("the refusal should point at the add tool, got: %s", text)
+	}
+	rec.AssertNone(t, "PUT", "/domains/deny/exact/new.example.com")
 }
 
 // If the read fails there is no way to know what the PUT would reset, so the
@@ -390,7 +394,7 @@ func TestDomainsDelete_EscapesReservedCharactersInTheDomain(t *testing.T) {
 func TestDomainsUpdate_EscapesReservedCharactersInTheDomain(t *testing.T) {
 	const rule = `^ads[0-9]+\.example\.com`
 	rec := piholeHandler(map[string]any{
-		"GET /domains/deny/regex/" + rule: map[string]any{"domains": []any{}},
+		"GET /domains/deny/regex/" + rule: map[string]any{"domains": []any{map[string]any{"domain": rule, "type": "deny", "kind": "regex", "comment": "old", "enabled": true}}},
 		"PUT /domains/deny/regex/" + rule: map[string]any{"domains": []any{}},
 	})
 	c := newTestClient(t, rec)
@@ -594,4 +598,41 @@ func TestDomainsAdd_MissingKindIsNamedError(t *testing.T) {
 		t.Errorf("error %q does not name the missing parameter", msg)
 	}
 	rec.AssertNone(t, "", "")
+}
+
+func TestDomainsAdd_PartialFailureIsReportedPerRule(t *testing.T) {
+	// FTL answers 201 when some rules in a batch were added, listing the
+	// refused ones under processed.errors. The reply used to read "Domain
+	// added" with the failures only in prose.
+	f := piholefake.New()
+	t.Cleanup(f.Close)
+	f.AddDomain("deny", "exact", "dup.example.com", "", true)
+	c := pihole.New(f.URL(), "x")
+
+	res := callRaw(t, domainsAddHandler(pihole.SingleRegistry(c)), map[string]any{
+		"type": "deny", "kind": "exact", "domain": "new.example.com,dup.example.com",
+	})
+	if res.IsError {
+		t.Fatalf("a partly applied batch is not a failed call: %s", resultText(res))
+	}
+	out, ok := res.StructuredContent.(DomainsAddOutput)
+	if !ok {
+		t.Fatalf("expected DomainsAddOutput, got %T", res.StructuredContent)
+	}
+	if out.Requested != 2 || len(out.Added) != 1 || out.Added[0] != "new.example.com" ||
+		len(out.Failed) != 1 || out.Failed[0].Domain != "dup.example.com" || out.Failed[0].Error == "" {
+		t.Errorf("structured result = %+v", out)
+	}
+	if text := resultText(res); !strings.Contains(text, "Added 1 of 2 rules") || !strings.Contains(text, "Failed: dup.example.com") {
+		t.Errorf("text should lead with the partial count and name the refused rule, got: %s", text)
+	}
+}
+
+func TestDomainsAdd_EveryRuleRefusedIsAnError(t *testing.T) {
+	f := piholefake.New()
+	t.Cleanup(f.Close)
+	f.AddDomain("deny", "exact", "dup.example.com", "", true)
+	c := pihole.New(f.URL(), "x")
+
+	callToolExpectError(t, domainsAddHandler, c, map[string]any{"type": "deny", "kind": "exact", "domain": "dup.example.com"})
 }

@@ -34,6 +34,7 @@ func RegisterDomains(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithString("domain", mcp.Required(), mcp.Description("Domain(s) to add. Comma-separated for bulk when kind is exact; a regex is taken whole.")),
 		mcp.WithString("comment", mcp.Description("Comment for the entry.")),
 		mcp.WithBoolean("enabled", mcp.Description("Enabled state (default true).")),
+		mcp.WithOutputSchema[DomainsAddOutput](),
 		mcp.WithOpenWorldHintAnnotation(true),
 	), domainsAddHandler(r))
 
@@ -195,11 +196,40 @@ func domainsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return toolError("add domain", err), nil
 		}
 
-		var b strings.Builder
-		b.WriteString("**Domain added.**\n")
-		writeProcessedResult(&b, result.Processed)
+		// FTL adds what it can and answers 201 even when some rules failed,
+		// typically because they were already on the list. It answers 400 only
+		// when every rule failed. The reply used to read "Domain added" with
+		// the failures only in prose, so a caller could take a partly failed
+		// batch for a complete one.
+		output := DomainsAddOutput{Requested: len(names), Added: []string{}, Failed: []DomainAddFailed{}}
+		if p := result.Processed; p != nil {
+			for _, ok := range p.Success {
+				output.Added = append(output.Added, ok.Item)
+			}
+			for _, e := range p.Errors {
+				output.Failed = append(output.Failed, DomainAddFailed{Domain: e.Item, Error: e.Error})
+			}
+		} else {
+			// An FTL that does not report per-rule results added them all,
+			// or it would have answered with an error.
+			output.Added = append(output.Added, names...)
+		}
 
-		return mcp.NewToolResultText(b.String()), nil
+		var b strings.Builder
+		if len(output.Failed) == 0 {
+			fmt.Fprintf(&b, "**Added %d rule(s)** to the %s/%s list.\n", len(output.Added), t, k)
+		} else {
+			fmt.Fprintf(&b, "**Added %d of %d rules** to the %s/%s list. Pi-hole refused %d:\n",
+				len(output.Added), output.Requested, t, k, len(output.Failed))
+			for _, f := range output.Failed {
+				fmt.Fprintf(&b, "- Failed: %s (%s)\n", f.Domain, f.Error)
+			}
+		}
+		for _, a := range output.Added {
+			fmt.Fprintf(&b, "- Added: %s\n", a)
+		}
+
+		return mcp.NewToolResultStructured(output, b.String()), nil
 	}
 }
 
@@ -223,16 +253,15 @@ func domainsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		// The PUT replaces comment and enabled together, so whichever the
 		// caller left out has to come from the entry as it stands.
-		current := newEntryFields()
-		if needsCurrentEntry(req) {
-			var existing pihole.DomainsResponse
-			if err := c.Get(ctx, path, &existing); err != nil {
-				return toolError("read the domain before updating it", err), nil
-			}
-			if len(existing.Domains) > 0 {
-				current = entryFields{comment: existing.Domains[0].Comment, enabled: existing.Domains[0].Enabled}
-			}
+		defer lockEntry(c, path)()
+		var existing pihole.DomainsResponse
+		if err := c.Get(ctx, path, &existing); err != nil {
+			return toolError("read the domain before updating it", err), nil
 		}
+		if len(existing.Domains) == 0 {
+			return missingEntry(fmt.Sprintf("%s/%s rule for %s", t, k, domain), "pihole_domains_add"), nil
+		}
+		current := entryFields{comment: existing.Domains[0].Comment, enabled: existing.Domains[0].Enabled}
 
 		body, err := crudUpdateBody(req, current)
 		if err != nil {

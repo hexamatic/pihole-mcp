@@ -63,7 +63,7 @@ _No parameters._
 
 *destructive*
 
-Enable or disable DNS blocking. Set a timer (seconds) to automatically revert after a duration.
+Enable or disable DNS blocking. Set a timer (seconds) to automatically revert after a duration; repeating the call restarts the countdown.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -480,6 +480,8 @@ List domains on allow/deny lists. Filter by type (allow/deny) and kind (exact/re
 | `type` | string | No | Filter: 'allow' or 'deny'. |
 
 ### `pihole_domains_add`
+
+*structured output*
 
 Add domains to an allow or deny list. Supports bulk add via comma-separated domains. Use pihole_search_domains first to avoid duplicates.
 
@@ -981,7 +983,7 @@ _No parameters._
 
 *destructive*
 
-Revoke an active API session by ID. Cannot revoke the current session used by this server.
+Revoke an active API session by ID. Refuses to revoke the session this server is using.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|

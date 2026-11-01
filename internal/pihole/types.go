@@ -822,9 +822,11 @@ type SessionsResponse struct {
 
 // Session represents an active API session.
 type Session struct {
-	ID             int     `json:"id"`
-	RemoteAddr     string  `json:"remote_addr"`
-	UserAgent      string  `json:"user_agent"`
-	ValidUntil     float64 `json:"valid_until"`
-	CurrentSession bool    `json:"this"`
+	ID         int     `json:"id"`
+	RemoteAddr string  `json:"remote_addr"`
+	UserAgent  string  `json:"user_agent"`
+	ValidUntil float64 `json:"valid_until"`
+	// FTL names this "current_session" (src/api/auth.c, v6.7 and v6.8). It
+	// was read as "this", so no session was ever marked as this server's.
+	CurrentSession bool `json:"current_session"`
 }

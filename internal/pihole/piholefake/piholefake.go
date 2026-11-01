@@ -212,8 +212,21 @@ func (f *Fake) handleDomains(w http.ResponseWriter, r *http.Request, p []string)
 			writeAPIError(w, http.StatusBadRequest, "bad_request", "no domain in payload")
 			return
 		}
+		// A rule already on the list is refused ("The item is already present" in v6.8).
+		// FTL adds the rest, reports each outcome under "processed", and
+		// answers 400 only when every rule failed (src/api/list.c). The fake
+		// used to overwrite duplicates and report success, which hid a tool
+		// that read a partly failed batch as complete.
 		created := make([]pihole.Domain, 0, len(names))
+		processed := &pihole.ProcessedResult{Success: []pihole.ProcessedItem{}, Errors: []pihole.ProcessedErr{}}
 		for _, name := range names {
+			key := domainKey(p[0], p[1], name)
+			if _, exists := f.domains[key]; exists {
+				processed.Errors = append(processed.Errors, pihole.ProcessedErr{
+					Item: name, Error: "The item is already present",
+				})
+				continue
+			}
 			d := pihole.Domain{
 				Domain:  name,
 				Type:    p[0],
@@ -222,10 +235,15 @@ func (f *Fake) handleDomains(w http.ResponseWriter, r *http.Request, p []string)
 				Enabled: boolOr(body["enabled"], true),
 				ID:      f.id(),
 			}
-			f.domains[domainKey(d.Type, d.Kind, d.Domain)] = d
+			f.domains[key] = d
 			created = append(created, d)
+			processed.Success = append(processed.Success, pihole.ProcessedItem{Item: name})
 		}
-		writeJSON(w, http.StatusCreated, pihole.DomainsResponse{Domains: created})
+		if len(created) == 0 {
+			writeAPIError(w, http.StatusBadRequest, "database_error", "Could not add to gravity database")
+			return
+		}
+		writeJSON(w, http.StatusCreated, pihole.DomainsResponse{Domains: created, Processed: processed})
 	case http.MethodPut:
 		if len(p) < 3 {
 			writeAPIError(w, http.StatusBadRequest, "bad_request", "type, kind and domain required")

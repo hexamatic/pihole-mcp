@@ -157,7 +157,7 @@ func TestClientsAdd_SendsComment(t *testing.T) {
 
 func TestClientsUpdate_Success(t *testing.T) {
 	rec := piholeHandler(map[string]any{
-		"/clients/192.168.1.10": map[string]any{"clients": []any{}},
+		"/clients/192.168.1.10": map[string]any{"clients": []any{map[string]any{"client": "192.168.1.10", "comment": "old"}}},
 	})
 	c := newTestClient(t, rec)
 
@@ -209,8 +209,8 @@ func TestClientsBatchDelete_Success(t *testing.T) {
 	c := newTestClient(t, rec)
 
 	text := callTool(t, clientsBatchDeleteHandler, c, map[string]any{"items": items})
-	if !strings.Contains(text, "Batch delete completed") {
-		t.Errorf("expected 'Batch delete completed' message, got: %s", text)
+	if !strings.Contains(text, "Batch delete done") {
+		t.Errorf("expected the batch delete reply, got: %s", text)
 	}
 
 	// The items string is handed to the client as pre-encoded JSON, so every
@@ -229,6 +229,7 @@ func TestClientsUpdate_EscapesReservedCharactersInTheClient(t *testing.T) {
 	const client = "eth0#lan"
 	rec := piholeHandler(map[string]any{
 		"PUT /clients/" + client: map[string]any{"clients": []any{}},
+		"GET /clients/" + client: map[string]any{"clients": []any{map[string]any{"client": client, "comment": "old"}}},
 	})
 	c := newTestClient(t, rec)
 
@@ -252,6 +253,7 @@ func TestClientsDelete_EscapesReservedCharactersInTheClient(t *testing.T) {
 func TestClientsUpdate_SendsCommentAndNothingElse(t *testing.T) {
 	rec := piholeHandler(map[string]any{
 		"PUT /clients/192.168.1.50": map[string]any{"clients": []any{}},
+		"GET /clients/192.168.1.50": map[string]any{"clients": []any{map[string]any{"client": "192.168.1.50", "comment": "old"}}},
 	})
 	c := newTestClient(t, rec)
 
@@ -260,7 +262,6 @@ func TestClientsUpdate_SendsCommentAndNothingElse(t *testing.T) {
 	req := rec.Only(t, "PUT", "/clients/192.168.1.50")
 	req.AssertBodyKeys(t, "comment")
 	req.AssertNoField(t, "enabled")
-	rec.AssertNone(t, "GET", "/clients/192.168.1.50")
 }
 
 // Same as the write paths: a client identifier carrying a reserved character
@@ -297,18 +298,22 @@ func TestClientsUpdate_OmittedCommentIsPreserved(t *testing.T) {
 	rec.Only(t, "PUT", "/clients/192.168.1.50").AssertField(t, "comment", "kids tablet")
 }
 
-// A caller that supplied the comment replaces it, so there is nothing to carry
-// over and no round trip to pay for.
-func TestClientsUpdate_SuppliedCommentSkipsTheRead(t *testing.T) {
+// FTL's PUT creates a client that does not exist, so an update of a mistyped
+// identifier used to add a new client and call it updated. Every update reads
+// the client first, even when it supplies the comment, and stops if it is not
+// there.
+func TestClientsUpdate_MissingClientIsRefused(t *testing.T) {
 	rec := piholeHandler(map[string]any{
+		"GET /clients/192.168.1.50": map[string]any{"clients": []any{}},
 		"PUT /clients/192.168.1.50": map[string]any{"clients": []any{}},
 	})
 	c := newTestClient(t, rec)
 
-	callTool(t, clientsUpdateHandler, c, map[string]any{"client": "192.168.1.50", "comment": "laptop"})
-
-	rec.AssertNone(t, "GET", "/clients/192.168.1.50")
-	rec.Only(t, "PUT", "/clients/192.168.1.50").AssertField(t, "comment", "laptop")
+	text := callToolExpectError(t, clientsUpdateHandler, c, map[string]any{"client": "192.168.1.50", "comment": "laptop"})
+	if !strings.Contains(text, "No client 192.168.1.50 exists") {
+		t.Errorf("an update of a client that does not exist should say so, got: %s", text)
+	}
+	rec.AssertNone(t, "PUT", "/clients/192.168.1.50")
 }
 
 func TestClientsUpdate_ReadFailureLeavesTheClientAlone(t *testing.T) {

@@ -9,8 +9,8 @@ func TestAuthSessions_Normal(t *testing.T) {
 	h := piholeHandler(map[string]any{
 		"/auth/sessions": map[string]any{
 			"sessions": []any{
-				map[string]any{"id": 1, "remote_addr": "192.168.1.10", "user_agent": "curl/8.0", "valid_until": 1700003600.0, "this": false},
-				map[string]any{"id": 2, "remote_addr": "192.168.1.20", "user_agent": "Mozilla/5.0", "valid_until": 1700007200.0, "this": false},
+				map[string]any{"id": 1, "remote_addr": "192.168.1.10", "user_agent": "curl/8.0", "valid_until": 1700003600.0, "current_session": false},
+				map[string]any{"id": 2, "remote_addr": "192.168.1.20", "user_agent": "Mozilla/5.0", "valid_until": 1700007200.0, "current_session": false},
 			},
 		},
 	})
@@ -35,7 +35,7 @@ func TestAuthSessions_CurrentMarker(t *testing.T) {
 	c := newTestClient(t, piholeHandler(map[string]any{
 		"/auth/sessions": map[string]any{
 			"sessions": []any{
-				map[string]any{"id": 1, "remote_addr": "192.168.1.10", "user_agent": "curl/8.0", "valid_until": 1700003600.0, "this": true},
+				map[string]any{"id": 1, "remote_addr": "192.168.1.10", "user_agent": "curl/8.0", "valid_until": 1700003600.0, "current_session": true},
 			},
 		},
 	}))
@@ -75,6 +75,7 @@ func TestAuthSessions_RealFixture(t *testing.T) {
 func TestAuthRevokeSession_Success(t *testing.T) {
 	h := piholeHandler(map[string]any{
 		"/auth/session/5": nil,
+		"/auth/sessions":  map[string]any{"sessions": []any{}},
 	})
 	c := newTestClient(t, h)
 
@@ -104,6 +105,7 @@ func TestAuthRevokeSession_ZeroID(t *testing.T) {
 	// rather than a spurious "id is required".
 	h := piholeHandler(map[string]any{
 		"/auth/session/0": nil,
+		"/auth/sessions":  map[string]any{"sessions": []any{}},
 	})
 	c := newTestClient(t, h)
 
@@ -138,4 +140,33 @@ func TestAuthRevokeSession_MissingIDNeverReachesTheAPI(t *testing.T) {
 	// 0, so a caller who forgot 'id' gets this error instead of silently
 	// revoking session 0.
 	h.AssertNone(t, "", "")
+}
+
+func TestAuthRevokeSession_RefusesThisServersOwnSession(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"/auth/sessions": map[string]any{"sessions": []any{
+			map[string]any{"id": 3, "remote_addr": "10.0.0.2", "current_session": true},
+			map[string]any{"id": 4, "remote_addr": "10.0.0.9", "current_session": false},
+		}},
+		"DELETE /auth/session/4": map[string]any{},
+	})
+	c := newTestClient(t, rec)
+
+	text := callToolExpectError(t, authRevokeSessionHandler, c, map[string]any{"id": 3})
+	if !strings.Contains(text, "the one this server is using") {
+		t.Errorf("revoking this server's own session should be refused, got: %s", text)
+	}
+	rec.AssertNone(t, "DELETE", "/auth/session/3")
+
+	callTool(t, authRevokeSessionHandler, c, map[string]any{"id": 4})
+	rec.Only(t, "DELETE", "/auth/session/4")
+}
+
+func TestAuthSessions_MarksThisServersSessionFromTheRealFixture(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{"/auth/sessions": loadFixture(t, "auth_sessions")}))
+
+	text := callTool(t, authSessionsHandler, c, nil)
+	if !strings.Contains(text, "(current)") {
+		t.Errorf("the captured response marks one session current_session, so one line should say (current), got:\n%s", text)
+	}
 }

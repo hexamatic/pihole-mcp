@@ -21,7 +21,7 @@ func RegisterAuth(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_auth_revoke_session",
 		mcp.WithTitleAnnotation("Revoke Session"),
-		mcp.WithDescription("Revoke an active API session by ID. Cannot revoke the current session used by this server."),
+		mcp.WithDescription("Revoke an active API session by ID. Refuses to revoke the session this server is using."),
 		mcp.WithNumber("id", mcp.Required(), mcp.Description("Session ID to revoke.")),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -70,6 +70,19 @@ func authRevokeSessionHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 		if id < 0 {
 			return mcp.NewToolResultError(fmt.Sprintf("id must not be negative (got %d)", id)), nil
+		}
+
+		// The description has always promised this, and nothing enforced it:
+		// FTL revokes whichever session it is asked to, its caller's included.
+		var sessions pihole.SessionsResponse
+		if err := c.Get(ctx, "/auth/sessions", &sessions); err != nil {
+			return toolError(fmt.Sprintf("check that session %d is not this server's own before revoking it", id), err), nil
+		}
+		for _, sess := range sessions.Sessions {
+			if sess.ID == id && sess.CurrentSession {
+				return mcp.NewToolResultError(fmt.Sprintf("Session %d is the one this server is using, so it was not revoked. "+
+					"Revoking it would log this server out; it would log in again on its next call and take a new seat.", id)), nil
+			}
 		}
 
 		if err := c.Delete(ctx, fmt.Sprintf("/auth/session/%d", id)); err != nil {

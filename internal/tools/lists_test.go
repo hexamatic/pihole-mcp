@@ -152,7 +152,7 @@ func TestListsAdd_SendsCommentAndExplicitDisable(t *testing.T) {
 
 func TestListsUpdate_Success(t *testing.T) {
 	rec := piholeHandler(map[string]any{
-		"/lists/https://example.com/list.txt": map[string]any{"lists": []any{}},
+		"/lists/https://example.com/list.txt": map[string]any{"lists": []any{map[string]any{"address": "https://example.com/list.txt", "type": "block", "comment": "old", "enabled": true}}},
 	})
 	c := newTestClient(t, rec)
 
@@ -190,7 +190,7 @@ func TestListsUpdate_Success(t *testing.T) {
 // the three-key body is visible: type is always sent, comment only when given.
 func TestListsUpdate_ExplicitDisableSendsEnabledFalse(t *testing.T) {
 	rec := piholeHandler(map[string]any{
-		"/lists/https://example.com/list.txt": map[string]any{"lists": []any{}},
+		"/lists/https://example.com/list.txt": map[string]any{"lists": []any{map[string]any{"address": "https://example.com/list.txt", "type": "block", "comment": "old", "enabled": true}}},
 	})
 	c := newTestClient(t, rec)
 
@@ -238,8 +238,8 @@ func TestListsBatchDelete_Success(t *testing.T) {
 	c := newTestClient(t, rec)
 
 	text := callTool(t, listsBatchDeleteHandler, c, map[string]any{"items": items})
-	if !strings.Contains(text, "Batch delete completed") {
-		t.Errorf("expected 'Batch delete completed' message, got: %s", text)
+	if !strings.Contains(text, "Batch delete done") {
+		t.Errorf("expected the batch delete reply, got: %s", text)
 	}
 
 	// Every item carries its own type, so unlike the single-list writes this
@@ -304,7 +304,7 @@ func TestListsUpdate_EnabledOnlyKeepsTheComment(t *testing.T) {
 func TestListsUpdate_EscapesAQueryStringInTheAddress(t *testing.T) {
 	const addr = "https://lists.example.com/ads.txt?token=abc123"
 	rec := piholeHandler(map[string]any{
-		"GET /lists/" + addr: map[string]any{"lists": []any{}},
+		"GET /lists/" + addr: map[string]any{"lists": []any{map[string]any{"address": addr, "type": "block", "comment": "old", "enabled": true}}},
 		"PUT /lists/" + addr: map[string]any{"lists": []any{}},
 	})
 	c := newTestClient(t, rec)

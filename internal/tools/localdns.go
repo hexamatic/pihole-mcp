@@ -218,7 +218,9 @@ func localDNSDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 		match, res := resolveOne(records, describeHost(addr.String(), hostname), func(rec string) bool {
 			fields := strings.Fields(rec)
-			if len(fields) < 2 || fields[0] != addr.String() {
+			// Compare addresses parsed, not as text: a record stored as
+			// fd00:0::1 is the same address as the fd00::1 the caller gave.
+			if len(fields) < 2 || !sameAddr(fields[0], addr) {
 				return false
 			}
 			for _, name := range fields[1:] {
@@ -232,15 +234,56 @@ func localDNSDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return res, nil
 		}
 
+		// FTL allows several names on one line ("IP HOSTNAME [HOSTNAME ...]"),
+		// which is how a Pi-hole v5 custom.list arrives after migration, and
+		// it deletes an array item only as a whole. Deleting the line removed
+		// every other name on it too. Keep the rest by writing the line
+		// without this name first, so a failure part way leaves a duplicate
+		// rather than a lost name.
+		fields := strings.Fields(match)
+		var kept []string
+		for _, name := range fields[1:] {
+			if !strings.EqualFold(name, hostname) {
+				kept = append(kept, name)
+			}
+		}
 		restart := req.GetBool("restart", true)
 		waits := restartsFor(ctx, c, "dns."+hostsField, restart)
-		sent := time.Now()
-		if err := c.Delete(ctx, recordPath(hostsField, match, restart)); err != nil {
-			return toolError("delete local DNS record", err), nil
+		if len(kept) == 0 {
+			sent := time.Now()
+			if err := c.Delete(ctx, recordPath(hostsField, match, restart)); err != nil {
+				return toolError("delete local DNS record", err), nil
+			}
+			return mcp.NewToolResultText(fmt.Sprintf("**Deleted** local DNS record `%s`.", match) +
+				restartNoteIf(ctx, c, waits, sent)), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("**Deleted** local DNS record `%s`.", match) +
-			restartNoteIf(ctx, c, waits, sent)), nil
+		remaining := fields[0] + " " + strings.Join(kept, " ")
+		res = replaceLocalRecord(ctx, c, hostsField, match, remaining, restart, waits, hostname)
+		return res, nil
 	}
+}
+
+// sameAddr reports whether a stored address is the same IP as addr.
+func sameAddr(stored string, addr netip.Addr) bool {
+	a, err := netip.ParseAddr(stored)
+	return err == nil && a == addr
+}
+
+// replaceLocalRecord removes one name from a stored record that carries
+// several, by adding the record without it and then deleting the original.
+// Adding first means a failure between the two steps leaves both records in
+// place, never one with names missing.
+func replaceLocalRecord(ctx context.Context, c *pihole.Client, field, original, remaining string, restart, waits bool, removed string) *mcp.CallToolResult {
+	if err := c.Put(ctx, recordPath(field, remaining, false), nil, nil); err != nil {
+		return toolError(fmt.Sprintf("remove %s from `%s` (writing `%s` failed, so nothing changed)", removed, original, remaining), err)
+	}
+	sent := time.Now()
+	if err := c.Delete(ctx, recordPath(field, original, restart)); err != nil {
+		return toolError(fmt.Sprintf("remove %s: `%s` was added, but the original `%s` could not be deleted, so both are now stored. "+
+			"Delete the original with pihole_config_remove_value", removed, remaining, original), err)
+	}
+	return mcp.NewToolResultText(fmt.Sprintf("**Removed** `%s` from `%s`. The other names stay, as `%s`.", removed, original, remaining) +
+		restartNoteIf(ctx, c, waits, sent))
 }
 
 func localCNAMEAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
@@ -299,8 +342,13 @@ func localCNAMEDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return toolError("read local CNAME records", err), nil
 		}
 		match, res := resolveOne(records, "CNAME alias "+alias, func(rec string) bool {
-			parts := strings.SplitN(rec, ",", 2)
-			return strings.EqualFold(strings.TrimSpace(parts[0]), alias)
+			aliases, _ := splitCNAME(rec)
+			for _, a := range aliases {
+				if strings.EqualFold(a, alias) {
+					return true
+				}
+			}
+			return false
 		})
 		if res != nil {
 			return res, nil
@@ -308,6 +356,21 @@ func localCNAMEDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		restart := req.GetBool("restart", true)
 		waits := restartsFor(ctx, c, "dns."+cnamesField, restart)
+
+		// dnsmasq lets one record carry several aliases for a target
+		// ("a,b,target[,ttl]"). Only the requested alias goes; the rest stay.
+		aliases, rest := splitCNAME(match)
+		var kept []string
+		for _, a := range aliases {
+			if !strings.EqualFold(a, alias) {
+				kept = append(kept, a)
+			}
+		}
+		if len(kept) > 0 {
+			remaining := strings.Join(append(kept, rest...), ",")
+			return replaceLocalRecord(ctx, c, cnamesField, match, remaining, restart, waits, alias), nil
+		}
+
 		sent := time.Now()
 		if err := c.Delete(ctx, recordPath(cnamesField, match, restart)); err != nil {
 			return toolError("delete local CNAME record", err), nil
@@ -315,6 +378,26 @@ func localCNAMEDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		return mcp.NewToolResultText(fmt.Sprintf("**Deleted** local CNAME record `%s`.", match) +
 			restartNoteIf(ctx, c, waits, sent)), nil
 	}
+}
+
+// splitCNAME splits a stored CNAME record into its aliases and the rest: the
+// target, and the TTL when there is one. FTL documents "<cname>,<target>[,<TTL>]",
+// and dnsmasq also accepts several aliases before the target.
+func splitCNAME(rec string) (aliases, rest []string) {
+	parts := strings.Split(rec, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	end := len(parts)
+	if end > 2 {
+		if _, err := strconv.Atoi(parts[end-1]); err == nil {
+			end-- // a trailing number is the TTL
+		}
+	}
+	if end < 2 {
+		return parts, nil
+	}
+	return parts[:end-1], parts[end-1:]
 }
 
 func describeHost(ip, hostname string) string {

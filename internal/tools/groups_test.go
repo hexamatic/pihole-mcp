@@ -93,7 +93,7 @@ func TestGroupsAdd_SendsCommentAndExplicitDisable(t *testing.T) {
 
 func TestGroupsUpdate_Success(t *testing.T) {
 	rec := piholeHandler(map[string]any{
-		"/groups/kids": map[string]any{"groups": []any{}},
+		"/groups/kids": map[string]any{"groups": []any{map[string]any{"name": "kids", "comment": "old", "enabled": true}}},
 	})
 	c := newTestClient(t, rec)
 
@@ -122,7 +122,7 @@ func TestGroupsUpdate_Success(t *testing.T) {
 // from the argument.
 func TestGroupsUpdate_RenameKeepsOldNameInPath(t *testing.T) {
 	rec := piholeHandler(map[string]any{
-		"/groups/kids": map[string]any{"groups": []any{}},
+		"/groups/kids": map[string]any{"groups": []any{map[string]any{"name": "kids", "comment": "old", "enabled": true}}},
 	})
 	c := newTestClient(t, rec)
 
@@ -138,7 +138,7 @@ func TestGroupsUpdate_RenameKeepsOldNameInPath(t *testing.T) {
 // going out as a JSON boolean rather than the string "false".
 func TestGroupsUpdate_ExplicitDisableSendsEnabledFalse(t *testing.T) {
 	rec := piholeHandler(map[string]any{
-		"/groups/kids": map[string]any{"groups": []any{}},
+		"/groups/kids": map[string]any{"groups": []any{map[string]any{"name": "kids", "comment": "old", "enabled": true}}},
 	})
 	c := newTestClient(t, rec)
 
@@ -180,8 +180,8 @@ func TestGroupsBatchDelete_Success(t *testing.T) {
 	c := newTestClient(t, rec)
 
 	text := callTool(t, groupsBatchDeleteHandler, c, map[string]any{"items": items})
-	if !strings.Contains(text, "Batch delete completed") {
-		t.Errorf("expected 'Batch delete completed' message, got: %s", text)
+	if !strings.Contains(text, "Batch delete done") {
+		t.Errorf("expected the batch delete reply, got: %s", text)
 	}
 
 	// The items string is handed to the client as pre-encoded JSON. If rawJSON
@@ -257,7 +257,7 @@ func TestGroupsUpdate_RenameCarriesTheOtherFields(t *testing.T) {
 func TestGroupsUpdate_EscapesReservedCharactersInTheName(t *testing.T) {
 	const name = "Kids #2"
 	rec := piholeHandler(map[string]any{
-		"/groups/" + name: map[string]any{"groups": []any{}},
+		"/groups/" + name: map[string]any{"groups": []any{map[string]any{"name": name, "comment": "old", "enabled": true}}},
 	})
 	c := newTestClient(t, rec)
 

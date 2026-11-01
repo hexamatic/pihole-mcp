@@ -180,16 +180,15 @@ func listsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		// The PUT replaces comment and enabled together, so whichever the
 		// caller left out has to come from the entry as it stands.
-		current := newEntryFields()
-		if needsCurrentEntry(req) {
-			var existing pihole.ListsResponse
-			if err := c.Get(ctx, path, &existing); err != nil {
-				return toolError("read the list before updating it", err), nil
-			}
-			if len(existing.Lists) > 0 {
-				current = entryFields{comment: existing.Lists[0].Comment, enabled: existing.Lists[0].Enabled}
-			}
+		defer lockEntry(c, path)()
+		var existing pihole.ListsResponse
+		if err := c.Get(ctx, path, &existing); err != nil {
+			return toolError("read the list before updating it", err), nil
 		}
+		if len(existing.Lists) == 0 {
+			return missingEntry(fmt.Sprintf("%s list with address %s", t, address), "pihole_lists_add"), nil
+		}
+		current := entryFields{comment: existing.Lists[0].Comment, enabled: existing.Lists[0].Enabled}
 
 		body, err := crudUpdateBody(req, current)
 		if err != nil {
