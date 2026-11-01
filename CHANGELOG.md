@@ -17,6 +17,10 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 - **Every Homebrew install and upgrade printed a deprecation warning and asked the user to report it.** Homebrew has deprecated the cask `postflight` block in favour of declarative `postflight_steps`, and the cask published with each release still used the old form, so `brew install` and `brew upgrade` printed `Calling postflight is deprecated` followed by a request to report the problem to the tap. The cask now uses `postflight_steps`. The step it runs is unchanged: on macOS it removes the quarantine attribute from the unnotarised binary so Gatekeeper lets it start. Takes effect from the cask published with the next release. ([#83](https://github.com/hexamatic/pihole-mcp/pull/83))
 
+### Changed
+
+- **Every change is now tested against Pi-hole FTL v6.8 as well as v6.7.** The integration tests and the end-to-end suite ran against Pi-holes pinned at FTL v6.7 (`pihole/pihole:2026.07.2`), and the Dependabot job meant to propose newer Pi-hole images had failed every week since 28 September, the first run after a newer image existed, so nothing exercised FTL v6.7.1 or v6.8. CI now runs both suites against a pair of Pi-holes on FTL v6.8 (`2026.10.1`) and another on FTL v6.7, and a change must pass on both. The development Pi-holes started by `just dev-up` move to `2026.10.1`.
+
 ### Dependencies
 
 - Go toolchain go1.26.7 to go1.27.3 (see Security above)

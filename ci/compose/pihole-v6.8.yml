@@ -1,10 +1,15 @@
-# Pi-hole instance for CI integration tests.
-# No volumes or blocklist download — starts in seconds, not minutes.
-# Usage: docker compose -f .github/docker-compose.ci.yml up -d --wait
+# Pi-hole pair for the CI integration job: FTL v6.8 (pihole/pihole:2026.10.1).
+# The current release. Dependabot's docker-compose updates keep this tag moving.
+# No volumes or blocklist download, so both start in seconds.
+# Usage: docker compose -f ci/compose/pihole-v6.8.yml up -d --wait
+#
+# Each file is one leg of the integration matrix in .github/workflows/ci.yml and
+# keeps the two-instance pair, so the multi-instance tests run on one version at
+# a time rather than across two.
 
 services:
   pihole:
-    image: pihole/pihole:2026.07.2
+    image: pihole/pihole:2026.10.1
     ports:
       - "8081:80"
     environment:
@@ -22,7 +27,7 @@ services:
 
   # Second instance for multi-instance routing, aggregation, and sync tests.
   pihole-secondary:
-    image: pihole/pihole:2026.07.2
+    image: pihole/pihole:2026.10.1
     ports:
       - "8082:80"
     environment:
