@@ -199,13 +199,22 @@ func TestLogs_ShowTheNewestLines(t *testing.T) {
 		c := newTestClient(t, piholeHandler(map[string]any{"/logs/dnsmasq": fixture}))
 		text := callTool(t, dnsLogHandler, c, map[string]any{"lines": 10.0})
 
-		newest := entries[len(entries)-1].(map[string]any)["message"].(string)
-		older := entries[len(entries)-11].(map[string]any)["message"].(string)
-		if !strings.Contains(text, newest) {
-			t.Errorf("expected the newest line %q, got:\n%s", newest, text)
+		// The rendered lines, in order, must be exactly the capture's newest
+		// ten. Each reads "- HH:MM:SS message", so the message is what
+		// follows the time.
+		var got []string
+		for _, line := range strings.Split(text, "\n") {
+			if rest, ok := strings.CutPrefix(line, "- "); ok {
+				_, msg, _ := strings.Cut(rest, " ")
+				got = append(got, msg)
+			}
 		}
-		if strings.Contains(text, "- "+older) || strings.Count(text, "\n- ") != 10 {
-			t.Errorf("expected exactly the newest 10 lines, got:\n%s", text)
+		var want []string
+		for _, e := range entries[len(entries)-10:] {
+			want = append(want, e.(map[string]any)["message"].(string))
+		}
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Errorf("rendered lines:\n%s\nwant the newest ten:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 		}
 		if want := fmt.Sprintf("showing the newest 10. Pass lines=%d", len(entries)); !strings.Contains(text, want) {
 			t.Errorf("expected %q, got:\n%s", want, text)
