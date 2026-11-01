@@ -274,3 +274,25 @@ func TestQueryParams_IsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestResponseTime_TakesSeconds(t *testing.T) {
+	// FTL reports reply and response times in seconds. This took
+	// milliseconds, so a 95 ms reply printed as 0.1ms.
+	for secs, want := range map[float64]string{
+		0.095:  "95.0ms",
+		1.2:    "1200.0ms",
+		0.0005: "0.50ms",
+		0:      "N/A",
+		-1:     "N/A",
+	} {
+		if got := ResponseTime(secs); got != want {
+			t.Errorf("ResponseTime(%v) = %q, want %q", secs, got, want)
+		}
+	}
+	if got := Milliseconds(0.0952); got != "95.20" {
+		t.Errorf("Milliseconds(0.0952) = %q, want 95.20", got)
+	}
+	if got := Milliseconds(0); got != "" {
+		t.Errorf("Milliseconds(0) = %q, want empty", got)
+	}
+}

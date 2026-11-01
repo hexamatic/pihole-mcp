@@ -90,6 +90,10 @@ if [ "${SEED_SKIP_MESSAGES:-0}" != "1" ]; then
             -d "{\"address\":\"$UNREACHABLE_LIST\",\"comment\":\"unreachable by design — seeds an FTL diagnostic message\"}" \
             2>/dev/null || true
 
+        # Log out now rather than leave the session holding one of Pi-hole's
+        # API seats until it times out half an hour later.
+        curl -fsS -o /dev/null -X DELETE "$PIHOLE_URL/api/auth" -H "X-FTL-SID: $SID" 2>/dev/null || true
+
         docker exec "$CONTAINER" pihole -g >/dev/null 2>&1 || true
         sleep 2
         printf 'Diagnostic message seeded.\n'

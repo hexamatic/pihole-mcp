@@ -80,17 +80,16 @@ func historyClientsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		params := make(map[string]string)
-		if count > 0 {
-			params["N"] = fmt.Sprintf("%d", count)
-		}
+		// N is always sent. FTL reads N=0 as every client, but leaving it out
+		// applies FTL's own default, so count=0 used to return a handful.
+		params := map[string]string{"N": strconv.Itoa(count)}
 
 		var result pihole.ClientHistoryResponse
 		if err := c.Get(ctx, "/history/clients"+format.QueryParams(params), &result); err != nil {
 			return toolError("get client history", err), nil
 		}
 
-		return mcp.NewToolResultText(formatClientHistorySummary(result, getDetail(req), wantCSV(req))), nil
+		return mcp.NewToolResultText(clientHistoryText(ctx, c, result, getDetail(req), wantCSV(req))), nil
 	}
 }
 
@@ -132,7 +131,7 @@ func historyDatabaseClientsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return toolError("get database client history", err), nil
 		}
 
-		return mcp.NewToolResultText(formatClientHistorySummary(result, getDetail(req), wantCSV(req))), nil
+		return mcp.NewToolResultText(clientHistoryText(ctx, c, result, getDetail(req), wantCSV(req))), nil
 	}
 }
 
@@ -188,6 +187,9 @@ type clientTotal struct {
 	key   string
 	name  string
 	total int
+	// known is false when Pi-hole named the client without a query count,
+	// as FTL v6.7's long-term client history does.
+	known bool
 }
 
 // rankClients orders clients by query count, highest first, breaking ties on
@@ -206,7 +208,11 @@ func rankClients(r pihole.ClientHistoryResponse) []clientTotal {
 	out := make([]clientTotal, 0, len(r.Clients))
 	if len(r.Clients) > 0 {
 		for key, info := range r.Clients {
-			out = append(out, clientTotal{key: key, name: format.StringOr(info.Name, ""), total: info.Total})
+			ct := clientTotal{key: key, name: format.StringOr(info.Name, "")}
+			if info.Total != nil {
+				ct.total, ct.known = *info.Total, true
+			}
+			out = append(out, ct)
 		}
 	} else {
 		totals := make(map[string]int)
@@ -216,7 +222,7 @@ func rankClients(r pihole.ClientHistoryResponse) []clientTotal {
 			}
 		}
 		for key, n := range totals {
-			out = append(out, clientTotal{key: key, total: n})
+			out = append(out, clientTotal{key: key, total: n, known: true})
 		}
 	}
 
@@ -262,10 +268,36 @@ func (c clientTotal) label() string {
 	return fmt.Sprintf("%s (%s)", c.name, c.key)
 }
 
+// clientHistoryText renders a client history, and when it is empty says
+// whether Pi-hole's privacy level is the reason.
+func clientHistoryText(ctx context.Context, c *pihole.Client, r pihole.ClientHistoryResponse, detail string, csv bool) string {
+	if len(rankClients(r)) == 0 {
+		return "No client history for this period." + clientsHiddenNote(ctx, c)
+	}
+	return formatClientHistorySummary(r, detail, csv)
+}
+
+// clientsHiddenNote explains an empty client history when the privacy level
+// hides clients (misc.privacylevel 2 or above), and is "" otherwise. FTL then
+// keeps no per-client data and answers with an empty list, which on its own
+// reads as a network with no clients.
+func clientsHiddenNote(ctx context.Context, c *pihole.Client) string {
+	var resp pihole.ConfigResponse
+	if err := c.Get(ctx, "/config/misc/privacylevel", &resp); err != nil {
+		return ""
+	}
+	misc, _ := resp.Config["misc"].(map[string]any)
+	level, ok := misc["privacylevel"].(float64)
+	if !ok || level < 2 {
+		return ""
+	}
+	return fmt.Sprintf(" Pi-hole's privacy level (misc.privacylevel) is %.0f, and from 2 upwards it hides clients, so it keeps no per-client history.", level)
+}
+
 func formatClientHistorySummary(r pihole.ClientHistoryResponse, detail string, csv bool) string {
 	ranked := rankClients(r)
 	if len(ranked) == 0 {
-		return "No client history data available."
+		return "No client history for this period."
 	}
 
 	if detail == "minimal" {
@@ -282,15 +314,37 @@ func formatClientHistorySummary(r pihole.ClientHistoryResponse, detail string, c
 		headers := []string{"Client", "Name", "Queries"}
 		rows := make([][]string, 0, len(ranked))
 		for _, c := range ranked {
-			rows = append(rows, []string{c.key, c.name, strconv.Itoa(c.total)})
+			queries := ""
+			if c.known {
+				queries = strconv.Itoa(c.total)
+			}
+			rows = append(rows, []string{c.key, c.name, queries})
 		}
 		return format.CSV(headers, rows)
 	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "**%d clients:**\n", len(ranked))
+	unknown := false
 	for _, c := range ranked {
+		if !c.known {
+			fmt.Fprintf(&b, "- %s\n", c.label())
+			unknown = true
+			continue
+		}
 		fmt.Fprintf(&b, "- %s — %s queries\n", c.label(), format.Number(c.total))
+	}
+	if unknown {
+		// Every bucket is a query, whoever it belongs to, so the sum is the
+		// range's total even when the buckets cannot be attributed.
+		total := 0
+		for _, h := range r.History {
+			for _, n := range h.Data {
+				total += n
+			}
+		}
+		fmt.Fprintf(&b, "\n_This Pi-hole does not report a query count per client for this range (FTL v6.7 does not). "+
+			"Across all clients: %s queries._\n", format.Number(total))
 	}
 	writeUnattributedNote(&b, unattributed)
 	return b.String()

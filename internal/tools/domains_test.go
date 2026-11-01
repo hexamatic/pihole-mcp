@@ -636,3 +636,20 @@ func TestDomainsAdd_EveryRuleRefusedIsAnError(t *testing.T) {
 
 	callToolExpectError(t, domainsAddHandler, c, map[string]any{"type": "deny", "kind": "exact", "domain": "dup.example.com"})
 }
+
+func TestDomainsList_KindOnlyFiltersByKind(t *testing.T) {
+	// FTL's path puts the kind after the type, so kind on its own was
+	// dropped and kind=regex listed every rule.
+	rec := piholeHandler(map[string]any{
+		"/domains": map[string]any{"domains": []any{
+			map[string]any{"domain": "ads.example.com", "type": "deny", "kind": "exact", "enabled": true},
+			map[string]any{"domain": "(^|\\.)tracker\\.example$", "type": "deny", "kind": "regex", "enabled": true},
+			map[string]any{"domain": "ok.example.com", "type": "allow", "kind": "exact", "enabled": true},
+		}},
+	})
+	text := callTool(t, domainsListHandler, newTestClient(t, rec), map[string]any{"kind": "regex"})
+	if !strings.Contains(text, "tracker") || strings.Contains(text, "ads.example.com") || strings.Contains(text, "ok.example.com") {
+		t.Errorf("kind=regex should list only the regex rule, got:\n%s", text)
+	}
+	rec.Only(t, "GET", "/domains").AssertRawPath(t, "/domains")
+}

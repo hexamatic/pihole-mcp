@@ -127,7 +127,7 @@ func TestLogsDNS_Empty(t *testing.T) {
 	}))
 
 	text := callTool(t, dnsLogHandler, c, nil)
-	if !strings.Contains(text, "No log entries") {
+	if !strings.Contains(text, "No log lines") {
 		t.Errorf("expected empty log message, got: %s", text)
 	}
 	if !strings.Contains(text, "Next ID: 99") {
@@ -135,7 +135,7 @@ func TestLogsDNS_Empty(t *testing.T) {
 	}
 }
 
-func TestLogsDNS_TruncatedAt50(t *testing.T) {
+func TestLogsDNS_ShowsTheNewest50(t *testing.T) {
 	entries := make([]any, 60)
 	for i := range entries {
 		entries[i] = map[string]any{
@@ -156,15 +156,15 @@ func TestLogsDNS_TruncatedAt50(t *testing.T) {
 	if !strings.Contains(text, "60 lines") {
 		t.Errorf("expected '60 lines' in header, got: %s", text)
 	}
-	if !strings.Contains(text, "showing 50") {
-		t.Errorf("expected 'showing 50' in header, got: %s", text)
+	if !strings.Contains(text, "showing the newest 50") {
+		t.Errorf("expected 'showing the newest 50' in header, got: %s", text)
 	}
-	// Entry 49 should be present (0-indexed), entry 50 should not.
-	if !strings.Contains(text, "log entry 49") {
-		t.Errorf("expected last shown entry (49), got: %s", text)
+	// The newest 50 are entries 10 to 59; the first ten are left out.
+	if !strings.Contains(text, "log entry 59\n") || !strings.Contains(text, "log entry 10\n") {
+		t.Errorf("expected entries 10 to 59, got: %s", text)
 	}
-	if strings.Contains(text, "log entry 50") {
-		t.Errorf("entry 50 should be truncated, got: %s", text)
+	if strings.Contains(text, "log entry 9\n") {
+		t.Errorf("entry 9 is older than the newest 50 and should be left out, got: %s", text)
 	}
 }
 
@@ -185,4 +185,73 @@ func TestLogsFTL_Normal(t *testing.T) {
 	if !strings.Contains(text, "FTL started") {
 		t.Errorf("expected FTL log message, got: %s", text)
 	}
+}
+
+func TestLogs_ShowTheNewestLines(t *testing.T) {
+	// FTL returns lines oldest first. The tool showed the first 50 and gave a
+	// cursor past the last, so the newest lines were never seen and polling
+	// from the cursor skipped the rest for good.
+	eachFixture(t, "logs_dnsmasq", func(t *testing.T, _ string, fixture any) {
+		entries := fixtureValue(t, fixture, "log").([]any)
+		if len(entries) <= 10 {
+			t.Fatalf("the capture holds %d lines; it needs more than 10 for this test", len(entries))
+		}
+		c := newTestClient(t, piholeHandler(map[string]any{"/logs/dnsmasq": fixture}))
+		text := callTool(t, dnsLogHandler, c, map[string]any{"lines": 10.0})
+
+		// The rendered lines, in order, must be exactly the capture's newest
+		// ten. Each reads "- HH:MM:SS message", so the message is what
+		// follows the time.
+		var got []string
+		for _, line := range strings.Split(text, "\n") {
+			if rest, ok := strings.CutPrefix(line, "- "); ok {
+				_, msg, _ := strings.Cut(rest, " ")
+				got = append(got, msg)
+			}
+		}
+		var want []string
+		for _, e := range entries[len(entries)-10:] {
+			want = append(want, e.(map[string]any)["message"].(string))
+		}
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Errorf("rendered lines:\n%s\nwant the newest ten:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+		if want := fmt.Sprintf("showing the newest 10. Pass lines=%d", len(entries)); !strings.Contains(text, want) {
+			t.Errorf("expected %q, got:\n%s", want, text)
+		}
+		if want := fmt.Sprintf("Next ID: %d", fixtureInt(t, fixture, "nextID")); !strings.Contains(text, want) {
+			t.Errorf("expected %q, got:\n%s", want, text)
+		}
+	})
+}
+
+func TestLogsFTL_LevelKeepsTheSevereLines(t *testing.T) {
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/logs/ftl": map[string]any{
+			"log": []any{
+				map[string]any{"timestamp": 1700000000, "message": "Imported 3 queries", "prio": "INFO"},
+				map[string]any{"timestamp": 1700000001, "message": "Rate-limiting 10.0.0.5", "prio": "WARNING"},
+				map[string]any{"timestamp": 1700000002, "message": "Cannot open database", "prio": "ERROR"},
+				map[string]any{"timestamp": 1700000003, "message": "dnsmasq line", "prio": nil},
+			},
+			"nextID": 4,
+		},
+	}))
+
+	text := callTool(t, ftlLogHandler, c, map[string]any{"level": "warning"})
+	if !strings.Contains(text, "WARNING Rate-limiting") || !strings.Contains(text, "ERROR Cannot open") ||
+		strings.Contains(text, "Imported") || strings.Contains(text, "dnsmasq line") {
+		t.Errorf("level=warning should keep only warnings and errors, got:\n%s", text)
+	}
+	text = callTool(t, ftlLogHandler, c, map[string]any{"level": "error"})
+	if strings.Contains(text, "Rate-limiting") || !strings.Contains(text, "Cannot open") {
+		t.Errorf("level=error should keep only errors, got:\n%s", text)
+	}
+}
+
+func TestLogs_LinesOutOfRangeIsRefused(t *testing.T) {
+	rec := piholeHandler(map[string]any{"/logs/dnsmasq": map[string]any{"log": []any{}, "nextID": 0}})
+	c := newTestClient(t, rec)
+	callToolExpectError(t, dnsLogHandler, c, map[string]any{"lines": 513.0})
+	rec.AssertNone(t, "GET", "/logs/dnsmasq")
 }

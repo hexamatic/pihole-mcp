@@ -1,101 +1,94 @@
 package tools
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/hexamatic/pihole-mcp/internal/format"
 )
 
-func TestInfoSystem_EmptyUnits(t *testing.T) {
-	// Simulates Docker environment where Pi-hole returns empty units.
-	c := newTestClient(t, piholeHandler(map[string]any{
-		"/info/system": map[string]any{
-			"system": map[string]any{
-				"uptime": 3600,
-				"load":   []any{0.5, 0.3, 0.1},
-				"cpu":    map[string]any{"nprocs": 4, "perc": 15.5},
-				"memory": map[string]any{
-					"ram": map[string]any{
-						"total": 8025148.0, "used": 543304.0, "free": 7481844.0,
-						"perc": 6.8, "unit": "", // Empty unit — Docker quirk
-					},
-				},
-				"disk": map[string]any{
-					"total": 0.0, "used": 0.0, "free": 0.0,
-					"perc": 0.0, "unit": "", // Empty unit
-				},
-				"dns": map[string]any{"running": false},
-			},
-		},
-		"/info/host": map[string]any{
-			"host": map[string]any{
-				"name": "pihole-dev", "os": "Linux", "arch": "aarch64",
-				"kernel": "6.8.0", "domain": "",
-			},
-		},
-		"/info/sensors": map[string]any{
-			"sensors": map[string]any{"list": []any{}},
-		},
-	}))
-
-	text := callTool(t, infoSystemHandler, c, nil)
-
-	// Should show auto-converted bytes, not "543304.0/8025148.0 "
-	if strings.Contains(text, "543304") {
-		t.Errorf("raw bytes should be formatted, got: %s", text)
-	}
-	if !strings.Contains(text, "KB") && !strings.Contains(text, "MB") && !strings.Contains(text, "GB") {
-		t.Errorf("expected auto-formatted size unit, got: %s", text)
-	}
-
-	// DNS not running should have Docker context
-	if strings.Contains(text, "DNS:** not running\n") {
-		t.Errorf("DNS not running should have Docker context, got: %s", text)
-	}
-	if !strings.Contains(text, "expected in Docker") {
-		t.Errorf("should mention Docker context for DNS, got: %s", text)
+// systemRoutes serves one version's captures of the three endpoints
+// pihole_info_system reads.
+func systemRoutes(t *testing.T, version string) map[string]any {
+	return map[string]any{
+		"/info/system":  loadVersionFixture(t, version, "info_system"),
+		"/info/host":    loadVersionFixture(t, version, "info_host"),
+		"/info/sensors": loadVersionFixture(t, version, "info_sensors"),
 	}
 }
 
-func TestInfoSystem_RealFixture(t *testing.T) {
-	// Real captured response — protects against shape drift.
-	c := newTestClient(t, piholeHandler(map[string]any{
-		"/info/system":  loadFixture(t, "info_system"),
-		"/info/host":    map[string]any{"host": map[string]any{"name": "pihole-dev"}},
-		"/info/sensors": loadFixture(t, "info_sensors"),
-	}))
+func TestInfoSystem_ReportsWhatFTLSends(t *testing.T) {
+	// The decoder read "perc", "load", "disk" and "dns", none of which FTL
+	// sends, and the host fields from the wrong level, so every Pi-hole
+	// showed 0% CPU, zero load, 0% disk, a stopped resolver and no host, with
+	// memory printed as bytes when FTL counts kilobytes.
+	eachFixture(t, "info_system", func(t *testing.T, version string, sys any) {
+		routes := systemRoutes(t, version)
+		c := newTestClient(t, piholeHandler(routes))
+		text := callTool(t, infoSystemHandler, c, nil)
 
-	text := callTool(t, infoSystemHandler, c, nil)
-	// Just confirm the handler doesn't crash and produces non-empty output.
-	if text == "" {
-		t.Fatal("expected non-empty system info from real fixture")
-	}
+		host := routes["/info/host"]
+		ramUsed := fixtureValue(t, sys, "system.memory.ram.used").(float64)
+		load := fixtureValue(t, sys, "system.cpu.load.raw").([]any)
+		for _, want := range []string{
+			"**Host:** " + fixtureString(t, host, "host.uname.nodename") + " (" +
+				fixtureString(t, host, "host.uname.sysname") + " " + fixtureString(t, host, "host.uname.machine") + ")",
+			fmt.Sprintf("**Load:** %.2f, %.2f, %.2f", load[0], load[1], load[2]),
+			fmt.Sprintf("**CPU:** %d cores, %.1f%% used", fixtureInt(t, sys, "system.cpu.nprocs"),
+				fixtureValue(t, sys, "system.cpu.%cpu")),
+			"**Memory:** " + format.Bytes(ramUsed*1024) + " of ",
+			fmt.Sprintf("**FTL:** %.1f%% CPU", fixtureValue(t, sys, "system.ftl.%cpu")),
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("expected %q in system info, got:\n%s", want, text)
+			}
+		}
+		// FTL reports neither, so neither may be invented.
+		for _, absent := range []string{"Disk", "DNS:"} {
+			if strings.Contains(text, absent) {
+				t.Errorf("system info should not report %q, which FTL does not send, got:\n%s", absent, text)
+			}
+		}
+	})
+}
+
+func TestInfoSystem_FullAddsTheKernel(t *testing.T) {
+	eachFixture(t, "info_host", func(t *testing.T, version string, host any) {
+		c := newTestClient(t, piholeHandler(systemRoutes(t, version)))
+		text := callTool(t, infoSystemHandler, c, map[string]any{"detail": "full"})
+		want := "**Kernel:** " + fixtureString(t, host, "host.uname.sysname") + " " + fixtureString(t, host, "host.uname.release")
+		if !strings.Contains(text, want) {
+			t.Errorf("expected %q at full detail, got:\n%s", want, text)
+		}
+		// The containers report no NIS domain, which uname spells "(none)".
+		if strings.Contains(text, "(none)") {
+			t.Errorf("an unset domain should be left out, got:\n%s", text)
+		}
+	})
 }
 
 func TestInfoSystem_Minimal(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
-		"/info/system": map[string]any{
-			"system": map[string]any{
-				"uptime": 3600,
-				"load":   []any{0.5, 0.3, 0.1},
-				"cpu":    map[string]any{"nprocs": 4, "perc": 15.5},
-				"memory": map[string]any{
-					"ram": map[string]any{
-						"total": 8000000.0, "used": 500000.0, "free": 7500000.0,
-						"perc": 6.3, "unit": "kB",
-					},
-				},
-				"disk": map[string]any{"total": 50.0, "used": 20.0, "free": 30.0, "perc": 40.0, "unit": "GB"},
-				"dns":  map[string]any{"running": true},
-			},
-		},
-	}))
+	eachFixture(t, "info_system", func(t *testing.T, version string, sys any) {
+		c := newTestClient(t, piholeHandler(systemRoutes(t, version)))
+		text := callTool(t, infoSystemHandler, c, map[string]any{"detail": "minimal"})
+		want := fmt.Sprintf("Load: %.2f | CPU: %.0f%%", fixtureValue(t, sys, "system.cpu.load.raw").([]any)[0],
+			fixtureValue(t, sys, "system.cpu.%cpu"))
+		if !strings.HasPrefix(text, want) || strings.Contains(text, "\n") {
+			t.Errorf("expected a single line starting %q, got: %s", want, text)
+		}
+	})
+}
 
-	text := callTool(t, infoSystemHandler, c, map[string]any{"detail": "minimal"})
-	if strings.Count(text, "\n") > 1 {
-		t.Errorf("minimal should be single-line, got: %s", text)
-	}
-	if !strings.Contains(text, "Load:") {
-		t.Errorf("minimal should contain load, got: %s", text)
+func TestInfoSystem_CPUTemperature(t *testing.T) {
+	routes := systemRoutes(t, "v6.8")
+	routes["/info/sensors"] = map[string]any{"sensors": map[string]any{
+		"list": []any{}, "cpu_temp": 48.25, "hot_limit": 60.0, "unit": "F",
+	}}
+	c := newTestClient(t, piholeHandler(routes))
+	text := callTool(t, infoSystemHandler, c, nil)
+	if !strings.Contains(text, "**CPU temperature:** 48.2°F (warns above 60.0°F)") {
+		t.Errorf("expected the CPU temperature in Pi-hole's unit, got:\n%s", text)
 	}
 }
 
@@ -262,47 +255,51 @@ func TestInfoMetrics_FixtureExposesCacheNumbers(t *testing.T) {
 }
 
 func TestInfoSensors_RealFixture(t *testing.T) {
-	// Real fixture has an empty sensors list (Docker dev container has no sensors).
-	c := newTestClient(t, piholeHandler(map[string]any{
-		"/info/sensors": loadFixture(t, "info_sensors"),
-	}))
-
-	text := callTool(t, infoSensorsHandler, c, nil)
-	if !strings.Contains(text, "No sensor data available") {
-		t.Errorf("expected empty sensors message from Docker fixture, got: %s", text)
-	}
+	// The dev containers expose no hardware monitors, so both captures carry
+	// an empty list and no CPU temperature.
+	eachFixture(t, "info_sensors", func(t *testing.T, _ string, fixture any) {
+		c := newTestClient(t, piholeHandler(map[string]any{"/info/sensors": fixture}))
+		text := callTool(t, infoSensorsHandler, c, nil)
+		if !strings.Contains(text, "No temperature sensors are visible") {
+			t.Errorf("expected the no-sensors message, got: %s", text)
+		}
+	})
 }
 
-func TestInfoSensors_Normal(t *testing.T) {
+func TestInfoSensors_ReadsEachMonitorsReadings(t *testing.T) {
+	// FTL groups readings by hardware monitor, each with a temps list, and
+	// gives the unit once for all of them (src/api/info.c, v6.7 and v6.8).
+	// The decoder read the monitors as readings, so a Raspberry Pi showed
+	// one nameless 0.0 per monitor.
 	c := newTestClient(t, piholeHandler(map[string]any{
-		"/info/sensors": map[string]any{
-			"sensors": map[string]any{
-				"list": []any{
-					map[string]any{"name": "cpu_thermal", "value": 52.3, "unit": "°C", "path": "/sys/class/thermal/thermal_zone0/temp"},
+		"/info/sensors": map[string]any{"sensors": map[string]any{
+			"list": []any{
+				map[string]any{
+					"name": "cpu_thermal", "path": "hwmon0", "source": "/sys/devices/virtual/thermal/thermal_zone0",
+					"temps": []any{
+						map[string]any{"name": nil, "value": 52.3, "max": nil, "crit": 110.0, "sensor": "temp1"},
+					},
+				},
+				map[string]any{
+					"name": nil, "path": "hwmon1", "source": "",
+					"temps": []any{
+						map[string]any{"name": "Package id 0", "value": 61.0, "max": 80.0, "crit": 100.0, "sensor": "temp1"},
+					},
 				},
 			},
-		},
+			"cpu_temp": 52.3, "hot_limit": 60.0, "unit": "C",
+		}},
 	}))
 
 	text := callTool(t, infoSensorsHandler, c, nil)
-	if !strings.Contains(text, "cpu_thermal") {
-		t.Errorf("expected sensor name 'cpu_thermal', got: %s", text)
-	}
-	if !strings.Contains(text, "52.3") {
-		t.Errorf("expected sensor value '52.3', got: %s", text)
-	}
-}
-
-func TestInfoSensors_Empty(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
-		"/info/sensors": map[string]any{
-			"sensors": map[string]any{"list": []any{}},
-		},
-	}))
-
-	text := callTool(t, infoSensorsHandler, c, nil)
-	if !strings.Contains(text, "No sensor data available") {
-		t.Errorf("expected empty sensors message, got: %s", text)
+	for _, want := range []string{
+		"**cpu_thermal:**\n- temp1: 52.3°C (critical 110.0°C)",
+		"**hwmon1:**\n- Package id 0: 61.0°C (high 80.0°C, critical 100.0°C)",
+		"warns above 60.0°C",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("expected %q, got:\n%s", want, text)
+		}
 	}
 }
 
@@ -454,4 +451,26 @@ func TestInfoDatabase_ZeroTimestampsNotRendered(t *testing.T) {
 	if strings.Contains(text, "1970") {
 		t.Errorf("rendered a zero timestamp as a date: %s", text)
 	}
+}
+
+func TestInfoFTL_FullShowsDnsmasqCountersAndUptime(t *testing.T) {
+	// dnsmasq's counters were decoded and never shown, and the uptime, which
+	// FTL reports in milliseconds, was printed as seconds.
+	eachFixture(t, "info_ftl", func(t *testing.T, _ string, fixture any) {
+		c := newTestClient(t, piholeHandler(map[string]any{"/info/ftl": fixture}))
+		text := callTool(t, infoFTLHandler, c, map[string]any{"detail": "full"})
+
+		uptime := fixtureValue(t, fixture, "ftl.uptime").(float64) / 1000
+		if want := "**Uptime:** " + format.Duration(uptime); !strings.Contains(text, want) {
+			t.Errorf("expected %q, got:\n%s", want, text)
+		}
+		inserted := fixtureInt(t, fixture, "ftl.dnsmasq.dns_cache_inserted")
+		if want := "- dns_cache_inserted: " + format.Number(inserted); !strings.Contains(text, want) {
+			t.Errorf("expected %q, got:\n%s", want, text)
+		}
+		normal := callTool(t, infoFTLHandler, c, nil)
+		if strings.Contains(normal, "dnsmasq counters") {
+			t.Errorf("the counters belong to full detail only, got:\n%s", normal)
+		}
+	})
 }

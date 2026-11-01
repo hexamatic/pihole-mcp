@@ -1,0 +1,21 @@
+{
+  "took": 0.000054597854614257812,
+  "types": {
+    "A": 66,
+    "AAAA": 6,
+    "ANY": 0,
+    "DNSKEY": 0,
+    "DS": 0,
+    "HTTPS": 0,
+    "MX": 0,
+    "NAPTR": 0,
+    "NS": 0,
+    "OTHER": 0,
+    "PTR": 55,
+    "RRSIG": 0,
+    "SOA": 0,
+    "SRV": 0,
+    "SVCB": 0,
+    "TXT": 0
+  }
+}

@@ -33,7 +33,7 @@ func RegisterAll(s *server.MCPServer, r *pihole.Registry) {
 			mcp.WithResourceDescription("Current blocking status, version, and health."),
 			mcp.WithMIMEType("text/markdown"),
 		),
-		statusResourceHandler(c),
+		statusResourceHandler(c, ""),
 	)
 
 	s.AddResource(
@@ -41,7 +41,7 @@ func RegisterAll(s *server.MCPServer, r *pihole.Registry) {
 			mcp.WithResourceDescription("Query statistics: total, blocked, cached, forwarded, active clients, gravity size."),
 			mcp.WithMIMEType("text/markdown"),
 		),
-		summaryResourceHandler(c),
+		summaryResourceHandler(c, ""),
 	)
 
 	// Resource templates.
@@ -97,7 +97,7 @@ func registerPerInstance(s *server.MCPServer, r *pihole.Registry) {
 				mcp.WithResourceDescription(fmt.Sprintf("Blocking status, version and health for the %q instance.", name)),
 				mcp.WithMIMEType("text/markdown"),
 			),
-			statusResourceHandler(client),
+			statusResourceHandler(client, name),
 		)
 
 		s.AddResource(
@@ -106,7 +106,7 @@ func registerPerInstance(s *server.MCPServer, r *pihole.Registry) {
 				mcp.WithResourceDescription(fmt.Sprintf("Query statistics for the %q instance.", name)),
 				mcp.WithMIMEType("text/markdown"),
 			),
-			summaryResourceHandler(client),
+			summaryResourceHandler(client, name),
 		)
 	}
 }
@@ -137,8 +137,22 @@ func instancesResourceHandler(r *pihole.Registry) server.ResourceHandlerFunc {
 	}
 }
 
-func statusResourceHandler(c *pihole.Client) server.ResourceHandlerFunc {
-	return func(ctx context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+// instanceHeading is a resource's heading, naming the instance when the
+// resource is one instance's own copy.
+func instanceHeading(title, instance string) string {
+	if instance == "" {
+		return "# " + title + "\n\n"
+	}
+	return fmt.Sprintf("# %s (%s)\n\n", title, instance)
+}
+
+// statusResourceHandler serves a status resource. instance is set for an
+// instance's own copy (pihole://<instance>/status) and empty for the default.
+// The reply carries the URI that was read: it used to name pihole://status
+// whichever copy was asked for, so a client filing results by URI put every
+// instance's status under the default's.
+func statusResourceHandler(c *pihole.Client, instance string) server.ResourceHandlerFunc {
+	return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 		var blocking pihole.BlockingStatus
 		var ver pihole.VersionInfo
 
@@ -148,7 +162,7 @@ func statusResourceHandler(c *pihole.Client) server.ResourceHandlerFunc {
 		_ = c.Get(ctx, "/info/version", &ver)
 
 		var b strings.Builder
-		fmt.Fprintf(&b, "# Pi-hole Status\n\n")
+		b.WriteString(instanceHeading("Pi-hole Status", instance))
 		fmt.Fprintf(&b, "- **Blocking:** %s\n", blocking.Blocking)
 		if blocking.Timer != nil {
 			fmt.Fprintf(&b, "- **Timer:** %.0f seconds remaining\n", *blocking.Timer)
@@ -161,7 +175,7 @@ func statusResourceHandler(c *pihole.Client) server.ResourceHandlerFunc {
 
 		return []mcp.ResourceContents{
 			mcp.TextResourceContents{
-				URI:      "pihole://status",
+				URI:      req.Params.URI,
 				MIMEType: "text/markdown",
 				Text:     b.String(),
 			},
@@ -169,8 +183,10 @@ func statusResourceHandler(c *pihole.Client) server.ResourceHandlerFunc {
 	}
 }
 
-func summaryResourceHandler(c *pihole.Client) server.ResourceHandlerFunc {
-	return func(ctx context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+// summaryResourceHandler serves a summary resource, as statusResourceHandler
+// serves a status one.
+func summaryResourceHandler(c *pihole.Client, instance string) server.ResourceHandlerFunc {
+	return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 		var stats pihole.StatsSummary
 		if err := c.Get(ctx, "/stats/summary", &stats); err != nil {
 			return nil, fmt.Errorf("getting stats: %w", err)
@@ -178,7 +194,7 @@ func summaryResourceHandler(c *pihole.Client) server.ResourceHandlerFunc {
 
 		q := stats.Queries
 		var b strings.Builder
-		fmt.Fprintf(&b, "# Pi-hole Summary\n\n")
+		b.WriteString(instanceHeading("Pi-hole Summary", instance))
 		fmt.Fprintf(&b, "- **Queries:** %s\n", format.Number(q.Total))
 		fmt.Fprintf(&b, "- **Blocked:** %s (%s)\n", format.Number(q.Blocked), format.Percent(q.PercentBlocked))
 		fmt.Fprintf(&b, "- **Cached:** %s\n", format.Number(q.Cached))
@@ -188,7 +204,7 @@ func summaryResourceHandler(c *pihole.Client) server.ResourceHandlerFunc {
 
 		return []mcp.ResourceContents{
 			mcp.TextResourceContents{
-				URI:      "pihole://summary",
+				URI:      req.Params.URI,
 				MIMEType: "text/markdown",
 				Text:     b.String(),
 			},

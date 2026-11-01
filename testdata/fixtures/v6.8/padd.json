@@ -1,0 +1,144 @@
+{
+  "%cpu": 0.18000000715255737,
+  "%mem": 0.10683701932430267,
+  "active_clients": 1,
+  "blocking": "enabled",
+  "cache": {
+    "evicted": 0,
+    "inserted": 21,
+    "size": 10000
+  },
+  "config": {
+    "dhcp_active": false,
+    "dhcp_end": "",
+    "dhcp_ipv6": false,
+    "dhcp_start": "",
+    "dns_dnssec": false,
+    "dns_domain": "lan",
+    "dns_num_upstreams": 2,
+    "dns_port": 53,
+    "dns_revServer_active": false,
+    "privacy_level": 0
+  },
+  "gravity_size": 77759,
+  "host_model": null,
+  "iface": {
+    "v4": {
+      "addr": "172.20.0.2",
+      "gw_addr": "172.20.0.1",
+      "name": "eth0",
+      "num_addrs": 1,
+      "rx_bytes": {
+        "unit": "M",
+        "value": 2.60214900970459
+      },
+      "tx_bytes": {
+        "unit": "M",
+        "value": 4.5308341979980469
+      }
+    },
+    "v6": {
+      "addr": null,
+      "gw_addr": null,
+      "name": "eth0",
+      "num_addrs": 0
+    }
+  },
+  "node_name": "1c1ed6bf743c",
+  "pid": 189,
+  "queries": {
+    "blocked": 24,
+    "percent_blocked": 18.897638320922852,
+    "query_frequency": 0.8,
+    "total": 127
+  },
+  "recent_blocked": "adservice.google.com",
+  "sensors": {
+    "cpu_temp": null,
+    "hot_limit": 60,
+    "unit": "C"
+  },
+  "system": {
+    "cpu": {
+      "%cpu": 10.270000457763672,
+      "load": {
+        "percent": [
+          5.283203125,
+          5.7568359375,
+          6.2744140625
+        ],
+        "raw": [
+          0.5283203125,
+          0.57568359375,
+          0.62744140625
+        ]
+      },
+      "nprocs": 10
+    },
+    "ftl": {
+      "%cpu": 0.18000000715255737,
+      "%mem": 0.10675837844610214
+    },
+    "memory": {
+      "ram": {
+        "%used": 45.325359419863588,
+        "available": 5136384,
+        "free": 1375128,
+        "total": 10172504,
+        "used": 4610724
+      },
+      "swap": {
+        "%used": 49.035831588102674,
+        "free": 534396,
+        "total": 1048572,
+        "used": 514176
+      }
+    },
+    "procs": 975,
+    "uptime": 1088665
+  },
+  "took": 0.0010209083557128906,
+  "top_blocked": "doubleclick.net",
+  "top_client": "localhost",
+  "top_domain": "4.4.8.8.in-addr.arpa",
+  "version": {
+    "core": {
+      "local": {
+        "branch": "master",
+        "hash": "f503a65d",
+        "version": "v6.5"
+      },
+      "remote": {
+        "hash": "f503a65d",
+        "version": "v6.5"
+      }
+    },
+    "docker": {
+      "local": "2026.10.1",
+      "remote": "2026.10.1"
+    },
+    "ftl": {
+      "local": {
+        "branch": "master",
+        "date": "2026-10-17 13:08:09 +0200",
+        "hash": "29c8b13f",
+        "version": "v6.8"
+      },
+      "remote": {
+        "hash": "29c8b13f",
+        "version": "v6.8"
+      }
+    },
+    "web": {
+      "local": {
+        "branch": "master",
+        "hash": "fb699c4e",
+        "version": "v6.6.1"
+      },
+      "remote": {
+        "hash": "fb699c4e",
+        "version": "v6.6.1"
+      }
+    }
+  }
+}

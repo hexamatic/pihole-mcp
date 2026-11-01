@@ -1,0 +1,51 @@
+{
+  "devices": [
+    {
+      "firstSeen": 1793564698,
+      "hwaddr": "00:00:00:00:00:00",
+      "id": 2,
+      "interface": "lo",
+      "ips": [
+        {
+          "ip": "127.0.0.1",
+          "lastSeen": 1793571720,
+          "name": "localhost",
+          "nameUpdated": 1793571720
+        },
+        {
+          "ip": "::1",
+          "lastSeen": 1793571720,
+          "name": null,
+          "nameUpdated": 0
+        },
+        {
+          "ip": "0.0.0.0",
+          "lastSeen": 1793571720,
+          "name": null,
+          "nameUpdated": 0
+        }
+      ],
+      "lastQuery": 1793571617,
+      "macVendor": "virtual interface",
+      "numQueries": 81
+    },
+    {
+      "firstSeen": 1793564700,
+      "hwaddr": "3e:8f:15:0a:aa:c3",
+      "id": 3,
+      "interface": "eth0",
+      "ips": [
+        {
+          "ip": "172.20.0.2",
+          "lastSeen": 1793571720,
+          "name": null,
+          "nameUpdated": 0
+        }
+      ],
+      "lastQuery": 0,
+      "macVendor": "",
+      "numQueries": 0
+    }
+  ],
+  "took": 0.00036501884460449219
+}

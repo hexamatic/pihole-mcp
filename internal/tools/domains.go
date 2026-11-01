@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/hexamatic/pihole-mcp/internal/format"
@@ -81,16 +82,23 @@ func domainsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		path := "/domains"
+		kind := req.GetString("kind", "")
 		if t := req.GetString("type", ""); t != "" {
 			path += "/" + t
-			if k := req.GetString("kind", ""); k != "" {
-				path += "/" + k
+			if kind != "" {
+				path += "/" + kind
 			}
 		}
 
 		var result pihole.DomainsResponse
 		if err := c.Get(ctx, path, &result); err != nil {
 			return toolError("list domains", err), nil
+		}
+		// FTL's path puts the kind after the type, so a kind on its own
+		// cannot go in the path. It used to be dropped, and kind=regex
+		// listed every rule; it is applied here instead.
+		if kind != "" && req.GetString("type", "") == "" {
+			result.Domains = slices.DeleteFunc(result.Domains, func(d pihole.Domain) bool { return d.Kind != kind })
 		}
 
 		if len(result.Domains) == 0 {

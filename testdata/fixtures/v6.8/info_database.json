@@ -1,0 +1,25 @@
+{
+  "atime": 1793571615,
+  "ctime": 1793571615,
+  "earliest_timestamp": 1793485215.10363,
+  "earliest_timestamp_disk": 1793564698.4917605,
+  "mode": "rw-r-----",
+  "mtime": 1793571614,
+  "owner": {
+    "group": {
+      "gid": 1000,
+      "name": "pihole"
+    },
+    "user": {
+      "info": "",
+      "name": "pihole",
+      "uid": 1000
+    }
+  },
+  "queries": 127,
+  "queries_disk": 103,
+  "size": 90112,
+  "sqlite_version": "3.53.3",
+  "took": 0.00009250640869140625,
+  "type": "Regular file"
+}

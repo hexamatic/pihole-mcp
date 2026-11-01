@@ -1,8 +1,11 @@
 package tools
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/hexamatic/pihole-mcp/internal/format"
 )
 
 func TestStatsSummary_Normal(t *testing.T) {
@@ -197,7 +200,7 @@ func TestStatsUpstreams_CSV(t *testing.T) {
 		"/stats/upstreams": map[string]any{
 			"upstreams": []any{
 				map[string]any{"name": "Cloudflare", "ip": "1.1.1.1", "port": 53, "count": 1500,
-					"statistics": map[string]any{"response": 12.5}},
+					"statistics": map[string]any{"response": 0.0125, "variance": 0.002}},
 			},
 			"forwarded_queries": 1500,
 			"total_queries":     5000,
@@ -205,10 +208,11 @@ func TestStatsUpstreams_CSV(t *testing.T) {
 	}))
 
 	text := callTool(t, statsUpstreamsHandler, c, map[string]any{"format": "csv"})
-	if !strings.Contains(text, "Name,IP,Port,Queries,AvgResponseMs") {
+	if !strings.Contains(text, "Name,IP,Port,Queries,AvgResponseMs,UncertaintyMs\n") {
 		t.Errorf("CSV should have header row, got: %s", text)
 	}
-	if !strings.Contains(text, "Cloudflare,1.1.1.1,53,") {
+	// FTL sends seconds; the columns hold bare milliseconds.
+	if !strings.Contains(text, "Cloudflare,1.1.1.1,53,\"1,500\",12.50,2.00") {
 		t.Errorf("CSV should contain upstream row, got: %s", text)
 	}
 }
@@ -258,7 +262,9 @@ func TestStatsDatabaseUpstreams_CSV(t *testing.T) {
 	}))
 
 	text := callTool(t, statsDatabaseUpstreamsHandler, c, map[string]any{"format": "csv"})
-	if !strings.Contains(text, "Name,IP,Port,Queries,AvgResponseMs") {
+	// FTL's long-term figures carry no response time, so there is no column
+	// for one.
+	if !strings.Contains(text, "Name,IP,Port,Queries\n") {
 		t.Errorf("CSV should have header row, got: %s", text)
 	}
 	if !strings.Contains(text, "Quad9,9.9.9.9,53,") {
@@ -302,13 +308,44 @@ func TestStatsTopClients_RealFixture(t *testing.T) {
 }
 
 func TestStatsUpstreams_RealFixture(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
-		"/stats/upstreams": loadFixture(t, "stats_upstreams"),
-	}))
-	text := callTool(t, statsUpstreamsHandler, c, nil)
-	if text == "" {
-		t.Fatal("expected non-empty upstreams output from real fixture")
-	}
+	// FTL reports the average and its uncertainty in seconds. They were read
+	// as milliseconds, so an average over a second printed as "1.2ms", and
+	// the uncertainty the description promised was never shown.
+	eachFixture(t, "stats_upstreams", func(t *testing.T, _ string, fixture any) {
+		c := newTestClient(t, piholeHandler(map[string]any{"/stats/upstreams": fixture}))
+		text := callTool(t, statsUpstreamsHandler, c, nil)
+
+		checked := 0
+		for _, raw := range fixtureValue(t, fixture, "upstreams").([]any) {
+			u := raw.(map[string]any)
+			stats := u["statistics"].(map[string]any)
+			resp, unc := stats["response"].(float64), stats["variance"].(float64)
+			if resp <= 0 || unc <= 0 {
+				continue
+			}
+			want := fmt.Sprintf("avg %s ± %s", format.ResponseTime(resp), format.ResponseTime(unc))
+			if !strings.Contains(text, want) {
+				t.Errorf("expected %q for %v, got:\n%s", want, u["ip"], text)
+			}
+			checked++
+		}
+		if checked == 0 {
+			t.Fatal("the capture has no upstream with a measured response time; reseed and recapture it")
+		}
+	})
+}
+
+func TestStatsDatabaseUpstreams_ShowsNoResponseTime(t *testing.T) {
+	// FTL fills the response time of its long-term upstream figures with zero
+	// (src/api/stats_database.c), so a column of them reported every server
+	// as instant, or as N/A.
+	eachFixture(t, "stats_database_upstreams", func(t *testing.T, _ string, fixture any) {
+		c := newTestClient(t, piholeHandler(map[string]any{"/stats/database/upstreams": fixture}))
+		text := callTool(t, statsDatabaseUpstreamsHandler, c, nil)
+		if strings.Contains(text, "avg") || strings.Contains(text, "ms") {
+			t.Errorf("long-term upstream figures should carry no response time, got:\n%s", text)
+		}
+	})
 }
 
 func TestStatsQueryTypes_RealFixture(t *testing.T) {

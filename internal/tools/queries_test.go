@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/hexamatic/pihole-mcp/internal/format"
 )
 
 // queriesFilterArgs are the twelve filter arguments pihole_queries_search
@@ -491,4 +493,23 @@ func TestQueriesSuggestions_NegativeLimitIsNamedError(t *testing.T) {
 	if !strings.Contains(msg, "'limit'") {
 		t.Errorf("error %q does not name the parameter", msg)
 	}
+}
+
+func TestQueriesSearch_ReplyTimeInMilliseconds(t *testing.T) {
+	// FTL reports each reply time in seconds; the tool printed the seconds
+	// with "ms" after them.
+	eachFixture(t, "queries", func(t *testing.T, _ string, fixture any) {
+		c := newTestClient(t, piholeHandler(map[string]any{"/queries": fixture}))
+		text := callTool(t, queriesSearchHandler, c, map[string]any{"detail": "full"})
+		for _, raw := range fixtureValue(t, fixture, "queries").([]any) {
+			reply := raw.(map[string]any)["reply"].(map[string]any)
+			if secs, _ := reply["time"].(float64); secs > 0.001 {
+				if want := format.ResponseTime(secs); !strings.Contains(text, want) {
+					t.Errorf("expected a reply time of %s (%v s), got:\n%s", want, secs, text)
+				}
+				return
+			}
+		}
+		t.Fatal("the capture has no query with a reply time over 1 ms")
+	})
 }

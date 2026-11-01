@@ -1,0 +1,37 @@
+{
+  "forwarded_queries": 9,
+  "took": 0.000039339065551757812,
+  "total_queries": 26,
+  "upstreams": [
+    {
+      "count": 8,
+      "ip": "blocklist",
+      "name": "blocklist",
+      "port": -1,
+      "statistics": {
+        "response": 0,
+        "variance": 0
+      }
+    },
+    {
+      "count": 9,
+      "ip": "cache",
+      "name": "cache",
+      "port": -1,
+      "statistics": {
+        "response": 0,
+        "variance": 0
+      }
+    },
+    {
+      "count": 9,
+      "ip": "8.8.8.8",
+      "name": "dns.google",
+      "port": 53,
+      "statistics": {
+        "response": 0.068394333124160767,
+        "variance": 0.027266601537228131
+      }
+    }
+  ]
+}

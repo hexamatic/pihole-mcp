@@ -109,7 +109,7 @@ func queriesSearchHandler(r *pihole.Registry) server.ToolHandlerFunc {
 				}
 				row := []string{format.Timestamp(q.Time), q.Type, q.Domain, q.Status, client, format.StringOr(q.Upstream, "")}
 				if detail == "full" {
-					row = append(row, format.StringOr(q.DNSSEC, ""), format.StringOr(q.Reply.Type, ""), fmt.Sprintf("%.1f", q.Reply.Time))
+					row = append(row, format.StringOr(q.DNSSEC, ""), format.StringOr(q.Reply.Type, ""), format.Milliseconds(q.Reply.Time))
 				}
 				rows = append(rows, row)
 			}
@@ -127,8 +127,9 @@ func queriesSearchHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			upstream := format.StringOr(q.Upstream, "-")
 			fmt.Fprintf(&b, "- %s %s %s → %s (%s, %s)", format.Timestamp(q.Time), q.Type, q.Domain, q.Status, client, upstream)
 			if detail == "full" {
-				fmt.Fprintf(&b, " [dnssec=%s, reply=%s, %.1fms]",
-					format.StringOr(q.DNSSEC, "N/A"), format.StringOr(q.Reply.Type, "N/A"), q.Reply.Time)
+				// FTL reports the reply time in seconds.
+				fmt.Fprintf(&b, " [dnssec=%s, reply=%s, %s]",
+					format.StringOr(q.DNSSEC, "N/A"), format.StringOr(q.Reply.Type, "N/A"), format.ResponseTime(q.Reply.Time))
 			}
 			b.WriteString("\n")
 		}

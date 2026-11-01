@@ -1,0 +1,12 @@
+{
+  "history": [
+    {
+      "blocked": 8,
+      "cached": 9,
+      "forwarded": 9,
+      "timestamp": 1793571600,
+      "total": 26
+    }
+  ],
+  "took": 0.00042104721069335938
+}

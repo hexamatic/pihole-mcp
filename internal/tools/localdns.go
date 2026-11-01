@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hexamatic/pihole-mcp/internal/format"
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -138,14 +139,11 @@ func localRecordsListHandler(r *pihole.Registry, field, label string) server.Too
 			return mcp.NewToolResultText(fmt.Sprintf("No %s records configured.", label)), nil
 		}
 
-		var b strings.Builder
 		if wantCSV(req) {
-			b.WriteString("record\n")
-			for _, rec := range records {
-				b.WriteString(rec + "\n")
-			}
-			return mcp.NewToolResultText(b.String()), nil
+			return mcp.NewToolResultText(localRecordsCSV(field, records)), nil
 		}
+
+		var b strings.Builder
 
 		fmt.Fprintf(&b, "**%d %s record(s):**\n", len(records), label)
 		for _, rec := range records {
@@ -153,6 +151,30 @@ func localRecordsListHandler(r *pihole.Registry, field, label string) server.Too
 		}
 		return mcp.NewToolResultText(b.String()), nil
 	}
+}
+
+// localRecordsCSV splits the stored records into columns. It used to write
+// each record raw under one "record" column, and a CNAME record's commas then
+// broke it into columns that matched no header.
+func localRecordsCSV(field string, records []string) string {
+	rows := make([][]string, 0, len(records))
+	if field == hostsField {
+		for _, rec := range records {
+			fields := strings.Fields(rec)
+			if len(fields) == 0 {
+				continue
+			}
+			rows = append(rows, []string{fields[0], strings.Join(fields[1:], " ")})
+		}
+		return format.CSV([]string{"IP", "Hostnames"}, rows)
+	}
+	for _, rec := range records {
+		aliases, rest := splitCNAME(rec)
+		row := []string{strings.Join(aliases, " "), "", ""}
+		copy(row[1:], rest)
+		rows = append(rows, row)
+	}
+	return format.CSV([]string{"Aliases", "Target", "TTL"}, rows)
 }
 
 func localDNSAddHandler(r *pihole.Registry) server.ToolHandlerFunc {

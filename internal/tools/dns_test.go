@@ -75,3 +75,30 @@ func TestDNSSetBlocking_OmittedTimerIsNotSent(t *testing.T) {
 	req.AssertBodyKeys(t, "blocking")
 	req.AssertField(t, "blocking", true)
 }
+
+func TestDNSSetBlocking_EnablingWithATimerWhileOnIsRefused(t *testing.T) {
+	// From FTL v6.8 a timer switches to the opposite of the requested state
+	// even when that state is already in effect, so this call would turn
+	// blocking off for the whole network when the timer ran out.
+	rec := piholeHandler(map[string]any{"GET /dns/blocking": map[string]any{"blocking": "enabled", "timer": nil}})
+	text := callToolExpectError(t, dnsSetBlockingHandler, newTestClient(t, rec), map[string]any{"blocking": true, "timer": 60.0})
+	if !strings.Contains(text, "already enabled") || !strings.Contains(text, "turn blocking off") {
+		t.Errorf("expected the refusal to explain what the timer would do, got: %s", text)
+	}
+	rec.AssertNone(t, "POST", "/dns/blocking")
+}
+
+func TestDNSSetBlocking_EnablingWithATimerWhileOffIsSent(t *testing.T) {
+	rec := piholeHandler(map[string]any{
+		"GET /dns/blocking":  map[string]any{"blocking": "disabled", "timer": nil},
+		"POST /dns/blocking": map[string]any{"blocking": "enabled", "timer": 60},
+	})
+	callTool(t, dnsSetBlockingHandler, newTestClient(t, rec), map[string]any{"blocking": true, "timer": 60.0})
+	rec.Only(t, "POST", "/dns/blocking").AssertField(t, "timer", 60.0)
+}
+
+func TestDNSSetBlocking_PausingNeedsNoCheck(t *testing.T) {
+	rec := piholeHandler(map[string]any{"POST /dns/blocking": map[string]any{"blocking": "disabled", "timer": 300}})
+	callTool(t, dnsSetBlockingHandler, newTestClient(t, rec), map[string]any{"blocking": false, "timer": 300.0})
+	rec.AssertNone(t, "GET", "/dns/blocking")
+}

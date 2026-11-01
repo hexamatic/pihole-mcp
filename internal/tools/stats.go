@@ -45,7 +45,7 @@ func RegisterStats(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_stats_upstreams",
 		mcp.WithTitleAnnotation("Upstream Performance"),
-		mcp.WithDescription("Upstream DNS server performance: query counts, average response time, and standard deviation per server."),
+		mcp.WithDescription("Upstream DNS server performance: query counts and average response time per server, with the uncertainty of that average."),
 		formatParam,
 		mcp.WithReadOnlyHintAnnotation(true),
 	), statsUpstreamsHandler(r))
@@ -97,7 +97,7 @@ func RegisterStats(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_stats_database_upstreams",
 		mcp.WithTitleAnnotation("Long-Term Upstreams"),
-		mcp.WithDescription("Historical upstream DNS server performance for a date range: query counts and average response times."),
+		mcp.WithDescription("Historical upstream DNS server use for a date range: how many queries each server answered. The long-term database keeps no response times."),
 		mcp.WithNumber("from", mcp.Description("Start Unix timestamp.")),
 		mcp.WithNumber("until", mcp.Description("End Unix timestamp.")),
 		formatParam,
@@ -301,7 +301,7 @@ func statsUpstreamsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 
 		if wantCSV(req) {
-			headers := []string{"Name", "IP", "Port", "Queries", "AvgResponseMs"}
+			headers := []string{"Name", "IP", "Port", "Queries", "AvgResponseMs", "UncertaintyMs"}
 			rows := make([][]string, 0, len(result.Upstreams))
 			for _, u := range result.Upstreams {
 				rows = append(rows, []string{
@@ -309,7 +309,8 @@ func statsUpstreamsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 					format.StringOr(u.IP, ""),
 					format.Number(u.Port),
 					format.Number(u.Count),
-					format.ResponseTime(u.Statistics.Response),
+					format.Milliseconds(u.Statistics.Response),
+					format.Milliseconds(u.Statistics.Variance),
 				})
 			}
 			return mcp.NewToolResultText(format.CSV(headers, rows)), nil
@@ -320,8 +321,13 @@ func statsUpstreamsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			format.Number(result.ForwardedQueries), format.Number(result.TotalQueries))
 		for _, u := range result.Upstreams {
 			name := format.StringOr(u.Name, format.StringOr(u.IP, "cache"))
-			fmt.Fprintf(&b, "- %s:%d — %s queries, avg %s\n",
-				name, u.Port, format.Number(u.Count), format.ResponseTime(u.Statistics.Response))
+			fmt.Fprintf(&b, "- %s:%d — %s queries, avg %s", name, u.Port, format.Number(u.Count), format.ResponseTime(u.Statistics.Response))
+			// FTL names it variance, but it is the uncertainty of the mean,
+			// in seconds (src/api/stats.c).
+			if u.Statistics.Variance > 0 {
+				fmt.Fprintf(&b, " ± %s", format.ResponseTime(u.Statistics.Variance))
+			}
+			b.WriteString("\n")
 		}
 		return mcp.NewToolResultText(b.String()), nil
 	}
@@ -545,7 +551,10 @@ func statsDatabaseUpstreamsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 
 		if wantCSV(req) {
-			headers := []string{"Name", "IP", "Port", "Queries", "AvgResponseMs"}
+			// FTL's long-term upstream figures carry a response time of
+			// zero whatever happened (src/api/stats_database.c), so none is
+			// shown.
+			headers := []string{"Name", "IP", "Port", "Queries"}
 			rows := make([][]string, 0, len(result.Upstreams))
 			for _, u := range result.Upstreams {
 				rows = append(rows, []string{
@@ -553,7 +562,6 @@ func statsDatabaseUpstreamsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 					format.StringOr(u.IP, ""),
 					format.Number(u.Port),
 					format.Number(u.Count),
-					format.ResponseTime(u.Statistics.Response),
 				})
 			}
 			return mcp.NewToolResultText(format.CSV(headers, rows)), nil
@@ -564,8 +572,7 @@ func statsDatabaseUpstreamsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			format.Number(result.ForwardedQueries), format.Number(result.TotalQueries))
 		for _, u := range result.Upstreams {
 			name := format.StringOr(u.Name, format.StringOr(u.IP, "cache"))
-			fmt.Fprintf(&b, "- %s:%d — %s queries, avg %s\n",
-				name, u.Port, format.Number(u.Count), format.ResponseTime(u.Statistics.Response))
+			fmt.Fprintf(&b, "- %s:%d — %s queries\n", name, u.Port, format.Number(u.Count))
 		}
 		return mcp.NewToolResultText(b.String()), nil
 	}

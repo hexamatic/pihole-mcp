@@ -308,3 +308,21 @@ func TestLocalCNAMEDelete_MatchesOnAliasAlone(t *testing.T) {
 	}
 	rec.Only(t, "DELETE", "/config/dns/cnameRecords/files.home,nas.home,300")
 }
+
+func TestLocalRecordsList_CSVHasAColumnPerField(t *testing.T) {
+	// The records went out raw under one "record" column, so a CNAME
+	// record's commas split it into columns that matched no header.
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/config/dns": nestedDNS([]any{"10.0.0.5 nas nas.home"}, []any{"a.home,b.home,nas.home,300", "c.home,nas.home"}),
+	}))
+	hosts := callTool(t, listHostsHandler, c, map[string]any{"format": "csv"})
+	if hosts != "IP,Hostnames\n10.0.0.5,nas nas.home\n" {
+		t.Errorf("hosts CSV = %q", hosts)
+	}
+	cnames := callTool(t, func(r *pihole.Registry) server.ToolHandlerFunc {
+		return localRecordsListHandler(r, cnamesField, "local CNAME")
+	}, c, map[string]any{"format": "csv"})
+	if cnames != "Aliases,Target,TTL\na.home b.home,nas.home,300\nc.home,nas.home,\n" {
+		t.Errorf("CNAME CSV = %q", cnames)
+	}
+}

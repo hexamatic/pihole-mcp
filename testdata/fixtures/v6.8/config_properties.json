@@ -1,0 +1,52 @@
+{
+  "config": {
+    "read_only": [
+      {
+        "description": "Set via environment variable",
+        "key": "dns.listeningMode",
+        "reason": "env_var"
+      },
+      {
+        "description": "Variable can only be set in pihole.toml, through an environment variable or using pihole-FTL --config, not via API",
+        "key": "webserver.advancedOpts",
+        "reason": "read_only"
+      },
+      {
+        "description": "Variable can only be set in pihole.toml, through an environment variable or using pihole-FTL --config, not via API",
+        "key": "webserver.paths.webroot",
+        "reason": "read_only"
+      },
+      {
+        "description": "Variable can only be set in pihole.toml, through an environment variable or using pihole-FTL --config, not via API",
+        "key": "webserver.paths.webhome",
+        "reason": "read_only"
+      },
+      {
+        "description": "Variable can only be set in pihole.toml, through an environment variable or using pihole-FTL --config, not via API",
+        "key": "webserver.paths.prefix",
+        "reason": "read_only"
+      },
+      {
+        "description": "Set via environment variable",
+        "key": "webserver.api.max_sessions",
+        "reason": "env_var"
+      },
+      {
+        "description": "Set via environment variable",
+        "key": "webserver.api.password",
+        "reason": "env_var"
+      },
+      {
+        "description": "Variable can only be set in pihole.toml, through an environment variable or using pihole-FTL --config, not via API",
+        "key": "misc.dnsmasq_lines",
+        "reason": "read_only"
+      },
+      {
+        "description": "Variable can only be set in pihole.toml, not via API",
+        "key": "misc.readOnly",
+        "reason": "read_only"
+      }
+    ]
+  },
+  "took": 0.000021696090698242188
+}

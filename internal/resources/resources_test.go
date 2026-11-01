@@ -63,7 +63,7 @@ func TestStatusResource(t *testing.T) {
 		"/api/dns/blocking": `{"blocking":"enabled","timer":42.7}`,
 		"/api/info/version": `{"version":{"core":{"local":{"version":"v6.1.4"}},"ftl":{"local":{"version":"v6.7"}},"web":{"local":{"version":"v6.3"}}}}`,
 	})
-	got := text(t, mustRead(t, statusResourceHandler(c), "pihole://status"))
+	got := text(t, mustRead(t, statusResourceHandler(c, ""), "pihole://status"))
 	for _, want := range []string{"**Blocking:** enabled", "**Timer:** 43 seconds", "**FTL:** v6.7", "**Core:** v6.1.4", "**Web:** v6.3"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("status missing %q in:\n%s", want, got)
@@ -76,7 +76,7 @@ func TestStatusResource_NoTimerNoVersion(t *testing.T) {
 		"/api/dns/blocking": `{"blocking":"disabled"}`,
 		// /info/version 404s: status must still render (version is optional).
 	})
-	got := text(t, mustRead(t, statusResourceHandler(c), "pihole://status"))
+	got := text(t, mustRead(t, statusResourceHandler(c, ""), "pihole://status"))
 	if !strings.Contains(got, "**Blocking:** disabled") {
 		t.Errorf("status = %q", got)
 	}
@@ -87,7 +87,7 @@ func TestStatusResource_NoTimerNoVersion(t *testing.T) {
 
 func TestStatusResource_Error(t *testing.T) {
 	c := newFakeAPI(t, nil) // no routes: blocking status fails
-	if _, err := statusResourceHandler(c)(context.Background(), readRequest("pihole://status")); err == nil {
+	if _, err := statusResourceHandler(c, "")(context.Background(), readRequest("pihole://status")); err == nil {
 		t.Fatal("expected error when blocking status is unavailable")
 	}
 }
@@ -96,7 +96,7 @@ func TestSummaryResource(t *testing.T) {
 	c := newFakeAPI(t, map[string]string{
 		"/api/stats/summary": `{"queries":{"total":45231,"blocked":12000,"percent_blocked":26.5,"cached":9000,"forwarded":24000},"clients":{"active":12},"gravity":{"domains_being_blocked":123456}}`,
 	})
-	got := text(t, mustRead(t, summaryResourceHandler(c), "pihole://summary"))
+	got := text(t, mustRead(t, summaryResourceHandler(c, ""), "pihole://summary"))
 	for _, want := range []string{"45,231", "12,000 (26.5%)", "**Active clients:** 12", "123,456"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("summary missing %q in:\n%s", want, got)
@@ -189,4 +189,27 @@ func mustReadTemplate(t *testing.T, h server.ResourceTemplateHandlerFunc, uri st
 		t.Fatalf("read %s: %v", uri, err)
 	}
 	return contents
+}
+
+func TestInstanceResources_AnswerWithTheURIThatWasRead(t *testing.T) {
+	// Each instance's copy named pihole://status or pihole://summary in its
+	// reply, so a client filing results by URI put every instance's figures
+	// under the default's.
+	c := newFakeAPI(t, map[string]string{
+		"/api/dns/blocking":  `{"blocking":"enabled"}`,
+		"/api/info/version":  `{"version":{}}`,
+		"/api/stats/summary": `{"queries":{"total":10},"clients":{},"gravity":{}}`,
+	})
+	for uri, h := range map[string]server.ResourceHandlerFunc{
+		"pihole://backup/status":  statusResourceHandler(c, "backup"),
+		"pihole://backup/summary": summaryResourceHandler(c, "backup"),
+	} {
+		contents := mustRead(t, h, uri)
+		if got := contents[0].(mcp.TextResourceContents).URI; got != uri {
+			t.Errorf("read %s, reply names %s", uri, got)
+		}
+		if body := text(t, contents); !strings.Contains(body, "(backup)") {
+			t.Errorf("%s should name its instance in the heading, got:\n%s", uri, body)
+		}
+	}
 }

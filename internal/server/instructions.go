@@ -29,7 +29,7 @@ var (
 		"After pihole_lists_add or pihole_lists_delete, run pihole_action_gravity_update to apply changes.",
 		"When adding multiple upstream DNS servers, use pihole_config_add_value with restart=false for all but the last change.",
 		"If a pihole_config_set call is rejected for a single key, run pihole_config_properties to confirm whether pihole.toml or an environment variable locks it. If every configuration write is refused with a 403 that names webserver.api.app_sudo, the server is using an application password, which needs that setting turned on to change configuration.",
-		"Recent Pi-hole FTL keys settable via pihole_config_set include resolver.macNames (FTL v6.6, MAC-based hostname resolution), database.forceDisk (v6.5, lower RAM use), and dns.cache.rrtype (v6.5, per-RR-type caching).",
+		"Recent Pi-hole FTL keys settable via pihole_config_set include resolver.macNames (FTL v6.6, MAC-based hostname resolution), database.forceDisk (v6.5, keeps the query history on disk to save RAM, at the cost of slower history browsing, especially on SD cards), and dns.cache.rrtype (v6.5, per-RR-type caching).",
 	}
 
 	readOnlyInstructionSentence = "This deployment is read-only: every tool that changes Pi-hole is unavailable, and calling one is rejected."

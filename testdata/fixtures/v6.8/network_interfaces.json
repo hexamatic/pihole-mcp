@@ -1,0 +1,318 @@
+{
+  "interfaces": [
+    {
+      "address": "00:00:00:00:00:00",
+      "addresses": [
+        {
+          "address": "127.0.0.1",
+          "address_type": "loopback",
+          "cstamp": 1793564683.21,
+          "family": "inet",
+          "flags": [
+            "permanent"
+          ],
+          "label": "lo",
+          "local": "127.0.0.1",
+          "local_type": "loopback",
+          "prefered": 4294967295,
+          "prefixlen": 8,
+          "scope": "host",
+          "tstamp": 1793564683.21,
+          "valid": 4294967295
+        },
+        {
+          "address": "::1",
+          "address_type": "loopback",
+          "cstamp": 1793564683.21,
+          "family": "inet6",
+          "flags": [
+            "permanent"
+          ],
+          "prefered": 4294967295,
+          "prefixlen": 128,
+          "scope": "host",
+          "tstamp": 1793564683.21,
+          "valid": 4294967295
+        }
+      ],
+      "broadcast": "00:00:00:00:00:00",
+      "carrier": true,
+      "flags": [
+        "up",
+        "loopback",
+        "running",
+        "lower_up"
+      ],
+      "name": "lo",
+      "proto_down": false,
+      "speed": null,
+      "state": "unknown",
+      "stats": {
+        "bits": 64,
+        "rx_bytes": {
+          "unit": "M",
+          "value": 10.463603973388672
+        },
+        "tx_bytes": {
+          "unit": "M",
+          "value": 10.463603973388672
+        }
+      },
+      "type": "loopback"
+    },
+    {
+      "carrier": true,
+      "flags": [
+        "noarp"
+      ],
+      "name": "tunl0",
+      "proto_down": false,
+      "speed": null,
+      "state": "down",
+      "stats": {
+        "bits": 64,
+        "rx_bytes": {
+          "unit": "",
+          "value": 0
+        },
+        "tx_bytes": {
+          "unit": "",
+          "value": 0
+        }
+      },
+      "type": "tunnel"
+    },
+    {
+      "carrier": true,
+      "flags": [
+        "noarp"
+      ],
+      "name": "gre0",
+      "proto_down": false,
+      "speed": null,
+      "state": "down",
+      "stats": {
+        "bits": 64,
+        "rx_bytes": {
+          "unit": "",
+          "value": 0
+        },
+        "tx_bytes": {
+          "unit": "",
+          "value": 0
+        }
+      },
+      "type": "ipgre"
+    },
+    {
+      "address": "00:00:00:00:00:00",
+      "broadcast": "ff:ff:ff:ff:ff:ff",
+      "carrier": true,
+      "flags": [
+        "broadcast",
+        "multicast"
+      ],
+      "name": "gretap0",
+      "proto_down": false,
+      "speed": null,
+      "state": "down",
+      "stats": {
+        "bits": 64,
+        "rx_bytes": {
+          "unit": "",
+          "value": 0
+        },
+        "tx_bytes": {
+          "unit": "",
+          "value": 0
+        }
+      },
+      "type": "ether"
+    },
+    {
+      "address": "00:00:00:00:00:00",
+      "broadcast": "ff:ff:ff:ff:ff:ff",
+      "carrier": true,
+      "flags": [
+        "broadcast",
+        "multicast"
+      ],
+      "name": "erspan0",
+      "proto_down": false,
+      "speed": null,
+      "state": "down",
+      "stats": {
+        "bits": 64,
+        "rx_bytes": {
+          "unit": "",
+          "value": 0
+        },
+        "tx_bytes": {
+          "unit": "",
+          "value": 0
+        }
+      },
+      "type": "ether"
+    },
+    {
+      "carrier": true,
+      "flags": [
+        "noarp"
+      ],
+      "name": "ip_vti0",
+      "proto_down": false,
+      "speed": null,
+      "state": "down",
+      "stats": {
+        "bits": 64,
+        "rx_bytes": {
+          "unit": "",
+          "value": 0
+        },
+        "tx_bytes": {
+          "unit": "",
+          "value": 0
+        }
+      },
+      "type": "tunnel"
+    },
+    {
+      "carrier": true,
+      "flags": [
+        "noarp"
+      ],
+      "name": "ip6_vti0",
+      "proto_down": false,
+      "speed": null,
+      "state": "down",
+      "stats": {
+        "bits": 64,
+        "rx_bytes": {
+          "unit": "",
+          "value": 0
+        },
+        "tx_bytes": {
+          "unit": "",
+          "value": 0
+        }
+      },
+      "type": "tunnel6"
+    },
+    {
+      "carrier": true,
+      "flags": [
+        "noarp"
+      ],
+      "name": "sit0",
+      "proto_down": false,
+      "speed": null,
+      "state": "down",
+      "stats": {
+        "bits": 64,
+        "rx_bytes": {
+          "unit": "",
+          "value": 0
+        },
+        "tx_bytes": {
+          "unit": "",
+          "value": 0
+        }
+      },
+      "type": "sit"
+    },
+    {
+      "carrier": true,
+      "flags": [
+        "noarp"
+      ],
+      "name": "ip6tnl0",
+      "proto_down": false,
+      "speed": null,
+      "state": "down",
+      "stats": {
+        "bits": 64,
+        "rx_bytes": {
+          "unit": "",
+          "value": 0
+        },
+        "tx_bytes": {
+          "unit": "",
+          "value": 0
+        }
+      },
+      "type": "tunnel6"
+    },
+    {
+      "carrier": true,
+      "flags": [
+        "noarp"
+      ],
+      "name": "ip6gre0",
+      "proto_down": false,
+      "speed": null,
+      "state": "down",
+      "stats": {
+        "bits": 64,
+        "rx_bytes": {
+          "unit": "",
+          "value": 0
+        },
+        "tx_bytes": {
+          "unit": "",
+          "value": 0
+        }
+      },
+      "type": "ip6gre"
+    },
+    {
+      "address": "3e:8f:15:0a:aa:c3",
+      "addresses": [
+        {
+          "address": "172.20.0.2",
+          "address_type": "private",
+          "broadcast": "172.20.255.255",
+          "broadcast_type": "private",
+          "cstamp": 1793564683.23,
+          "family": "inet",
+          "flags": [
+            "permanent"
+          ],
+          "label": "eth0",
+          "local": "172.20.0.2",
+          "local_type": "private",
+          "prefered": 4294967295,
+          "prefixlen": 16,
+          "scope": "universe",
+          "tstamp": 1793564683.23,
+          "valid": 4294967295
+        }
+      ],
+      "broadcast": "ff:ff:ff:ff:ff:ff",
+      "carrier": true,
+      "flags": [
+        "up",
+        "broadcast",
+        "running",
+        "multicast",
+        "lower_up"
+      ],
+      "name": "eth0",
+      "proto_down": false,
+      "speed": 10000,
+      "state": "up",
+      "stats": {
+        "bits": 64,
+        "rx_bytes": {
+          "unit": "M",
+          "value": 2.6145181655883789
+        },
+        "tx_bytes": {
+          "unit": "M",
+          "value": 4.5851192474365234
+        }
+      },
+      "type": "ether"
+    }
+  ],
+  "took": 0.000612020492553711
+}

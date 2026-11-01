@@ -63,12 +63,12 @@ _No parameters._
 
 *destructive*
 
-Enable or disable DNS blocking. Set a timer (seconds) to automatically revert after a duration; repeating the call restarts the countdown.
+Enable or disable DNS blocking. With a timer, Pi-hole switches to the opposite state when it expires, so blocking=false with a timer pauses blocking; repeating the call restarts the countdown.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `blocking` | boolean | Yes | True to enable blocking, false to disable. |
-| `timer` | number | No | Seconds until automatic revert. Omit for permanent change. |
+| `timer` | number | No | Seconds until Pi-hole switches to the opposite state. Omit for a permanent change. |
 
 ## Local DNS
 
@@ -180,7 +180,7 @@ Most active network clients ranked by query count. Use blocked=true for clients 
 
 *read-only*
 
-Upstream DNS server performance: query counts, average response time, and standard deviation per server.
+Upstream DNS server performance: query counts and average response time per server, with the uncertainty of that average.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -250,7 +250,7 @@ Most active clients from the long-term database for a date range. Use blocked=tr
 
 *read-only*
 
-Historical upstream DNS server performance for a date range: query counts and average response times.
+Historical upstream DNS server use for a date range: how many queries each server answered. The long-term database keeps no response times.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -277,7 +277,7 @@ Toolset: `info`
 
 *read-only · structured output*
 
-System health: hostname, OS, CPU/memory/disk usage, load averages, temperature, and DNS service status.
+System health: hostname, OS, uptime, CPU and memory usage, load averages, temperatures, and FTL's own resource use.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -329,7 +329,7 @@ _No parameters._
 
 *read-only*
 
-FTL engine process info: PID, privacy level, client and domain counts, and database query total.
+FTL engine process info: PID, uptime, privacy level, client and gravity counts, and at full detail dnsmasq's internal DNS and DHCP counters.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -349,7 +349,7 @@ Live DNS and DHCP operational metrics as dotted key/value lines: cache size, ins
 
 *read-only*
 
-Hardware temperature sensors with names, values, units, and paths.
+Hardware temperature readings from each sensor, with their warning and critical limits, in the unit Pi-hole is set to show.
 
 _No parameters._
 
@@ -809,7 +809,7 @@ _No parameters._
 
 *destructive*
 
-Permanently delete all DNS logs — purges last 24 hours from memory and database. Irreversible.
+Permanently delete the DNS query log: the last 24 hours, from memory and the long-term database. Before FTL v6.8, every query in the long-term database is deleted too. Irreversible.
 
 _No parameters._
 
@@ -914,31 +914,35 @@ Toolset: `logs`
 
 *read-only*
 
-DNS resolver (dnsmasq) log. Use next_id for incremental polling to follow new entries.
+Newest lines of the DNS resolver (dnsmasq) log. Use next_id to fetch only lines added since an earlier call.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `next_id` | number | No | Only return lines after this ID (incremental polling). |
+| `lines` | number (1 to 512) | No | How many of the newest lines to show (default 50). Pi-hole keeps the last 512. |
+| `next_id` | number | No | Only return lines added after this ID, as given by the previous call (incremental polling). |
 
 ### `pihole_logs_ftl`
 
 *read-only*
 
-FTL engine log — internal Pi-hole diagnostics, database operations, and resolver events.
+Newest lines of the FTL engine log: Pi-hole's own diagnostics, database operations and resolver events. Filter to warnings or errors with level.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `next_id` | number | No | Only return lines after this ID (incremental polling). |
+| `level` | string | No | Only show lines at this severity or worse: warning includes errors (default all). |
+| `lines` | number (1 to 512) | No | How many of the newest lines to show (default 50). Pi-hole keeps the last 512. |
+| `next_id` | number | No | Only return lines added after this ID, as given by the previous call (incremental polling). |
 
 ### `pihole_logs_webserver`
 
 *read-only*
 
-Web server access log — HTTP requests to the Pi-hole admin interface and API.
+Newest lines of the web server log: requests to the Pi-hole admin interface and API.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `next_id` | number | No | Only return lines after this ID (incremental polling). |
+| `lines` | number (1 to 512) | No | How many of the newest lines to show (default 50). Pi-hole keeps the last 512. |
+| `next_id` | number | No | Only return lines added after this ID, as given by the previous call (incremental polling). |
 
 ## Teleporter
 

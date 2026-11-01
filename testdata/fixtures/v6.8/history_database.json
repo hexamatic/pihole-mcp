@@ -1,0 +1,33 @@
+{
+  "history": [
+    {
+      "blocked": 16,
+      "cached": 27,
+      "forwarded": 14,
+      "timestamp": 1793564400,
+      "total": 57
+    },
+    {
+      "blocked": 0,
+      "cached": 3,
+      "forwarded": 7,
+      "timestamp": 1793565000,
+      "total": 11
+    },
+    {
+      "blocked": 0,
+      "cached": 3,
+      "forwarded": 0,
+      "timestamp": 1793566800,
+      "total": 3
+    },
+    {
+      "blocked": 0,
+      "cached": 4,
+      "forwarded": 9,
+      "timestamp": 1793567400,
+      "total": 14
+    }
+  ],
+  "took": 0.00038671493530273438
+}

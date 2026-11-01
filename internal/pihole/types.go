@@ -403,17 +403,20 @@ type HistoryEntry struct {
 	Forwarded int     `json:"forwarded"`
 }
 
-// ClientHistoryResponse is the response from GET /api/history/clients.
+// ClientHistoryResponse is the response from GET /api/history/clients and
+// GET /api/history/database/clients.
 type ClientHistoryResponse struct {
-	Clients map[string]ClientHistoryInfo `json:"clients"`
-	History []ClientHistoryEntry         `json:"history"`
-	Took    float64                      `json:"took"`
+	Clients HistoryClients       `json:"clients"`
+	History []ClientHistoryEntry `json:"history"`
+	Took    float64              `json:"took"`
 }
 
 // ClientHistoryInfo contains client metadata in history responses.
 type ClientHistoryInfo struct {
-	Name  *string `json:"name"`
-	Total int     `json:"total"`
+	Name *string `json:"name"`
+	// Total is the client's query count. FTL v6.7's long-term client history
+	// leaves it out, so nil means unknown rather than zero.
+	Total *int `json:"total"`
 }
 
 // ClientHistoryEntry is a single per-client activity data point.
@@ -428,48 +431,57 @@ type SystemInfo struct {
 	Took   float64       `json:"took"`
 }
 
-// SystemDetails contains system resource information.
+// SystemDetails contains system resource information, as FTL v6.7 and v6.8
+// send it (src/api/info.c, get_system_obj).
+//
+// The decoder this replaced read "perc", "load", "disk" and "dns", none of
+// which FTL sends, so the tool reported 0% CPU, a load of zero, 0% disk and a
+// stopped DNS resolver on every Pi-hole, and printed memory as bytes when FTL
+// counts it in kilobytes. FTL reports no disk usage or resolver state at all.
 type SystemDetails struct {
-	Uptime int            `json:"uptime"`
-	Memory MemoryInfo     `json:"memory"`
-	CPU    CPUInfo        `json:"cpu"`
-	Load   [3]float64     `json:"load"`
-	Disk   DiskInfo       `json:"disk"`
-	DNS    DNSServiceInfo `json:"dns"`
+	// Uptime is the host's uptime in seconds.
+	Uptime int        `json:"uptime"`
+	Memory MemoryInfo `json:"memory"`
+	// Procs is the number of processes running on the host.
+	Procs int          `json:"procs"`
+	CPU   CPUInfo      `json:"cpu"`
+	FTL   ProcessUsage `json:"ftl"`
 }
 
 // MemoryInfo contains memory usage data.
 type MemoryInfo struct {
-	RAM MemoryUsage `json:"ram"`
+	RAM  MemoryUsage `json:"ram"`
+	Swap MemoryUsage `json:"swap"`
 }
 
-// MemoryUsage contains used/total memory values.
+// MemoryUsage holds memory figures in KiB, as /proc/meminfo reports them
+// (FTL labels them kB). Available is RAM only.
 type MemoryUsage struct {
-	Total float64 `json:"total"`
-	Used  float64 `json:"used"`
-	Free  float64 `json:"free"`
-	Perc  float64 `json:"perc"`
-	Unit  string  `json:"unit"`
+	Total       float64 `json:"total"`
+	Free        float64 `json:"free"`
+	Used        float64 `json:"used"`
+	Available   float64 `json:"available"`
+	PercentUsed float64 `json:"%used"`
 }
 
 // CPUInfo contains CPU usage data.
 type CPUInfo struct {
-	Nprocs int     `json:"nprocs"`
-	Perc   float64 `json:"perc"`
+	Nprocs      int     `json:"nprocs"`
+	PercentUsed float64 `json:"%cpu"`
+	Load        CPULoad `json:"load"`
 }
 
-// DiskInfo contains disk usage data.
-type DiskInfo struct {
-	Total float64 `json:"total"`
-	Used  float64 `json:"used"`
-	Free  float64 `json:"free"`
-	Perc  float64 `json:"perc"`
-	Unit  string  `json:"unit"`
+// CPULoad holds the 1, 5 and 15 minute load averages, raw and as a
+// percentage of the CPU count.
+type CPULoad struct {
+	Raw     [3]float64 `json:"raw"`
+	Percent [3]float64 `json:"percent"`
 }
 
-// DNSServiceInfo contains DNS service state.
-type DNSServiceInfo struct {
-	Running bool `json:"running"`
+// ProcessUsage is FTL's own share of the CPU and memory, in percent.
+type ProcessUsage struct {
+	CPU    float64 `json:"%cpu"`
+	Memory float64 `json:"%mem"`
 }
 
 // HostInfo is the response from GET /api/info/host.
@@ -478,13 +490,24 @@ type HostInfo struct {
 	Took float64     `json:"took"`
 }
 
-// HostDetails contains host information.
+// HostDetails contains host information. FTL nests the uname fields; the
+// decoder this replaced read them from the top level and so never found a
+// host name, which hid the whole host line.
 type HostDetails struct {
-	Name   string `json:"name"`
-	Domain string `json:"domain"`
-	OS     string `json:"os"`
-	Kernel string `json:"kernel"`
-	Arch   string `json:"arch"`
+	Uname HostUname `json:"uname"`
+	// Model is the board model where the kernel publishes one (Raspberry Pi
+	// and other device-tree boards), and null elsewhere.
+	Model *string `json:"model"`
+}
+
+// HostUname is the host's uname(2) record.
+type HostUname struct {
+	Sysname    string `json:"sysname"`
+	Nodename   string `json:"nodename"`
+	Release    string `json:"release"`
+	Version    string `json:"version"`
+	Machine    string `json:"machine"`
+	Domainname string `json:"domainname"`
 }
 
 // SensorsInfo is the response from GET /api/info/sensors.
@@ -493,17 +516,34 @@ type SensorsInfo struct {
 	Took    float64     `json:"took"`
 }
 
-// SensorsData contains sensor readings.
+// SensorsData contains sensor readings. FTL groups readings by hardware
+// monitor, each with its own list of temperatures, and gives one unit for
+// all of them.
 type SensorsData struct {
-	Temperatures []TemperatureReading `json:"list"`
+	List []SensorGroup `json:"list"`
+	// CPUTemp is FTL's pick of the CPU temperature, or null without one.
+	CPUTemp *float64 `json:"cpu_temp"`
+	// HotLimit is the temperature the web interface warns above.
+	HotLimit float64 `json:"hot_limit"`
+	// Unit is C, F or K, per webserver.api.temp.unit.
+	Unit string `json:"unit"`
 }
 
-// TemperatureReading is a single temperature sensor value.
-type TemperatureReading struct {
-	Name  string  `json:"name"`
-	Value float64 `json:"value"`
-	Unit  string  `json:"unit"`
-	Path  string  `json:"path"`
+// SensorGroup is one hardware monitor (an hwmon device) and its readings.
+type SensorGroup struct {
+	Name   *string         `json:"name"`
+	Path   string          `json:"path"`
+	Source string          `json:"source"`
+	Temps  []SensorReading `json:"temps"`
+}
+
+// SensorReading is a single temperature reading.
+type SensorReading struct {
+	Name   *string  `json:"name"`
+	Value  float64  `json:"value"`
+	Max    *float64 `json:"max"`
+	Crit   *float64 `json:"crit"`
+	Sensor string   `json:"sensor"`
 }
 
 // VersionInfo is the response from GET /api/info/version.
