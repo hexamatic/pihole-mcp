@@ -1,0 +1,75 @@
+{
+  "clients": {
+    "active": 1,
+    "total": 1
+  },
+  "gravity": {
+    "domains_being_blocked": 77759,
+    "last_update": 1793571733
+  },
+  "queries": {
+    "blocked": 24,
+    "cached": 53,
+    "forwarded": 48,
+    "frequency": 0.8,
+    "percent_blocked": 18.897638320922852,
+    "replies": {
+      "BLOB": 0,
+      "CNAME": 0,
+      "DNSSEC": 0,
+      "DOMAIN": 53,
+      "IP": 66,
+      "NODATA": 3,
+      "NONE": 0,
+      "NOTIMP": 0,
+      "NXDOMAIN": 3,
+      "OTHER": 0,
+      "REFUSED": 0,
+      "RRNAME": 0,
+      "SERVFAIL": 0,
+      "UNKNOWN": 2
+    },
+    "status": {
+      "CACHE": 53,
+      "CACHE_STALE": 0,
+      "DBBUSY": 0,
+      "DENYLIST": 0,
+      "DENYLIST_CNAME": 0,
+      "EXTERNAL_BLOCKED_EDE15": 0,
+      "EXTERNAL_BLOCKED_IP": 0,
+      "EXTERNAL_BLOCKED_NULL": 0,
+      "EXTERNAL_BLOCKED_NXRA": 0,
+      "FORWARDED": 48,
+      "GRAVITY": 24,
+      "GRAVITY_CNAME": 0,
+      "IN_PROGRESS": 2,
+      "REGEX": 0,
+      "REGEX_CNAME": 0,
+      "RETRIED": 0,
+      "RETRIED_DNSSEC": 0,
+      "SPECIAL_DOMAIN": 0,
+      "UNKNOWN": 0
+    },
+    "total": 127,
+    "types": {
+      "A": 66,
+      "AAAA": 6,
+      "ANY": 0,
+      "DNSKEY": 0,
+      "DS": 0,
+      "HTTPS": 0,
+      "MX": 0,
+      "NAPTR": 0,
+      "NS": 0,
+      "OTHER": 0,
+      "PTR": 55,
+      "RRSIG": 0,
+      "SOA": 0,
+      "SRV": 0,
+      "SVCB": 0,
+      "TXT": 0
+    },
+    "unique_domains": 15
+  },
+  "took": 0.000042676925659179688
+}

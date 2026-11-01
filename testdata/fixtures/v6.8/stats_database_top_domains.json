@@ -1,0 +1,47 @@
+{
+  "blocked_queries": 16,
+  "domains": [
+    {
+      "count": 15,
+      "domain": "4.4.8.8.in-addr.arpa"
+    },
+    {
+      "count": 11,
+      "domain": "1.0.0.127.in-addr.arpa"
+    },
+    {
+      "count": 11,
+      "domain": "8.8.8.8.in-addr.arpa"
+    },
+    {
+      "count": 10,
+      "domain": "github.com"
+    },
+    {
+      "count": 8,
+      "domain": "cloudflare.com"
+    },
+    {
+      "count": 4,
+      "domain": "google.com"
+    },
+    {
+      "count": 4,
+      "domain": "wikipedia.org"
+    },
+    {
+      "count": 2,
+      "domain": "debian.org"
+    },
+    {
+      "count": 2,
+      "domain": "archlinux.org"
+    },
+    {
+      "count": 2,
+      "domain": "this-domain-does-not-exist.invalid"
+    }
+  ],
+  "took": 0.00051951408386230469,
+  "total_queries": 85
+}

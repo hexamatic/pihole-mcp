@@ -1,0 +1,47 @@
+{
+  "forwarded_queries": 30,
+  "took": 0.00053381919860839844,
+  "total_queries": 85,
+  "upstreams": [
+    {
+      "count": 14,
+      "ip": "8.8.4.4",
+      "name": "",
+      "port": 53,
+      "statistics": {
+        "response": 0,
+        "variance": 0
+      }
+    },
+    {
+      "count": 16,
+      "ip": "8.8.8.8",
+      "name": "",
+      "port": 53,
+      "statistics": {
+        "response": 0,
+        "variance": 0
+      }
+    },
+    {
+      "count": 37,
+      "ip": "cache",
+      "name": "cache",
+      "port": -1,
+      "statistics": {
+        "response": 0,
+        "variance": 0
+      }
+    },
+    {
+      "count": 16,
+      "ip": "blocklist",
+      "name": "blocklist",
+      "port": -1,
+      "statistics": {
+        "response": 0,
+        "variance": 0
+      }
+    }
+  ]
+}

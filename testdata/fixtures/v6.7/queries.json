@@ -1,0 +1,471 @@
+{
+  "cursor": 25,
+  "draw": 0,
+  "earliest_timestamp": 1793485332.11317,
+  "earliest_timestamp_disk": 0,
+  "queries": [
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "this-domain-does-not-exist.invalid",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 25,
+      "list_id": null,
+      "reply": {
+        "time": 0.0000965595245361328,
+        "type": "NXDOMAIN"
+      },
+      "status": "CACHE",
+      "time": 1793571747.45299,
+      "type": "A",
+      "upstream": null
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "cloudflare.com",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 24,
+      "list_id": null,
+      "reply": {
+        "time": 0.26200270652771,
+        "type": "IP"
+      },
+      "status": "FORWARDED",
+      "time": 1793571747.1131537,
+      "type": "AAAA",
+      "upstream": "8.8.8.8#53"
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "github.com",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 23,
+      "list_id": null,
+      "reply": {
+        "time": 0.025257110595703125,
+        "type": "NODATA"
+      },
+      "status": "FORWARDED",
+      "time": 1793571747.0414364,
+      "type": "AAAA",
+      "upstream": "8.8.8.8#53"
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "adservice.google.com",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 22,
+      "list_id": -3,
+      "reply": {
+        "time": 0.0000984668731689453,
+        "type": "IP"
+      },
+      "status": "GRAVITY",
+      "time": 1793571746.9893894,
+      "type": "A",
+      "upstream": null
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "ads.yahoo.com",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 21,
+      "list_id": -3,
+      "reply": {
+        "time": 0.000091075897216796875,
+        "type": "IP"
+      },
+      "status": "GRAVITY",
+      "time": 1793571746.9439056,
+      "type": "A",
+      "upstream": null
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "googleadservices.com",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 20,
+      "list_id": -3,
+      "reply": {
+        "time": 0.000072002410888671875,
+        "type": "IP"
+      },
+      "status": "GRAVITY",
+      "time": 1793571746.899014,
+      "type": "A",
+      "upstream": null
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "google-analytics.com",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 19,
+      "list_id": -3,
+      "reply": {
+        "time": 0.000007152557373046875,
+        "type": "IP"
+      },
+      "status": "GRAVITY",
+      "time": 1793571746.8539014,
+      "type": "A",
+      "upstream": null
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "google-analytics.com",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 18,
+      "list_id": -3,
+      "reply": {
+        "time": 0.00011038780212402344,
+        "type": "IP"
+      },
+      "status": "GRAVITY",
+      "time": 1793571746.8078306,
+      "type": "A",
+      "upstream": null
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "doubleclick.net",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 17,
+      "list_id": -3,
+      "reply": {
+        "time": 0.000007152557373046875,
+        "type": "IP"
+      },
+      "status": "GRAVITY",
+      "time": 1793571746.7628419,
+      "type": "A",
+      "upstream": null
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "doubleclick.net",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 16,
+      "list_id": -3,
+      "reply": {
+        "time": 0.000006198883056640625,
+        "type": "IP"
+      },
+      "status": "GRAVITY",
+      "time": 1793571746.7165616,
+      "type": "A",
+      "upstream": null
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "doubleclick.net",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 15,
+      "list_id": -3,
+      "reply": {
+        "time": 0.00012230873107910156,
+        "type": "IP"
+      },
+      "status": "GRAVITY",
+      "time": 1793571746.671613,
+      "type": "A",
+      "upstream": null
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "archlinux.org",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 14,
+      "list_id": null,
+      "reply": {
+        "time": 0.02783656120300293,
+        "type": "IP"
+      },
+      "status": "FORWARDED",
+      "time": 1793571746.5908782,
+      "type": "A",
+      "upstream": "8.8.8.8#53"
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "debian.org",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 13,
+      "list_id": null,
+      "reply": {
+        "time": 0.024224519729614258,
+        "type": "IP"
+      },
+      "status": "FORWARDED",
+      "time": 1793571746.5163567,
+      "type": "A",
+      "upstream": "8.8.8.8#53"
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "wikipedia.org",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 12,
+      "list_id": null,
+      "reply": {
+        "time": 0.00000929832458496094,
+        "type": "IP"
+      },
+      "status": "CACHE",
+      "time": 1793571746.4709573,
+      "type": "A",
+      "upstream": null
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "wikipedia.org",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 11,
+      "list_id": null,
+      "reply": {
+        "time": 0.023988962173461914,
+        "type": "IP"
+      },
+      "status": "FORWARDED",
+      "time": 1793571746.3915689,
+      "type": "A",
+      "upstream": "8.8.8.8#53"
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "google.com",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 10,
+      "list_id": null,
+      "reply": {
+        "time": 0.00000977516174316406,
+        "type": "IP"
+      },
+      "status": "CACHE",
+      "time": 1793571746.3179393,
+      "type": "A",
+      "upstream": null
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "google.com",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 9,
+      "list_id": null,
+      "reply": {
+        "time": 0.026310443878173828,
+        "type": "IP"
+      },
+      "status": "FORWARDED",
+      "time": 1793571746.240006,
+      "type": "A",
+      "upstream": "8.8.8.8#53"
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "8.8.8.8.in-addr.arpa",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 8,
+      "list_id": null,
+      "reply": {
+        "time": 0.030818700790405273,
+        "type": "DOMAIN"
+      },
+      "status": "FORWARDED",
+      "time": 1793571746.2370112,
+      "type": "PTR",
+      "upstream": "8.8.8.8#53"
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "1.0.0.127.in-addr.arpa",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 7,
+      "list_id": null,
+      "reply": {
+        "time": 0.000050306320190429688,
+        "type": "DOMAIN"
+      },
+      "status": "CACHE",
+      "time": 1793571746.2368689,
+      "type": "PTR",
+      "upstream": null
+    },
+    {
+      "client": {
+        "ip": "127.0.0.1",
+        "name": "localhost"
+      },
+      "cname": null,
+      "dnssec": "UNKNOWN",
+      "domain": "cloudflare.com",
+      "ede": {
+        "code": -1,
+        "text": null
+      },
+      "id": 6,
+      "list_id": null,
+      "reply": {
+        "time": 0.0000073909759521484375,
+        "type": "IP"
+      },
+      "status": "CACHE",
+      "time": 1793571746.1893671,
+      "type": "A",
+      "upstream": null
+    }
+  ],
+  "recordsFiltered": 26,
+  "recordsTotal": 26,
+  "took": 0.00029444694519042969
+}

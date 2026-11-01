@@ -1,0 +1,37 @@
+{
+  "forwarded_queries": 9,
+  "took": 0.00035071372985839844,
+  "total_queries": 26,
+  "upstreams": [
+    {
+      "count": 9,
+      "ip": "1",
+      "name": "",
+      "port": 4294967295,
+      "statistics": {
+        "response": 0,
+        "variance": 0
+      }
+    },
+    {
+      "count": 9,
+      "ip": "cache",
+      "name": "cache",
+      "port": -1,
+      "statistics": {
+        "response": 0,
+        "variance": 0
+      }
+    },
+    {
+      "count": 8,
+      "ip": "blocklist",
+      "name": "blocklist",
+      "port": -1,
+      "statistics": {
+        "response": 0,
+        "variance": 0
+      }
+    }
+  ]
+}

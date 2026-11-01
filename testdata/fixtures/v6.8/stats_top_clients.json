@@ -1,0 +1,12 @@
+{
+  "blocked_queries": 24,
+  "clients": [
+    {
+      "count": 127,
+      "ip": "127.0.0.1",
+      "name": "localhost"
+    }
+  ],
+  "took": 0.0000591278076171875,
+  "total_queries": 127
+}

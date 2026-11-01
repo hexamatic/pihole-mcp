@@ -1,0 +1,32 @@
+{
+  "host": {
+    "dmi": {
+      "bios": {
+        "vendor": null
+      },
+      "board": {
+        "name": null,
+        "vendor": null,
+        "version": null
+      },
+      "product": {
+        "family": null,
+        "name": null,
+        "version": null
+      },
+      "sys": {
+        "vendor": null
+      }
+    },
+    "model": null,
+    "uname": {
+      "domainname": "(none)",
+      "machine": "aarch64",
+      "nodename": "1c1ed6bf743c",
+      "release": "7.0.14-linuxkit",
+      "sysname": "Linux",
+      "version": "#1 SMP PREEMPT Fri Oct 16 11:55:50 UTC 2026"
+    }
+  },
+  "took": 0.000083684921264648438
+}

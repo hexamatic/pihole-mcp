@@ -40,15 +40,33 @@ func textOf(t *testing.T, res *mcp.CallToolResult) string {
 }
 
 func TestStructuredOutput_PADD(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{"/padd": loadFixture(t, "padd")}))
-	res := callToolResult(t, paddHandler, c, nil)
-	out, ok := res.StructuredContent.(PADDOutput)
-	if !ok {
-		t.Fatalf("expected PADDOutput structured content, got %T", res.StructuredContent)
-	}
-	if out.TotalQueries != 48213 || out.Blocking != "enabled" {
-		t.Errorf("unexpected structured values: %+v", out)
-	}
+	eachFixture(t, "padd", func(t *testing.T, _ string, fixture any) {
+		c := newTestClient(t, piholeHandler(map[string]any{"/padd": fixture}))
+		res := callToolResult(t, paddHandler, c, nil)
+		out, ok := res.StructuredContent.(PADDOutput)
+		if !ok {
+			t.Fatalf("expected PADDOutput structured content, got %T", res.StructuredContent)
+		}
+		want := PADDOutput{
+			Blocking:       fixtureString(t, fixture, "blocking"),
+			TotalQueries:   fixtureInt(t, fixture, "queries.total"),
+			BlockedQueries: fixtureInt(t, fixture, "queries.blocked"),
+			ActiveClients:  fixtureInt(t, fixture, "active_clients"),
+			GravitySize:    fixtureInt(t, fixture, "gravity_size"),
+			TopDomain:      fixtureString(t, fixture, "top_domain"),
+			CacheSize:      fixtureInt(t, fixture, "cache.size"),
+			FTLVersion:     fixtureString(t, fixture, "version.ftl.local.version"),
+			NodeName:       fixtureString(t, fixture, "node_name"),
+		}
+		got := PADDOutput{
+			Blocking: out.Blocking, TotalQueries: out.TotalQueries, BlockedQueries: out.BlockedQueries,
+			ActiveClients: out.ActiveClients, GravitySize: out.GravitySize, TopDomain: out.TopDomain,
+			CacheSize: out.CacheSize, FTLVersion: out.FTLVersion, NodeName: out.NodeName,
+		}
+		if got != want {
+			t.Errorf("structured values = %+v, want %+v", got, want)
+		}
+	})
 }
 
 func TestStructuredOutput_TopDomains(t *testing.T) {

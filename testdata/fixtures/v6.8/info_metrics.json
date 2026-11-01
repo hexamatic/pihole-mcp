@@ -1,0 +1,75 @@
+{
+  "metrics": {
+    "dhcp": {
+      "ack": 0,
+      "bootp": 0,
+      "decline": 0,
+      "discover": 0,
+      "inform": 0,
+      "leases": {
+        "allocated_4": 0,
+        "allocated_6": 0,
+        "pruned_4": 0,
+        "pruned_6": 0
+      },
+      "nak": 0,
+      "noanswer": 0,
+      "offer": 0,
+      "pxe": 0,
+      "release": 0,
+      "request": 0
+    },
+    "dns": {
+      "cache": {
+        "content": [
+          {
+            "count": {
+              "stale": 0,
+              "valid": 3
+            },
+            "name": "OTHER",
+            "type": 0
+          },
+          {
+            "count": {
+              "stale": 0,
+              "valid": 20
+            },
+            "name": "A",
+            "type": 1
+          },
+          {
+            "count": {
+              "stale": 0,
+              "valid": 11
+            },
+            "name": "AAAA",
+            "type": 28
+          },
+          {
+            "count": {
+              "stale": 0,
+              "valid": 1
+            },
+            "name": "SOA",
+            "type": 6
+          }
+        ],
+        "evicted": 0,
+        "expired": 0,
+        "immortal": 14,
+        "inserted": 21,
+        "size": 10000
+      },
+      "replies": {
+        "auth": 0,
+        "forwarded": 10,
+        "local": 17,
+        "optimized": 0,
+        "sum": 27,
+        "unanswered": 0
+      }
+    }
+  },
+  "took": 0.000063419342041015625
+}

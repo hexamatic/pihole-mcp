@@ -1,0 +1,503 @@
+{
+  "file": "/var/log/pihole/pihole.log",
+  "log": [
+    {
+      "message": "started, version pi-hole-v2.93 cachesize 10000",
+      "prio": null,
+      "timestamp": 1793571732.2042027
+    },
+    {
+      "message": "compile time options: IPv6 GNU-getopt no-DBus no-UBus no-i18n IDN2 DHCP DHCPv6 Lua TFTP no-conntrack ipset no-nftset auth DNSSEC loop-detect inotify dumpfile",
+      "prio": null,
+      "timestamp": 1793571732.2042122
+    },
+    {
+      "message": "using nameserver 8.8.8.8#53",
+      "prio": null,
+      "timestamp": 1793571732.204217
+    },
+    {
+      "message": "using nameserver 8.8.4.4#53",
+      "prio": null,
+      "timestamp": 1793571732.20422
+    },
+    {
+      "message": "using only locally-known addresses for onion",
+      "prio": null,
+      "timestamp": 1793571732.2042215
+    },
+    {
+      "message": "using only locally-known addresses for bind",
+      "prio": null,
+      "timestamp": 1793571732.2042232
+    },
+    {
+      "message": "using only locally-known addresses for invalid",
+      "prio": null,
+      "timestamp": 1793571732.2042251
+    },
+    {
+      "message": "using only locally-known addresses for test",
+      "prio": null,
+      "timestamp": 1793571732.2042265
+    },
+    {
+      "message": "using only locally-known addresses for pi.hole",
+      "prio": null,
+      "timestamp": 1793571732.2042286
+    },
+    {
+      "message": "using only locally-known addresses for lan",
+      "prio": null,
+      "timestamp": 1793571732.204232
+    },
+    {
+      "message": "using only locally-known addresses for internal",
+      "prio": null,
+      "timestamp": 1793571732.2042339
+    },
+    {
+      "message": "using only locally-known addresses for home.arpa",
+      "prio": null,
+      "timestamp": 1793571732.2042356
+    },
+    {
+      "message": "read /etc/hosts - 9 names",
+      "prio": null,
+      "timestamp": 1793571732.2043273
+    },
+    {
+      "message": "read /etc/pihole/hosts/custom.list - 0 names",
+      "prio": null,
+      "timestamp": 1793571732.2043791
+    },
+    {
+      "message": "query[A] github.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571745.6300118
+    },
+    {
+      "message": "forwarded github.com to 8.8.8.8",
+      "prio": null,
+      "timestamp": 1793571745.6319773
+    },
+    {
+      "message": "forwarded github.com to 8.8.4.4",
+      "prio": null,
+      "timestamp": 1793571745.6325321
+    },
+    {
+      "message": "reply github.com is 4.237.22.38",
+      "prio": null,
+      "timestamp": 1793571745.6746538
+    },
+    {
+      "message": "query[A] github.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571745.761708
+    },
+    {
+      "message": "cached github.com is 4.237.22.38",
+      "prio": null,
+      "timestamp": 1793571745.7618732
+    },
+    {
+      "message": "query[A] github.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571745.8421814
+    },
+    {
+      "message": "cached github.com is 4.237.22.38",
+      "prio": null,
+      "timestamp": 1793571745.8422115
+    },
+    {
+      "message": "query[A] github.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571745.9160545
+    },
+    {
+      "message": "cached github.com is 4.237.22.38",
+      "prio": null,
+      "timestamp": 1793571745.9160831
+    },
+    {
+      "message": "query[A] cloudflare.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571745.962733
+    },
+    {
+      "message": "forwarded cloudflare.com to 8.8.8.8",
+      "prio": null,
+      "timestamp": 1793571745.9629591
+    },
+    {
+      "message": "reply cloudflare.com is 104.16.132.229",
+      "prio": null,
+      "timestamp": 1793571746.0757985
+    },
+    {
+      "message": "reply cloudflare.com is 104.16.133.229",
+      "prio": null,
+      "timestamp": 1793571746.0758271
+    },
+    {
+      "message": "query[A] cloudflare.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.139787
+    },
+    {
+      "message": "cached cloudflare.com is 104.16.132.229",
+      "prio": null,
+      "timestamp": 1793571746.1398268
+    },
+    {
+      "message": "cached cloudflare.com is 104.16.133.229",
+      "prio": null,
+      "timestamp": 1793571746.1398311
+    },
+    {
+      "message": "query[A] cloudflare.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.1893444
+    },
+    {
+      "message": "cached cloudflare.com is 104.16.133.229",
+      "prio": null,
+      "timestamp": 1793571746.1893761
+    },
+    {
+      "message": "cached cloudflare.com is 104.16.132.229",
+      "prio": null,
+      "timestamp": 1793571746.18938
+    },
+    {
+      "message": "query[PTR] 1.0.0.127.in-addr.arpa from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.2368522
+    },
+    {
+      "message": "/etc/hosts 127.0.0.1 is localhost",
+      "prio": null,
+      "timestamp": 1793571746.236922
+    },
+    {
+      "message": "query[PTR] 8.8.8.8.in-addr.arpa from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.2370074
+    },
+    {
+      "message": "forwarded 8.8.8.8.in-addr.arpa to 8.8.8.8",
+      "prio": null,
+      "timestamp": 1793571746.2376623
+    },
+    {
+      "message": "query[A] google.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.2399991
+    },
+    {
+      "message": "forwarded google.com to 8.8.8.8",
+      "prio": null,
+      "timestamp": 1793571746.2400813
+    },
+    {
+      "message": "reply google.com is 192.178.188.101",
+      "prio": null,
+      "timestamp": 1793571746.2663236
+    },
+    {
+      "message": "reply google.com is 192.178.188.138",
+      "prio": null,
+      "timestamp": 1793571746.2663443
+    },
+    {
+      "message": "reply google.com is 192.178.188.100",
+      "prio": null,
+      "timestamp": 1793571746.2663541
+    },
+    {
+      "message": "reply google.com is 192.178.188.113",
+      "prio": null,
+      "timestamp": 1793571746.2663562
+    },
+    {
+      "message": "reply google.com is 192.178.188.102",
+      "prio": null,
+      "timestamp": 1793571746.2663586
+    },
+    {
+      "message": "reply google.com is 192.178.188.139",
+      "prio": null,
+      "timestamp": 1793571746.2663608
+    },
+    {
+      "message": "reply 8.8.8.8 is dns.google",
+      "prio": null,
+      "timestamp": 1793571746.267832
+    },
+    {
+      "message": "query[A] google.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.3179164
+    },
+    {
+      "message": "cached google.com is 192.178.188.101",
+      "prio": null,
+      "timestamp": 1793571746.3179505
+    },
+    {
+      "message": "cached google.com is 192.178.188.138",
+      "prio": null,
+      "timestamp": 1793571746.3179543
+    },
+    {
+      "message": "cached google.com is 192.178.188.100",
+      "prio": null,
+      "timestamp": 1793571746.3179564
+    },
+    {
+      "message": "cached google.com is 192.178.188.113",
+      "prio": null,
+      "timestamp": 1793571746.3179588
+    },
+    {
+      "message": "cached google.com is 192.178.188.102",
+      "prio": null,
+      "timestamp": 1793571746.317961
+    },
+    {
+      "message": "cached google.com is 192.178.188.139",
+      "prio": null,
+      "timestamp": 1793571746.3179631
+    },
+    {
+      "message": "query[A] wikipedia.org from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.3915422
+    },
+    {
+      "message": "forwarded wikipedia.org to 8.8.8.8",
+      "prio": null,
+      "timestamp": 1793571746.3917778
+    },
+    {
+      "message": "reply wikipedia.org is 103.102.166.224",
+      "prio": null,
+      "timestamp": 1793571746.4155653
+    },
+    {
+      "message": "query[A] wikipedia.org from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.4709258
+    },
+    {
+      "message": "cached wikipedia.org is 103.102.166.224",
+      "prio": null,
+      "timestamp": 1793571746.4709682
+    },
+    {
+      "message": "query[A] debian.org from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.5163331
+    },
+    {
+      "message": "forwarded debian.org to 8.8.8.8",
+      "prio": null,
+      "timestamp": 1793571746.5165327
+    },
+    {
+      "message": "reply debian.org is 151.101.130.132",
+      "prio": null,
+      "timestamp": 1793571746.5405855
+    },
+    {
+      "message": "reply debian.org is 151.101.2.132",
+      "prio": null,
+      "timestamp": 1793571746.5405972
+    },
+    {
+      "message": "reply debian.org is 151.101.194.132",
+      "prio": null,
+      "timestamp": 1793571746.5406
+    },
+    {
+      "message": "reply debian.org is 151.101.66.132",
+      "prio": null,
+      "timestamp": 1793571746.5406022
+    },
+    {
+      "message": "query[A] archlinux.org from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.5908625
+    },
+    {
+      "message": "forwarded archlinux.org to 8.8.8.8",
+      "prio": null,
+      "timestamp": 1793571746.5909963
+    },
+    {
+      "message": "reply archlinux.org is 209.126.35.79",
+      "prio": null,
+      "timestamp": 1793571746.6187191
+    },
+    {
+      "message": "query[A] doubleclick.net from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.6715934
+    },
+    {
+      "message": "gravity blocked doubleclick.net is 0.0.0.0",
+      "prio": null,
+      "timestamp": 1793571746.6717379
+    },
+    {
+      "message": "query[A] doubleclick.net from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.7165456
+    },
+    {
+      "message": "gravity blocked doubleclick.net is 0.0.0.0",
+      "prio": null,
+      "timestamp": 1793571746.7165689
+    },
+    {
+      "message": "query[A] doubleclick.net from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.7628233
+    },
+    {
+      "message": "gravity blocked doubleclick.net is 0.0.0.0",
+      "prio": null,
+      "timestamp": 1793571746.76285
+    },
+    {
+      "message": "query[A] google-analytics.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.8078051
+    },
+    {
+      "message": "gravity blocked google-analytics.com is 0.0.0.0",
+      "prio": null,
+      "timestamp": 1793571746.8079436
+    },
+    {
+      "message": "query[A] google-analytics.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.8538835
+    },
+    {
+      "message": "gravity blocked google-analytics.com is 0.0.0.0",
+      "prio": null,
+      "timestamp": 1793571746.85391
+    },
+    {
+      "message": "query[A] googleadservices.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.8989854
+    },
+    {
+      "message": "gravity blocked googleadservices.com is 0.0.0.0",
+      "prio": null,
+      "timestamp": 1793571746.8990881
+    },
+    {
+      "message": "query[A] ads.yahoo.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.9438853
+    },
+    {
+      "message": "gravity blocked ads.yahoo.com is 0.0.0.0",
+      "prio": null,
+      "timestamp": 1793571746.9439988
+    },
+    {
+      "message": "query[A] adservice.google.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571746.98937
+    },
+    {
+      "message": "gravity blocked adservice.google.com is 0.0.0.0",
+      "prio": null,
+      "timestamp": 1793571746.98949
+    },
+    {
+      "message": "query[AAAA] github.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571747.04142
+    },
+    {
+      "message": "forwarded github.com to 8.8.8.8",
+      "prio": null,
+      "timestamp": 1793571747.0415421
+    },
+    {
+      "message": "reply github.com is NODATA-IPv6",
+      "prio": null,
+      "timestamp": 1793571747.066699
+    },
+    {
+      "message": "query[AAAA] cloudflare.com from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571747.1131313
+    },
+    {
+      "message": "forwarded cloudflare.com to 8.8.8.8",
+      "prio": null,
+      "timestamp": 1793571747.1132734
+    },
+    {
+      "message": "reply cloudflare.com is 2606:4700::6810:85e5",
+      "prio": null,
+      "timestamp": 1793571747.3751905
+    },
+    {
+      "message": "reply cloudflare.com is 2606:4700::6810:84e5",
+      "prio": null,
+      "timestamp": 1793571747.3753908
+    },
+    {
+      "message": "query[A] this-domain-does-not-exist.invalid from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571747.4529722
+    },
+    {
+      "message": "config this-domain-does-not-exist.invalid is NXDOMAIN",
+      "prio": null,
+      "timestamp": 1793571747.45309
+    },
+    {
+      "message": "query[A] pi.hole from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571758.8564973
+    },
+    {
+      "message": "Pi-hole hostname pi.hole is 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571758.8565392
+    },
+    {
+      "message": "query[A] pi.hole from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571789.0298707
+    },
+    {
+      "message": "Pi-hole hostname pi.hole is 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571789.0299516
+    },
+    {
+      "message": "query[A] pi.hole from 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571819.223928
+    },
+    {
+      "message": "Pi-hole hostname pi.hole is 127.0.0.1",
+      "prio": null,
+      "timestamp": 1793571819.2240181
+    }
+  ],
+  "nextID": 99,
+  "pid": 187,
+  "took": 0.00006389617919921875
+}

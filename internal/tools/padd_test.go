@@ -3,55 +3,69 @@ package tools
 import (
 	"strings"
 	"testing"
+
+	"github.com/hexamatic/pihole-mcp/internal/format"
 )
 
 func TestPADD_Normal(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
-		"/padd": loadFixture(t, "padd"),
-	}))
+	eachFixture(t, "padd", func(t *testing.T, _ string, fixture any) {
+		c := newTestClient(t, piholeHandler(map[string]any{"/padd": fixture}))
+		text := callTool(t, paddHandler, c, nil)
 
-	text := callTool(t, paddHandler, c, nil)
-
-	for _, want := range []string{"enabled", "48,213", "github.com", "ads.example.net", "v6.6.2"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("expected %q in dashboard output, got:\n%s", want, text)
+		for _, want := range []string{
+			"**Blocking:** " + fixtureString(t, fixture, "blocking"),
+			"**Queries:** " + format.Number(fixtureInt(t, fixture, "queries.total")) + " total, " +
+				format.Number(fixtureInt(t, fixture, "queries.blocked")) + " blocked",
+			"**Top domain:** " + fixtureString(t, fixture, "top_domain"),
+			"**Top blocked:** " + fixtureString(t, fixture, "top_blocked"),
+			"**Top client:** " + fixtureString(t, fixture, "top_client"),
+			"**Gravity:** " + format.Number(fixtureInt(t, fixture, "gravity_size")) + " domains",
+			"FTL " + fixtureString(t, fixture, "version.ftl.local.version"),
+			"**Host:** " + fixtureString(t, fixture, "node_name"),
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("expected %q in dashboard output, got:\n%s", want, text)
+			}
 		}
-	}
-	// Interface detail should NOT appear at normal detail.
-	if strings.Contains(text, "IPv4") {
-		t.Errorf("did not expect interface detail at normal detail, got:\n%s", text)
-	}
+		// Interface detail should NOT appear at normal detail.
+		if strings.Contains(text, "IPv4") {
+			t.Errorf("did not expect interface detail at normal detail, got:\n%s", text)
+		}
+	})
 }
 
 func TestPADD_Minimal(t *testing.T) {
-	c := newTestClient(t, piholeHandler(map[string]any{
-		"/padd": loadFixture(t, "padd"),
-	}))
+	eachFixture(t, "padd", func(t *testing.T, _ string, fixture any) {
+		c := newTestClient(t, piholeHandler(map[string]any{"/padd": fixture}))
+		text := callTool(t, paddHandler, c, map[string]any{"detail": "minimal"})
 
-	text := callTool(t, paddHandler, c, map[string]any{"detail": "minimal"})
-
-	if !strings.Contains(text, "Blocking: enabled") {
-		t.Errorf("expected minimal one-liner, got: %s", text)
-	}
-	if strings.Contains(text, "\n**") {
-		t.Errorf("minimal output should be a single line, got: %s", text)
-	}
+		want := "Blocking: " + fixtureString(t, fixture, "blocking") +
+			" | Queries: " + format.Number(fixtureInt(t, fixture, "queries.total"))
+		if !strings.HasPrefix(text, want) {
+			t.Errorf("expected the one-liner to start %q, got: %s", want, text)
+		}
+		if strings.Contains(text, "\n") {
+			t.Errorf("minimal output should be a single line, got: %s", text)
+		}
+	})
 }
 
 func TestPADD_Full(t *testing.T) {
 	// At full detail the handler requests /padd?full=true; piholeHandler routes
 	// by path only, so the "/padd" route serves regardless of query string.
-	c := newTestClient(t, piholeHandler(map[string]any{
-		"/padd": loadFixture(t, "padd"),
-	}))
+	// The plain capture carries the interface block too.
+	eachFixture(t, "padd", func(t *testing.T, _ string, fixture any) {
+		c := newTestClient(t, piholeHandler(map[string]any{"/padd": fixture}))
+		text := callTool(t, paddHandler, c, map[string]any{"detail": "full"})
 
-	text := callTool(t, paddHandler, c, map[string]any{"detail": "full"})
-
-	for _, want := range []string{"IPv4", "192.168.1.10", "Raspberry Pi"} {
+		want := "**IPv4 (" + fixtureString(t, fixture, "iface.v4.name") + "):** " + fixtureString(t, fixture, "iface.v4.addr")
 		if !strings.Contains(text, want) {
 			t.Errorf("expected %q in full dashboard output, got:\n%s", want, text)
 		}
-	}
+		if gw := fixtureString(t, fixture, "iface.v4.gw_addr"); !strings.Contains(text, gw) {
+			t.Errorf("expected the gateway %s in full dashboard output, got:\n%s", gw, text)
+		}
+	})
 }
 
 // TestPADD_RealFixture locks the response shape: every field the handler reads

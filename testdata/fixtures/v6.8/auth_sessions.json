@@ -1,0 +1,39 @@
+{
+  "sessions": [
+    {
+      "app": false,
+      "cli": false,
+      "current_session": false,
+      "id": 0,
+      "last_active": 1793571733,
+      "login_at": 1793571733,
+      "remote_addr": "192.168.65.1",
+      "tls": {
+        "login": false,
+        "mixed": false
+      },
+      "user_agent": "curl/8.7.1",
+      "valid": true,
+      "valid_until": 1793573533,
+      "x_forwarded_for": null
+    },
+    {
+      "app": false,
+      "cli": false,
+      "current_session": true,
+      "id": 1,
+      "last_active": 1793571737,
+      "login_at": 1793571736,
+      "remote_addr": "192.168.65.1",
+      "tls": {
+        "login": false,
+        "mixed": false
+      },
+      "user_agent": "curl/8.7.1",
+      "valid": true,
+      "valid_until": 1793573537,
+      "x_forwarded_for": null
+    }
+  ],
+  "took": 0.000024318695068359375
+}
