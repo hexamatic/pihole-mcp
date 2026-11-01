@@ -1,9 +1,11 @@
 package pihole
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -90,9 +92,12 @@ type item struct {
 	key     string // stable cross-instance identity
 	label   string // human-readable description for plan output
 	compare string // canonical value for change detection ("" disables updates)
-	add     writeFunc
-	update  writeFunc
-	delete  writeFunc
+	// before is the target's compare value, set on an entry the plan updates
+	// so the plan can show what it replaces.
+	before string
+	add    writeFunc
+	update writeFunc
+	delete writeFunc
 }
 
 // writeFunc makes one change on the target. restart is meaningful only for a
@@ -113,12 +118,12 @@ var categoryReaders = map[SyncCategory]reader{
 }
 
 func readDomains(ctx context.Context, c *Client) (map[string]item, error) {
-	var resp DomainsResponse
-	if err := c.Get(ctx, "/domains", &resp); err != nil {
+	domains, err := readListField[Domain](ctx, c, "/domains", "domains")
+	if err != nil {
 		return nil, err
 	}
-	m := make(map[string]item, len(resp.Domains))
-	for _, d := range resp.Domains {
+	m := make(map[string]item, len(domains))
+	for _, d := range domains {
 		d := d
 		key := strings.Join([]string{"domain", d.Type, d.Kind, d.Domain}, "|")
 		base := fmt.Sprintf("/domains/%s/%s", d.Type, d.Kind)
@@ -142,12 +147,12 @@ func readDomains(ctx context.Context, c *Client) (map[string]item, error) {
 }
 
 func readLists(ctx context.Context, c *Client) (map[string]item, error) {
-	var resp ListsResponse
-	if err := c.Get(ctx, "/lists", &resp); err != nil {
+	lists, err := readListField[List](ctx, c, "/lists", "lists")
+	if err != nil {
 		return nil, err
 	}
-	m := make(map[string]item, len(resp.Lists))
-	for _, l := range resp.Lists {
+	m := make(map[string]item, len(lists))
+	for _, l := range lists {
 		l := l
 		key := strings.Join([]string{"list", l.Type, l.Address}, "|")
 		single := "/lists/" + EscapePathSegment(l.Address) + "?type=" + url.QueryEscape(l.Type)
@@ -170,12 +175,12 @@ func readLists(ctx context.Context, c *Client) (map[string]item, error) {
 }
 
 func readGroups(ctx context.Context, c *Client) (map[string]item, error) {
-	var resp GroupsResponse
-	if err := c.Get(ctx, "/groups", &resp); err != nil {
+	groups, err := readListField[Group](ctx, c, "/groups", "groups")
+	if err != nil {
 		return nil, err
 	}
-	m := make(map[string]item, len(resp.Groups))
-	for _, g := range resp.Groups {
+	m := make(map[string]item, len(groups))
+	for _, g := range groups {
 		g := g
 		key := "group|" + g.Name
 		single := "/groups/" + EscapePathSegment(g.Name)
@@ -198,12 +203,12 @@ func readGroups(ctx context.Context, c *Client) (map[string]item, error) {
 }
 
 func readClients(ctx context.Context, c *Client) (map[string]item, error) {
-	var resp ClientsResponse
-	if err := c.Get(ctx, "/clients", &resp); err != nil {
+	clients, err := readListField[ClientEntry](ctx, c, "/clients", "clients")
+	if err != nil {
 		return nil, err
 	}
-	m := make(map[string]item, len(resp.Clients))
-	for _, cl := range resp.Clients {
+	m := make(map[string]item, len(clients))
+	for _, cl := range clients {
 		cl := cl
 		key := "client|" + cl.Client
 		single := "/clients/" + EscapePathSegment(cl.Client)
@@ -223,6 +228,26 @@ func readClients(ctx context.Context, c *Client) (map[string]item, error) {
 		}
 	}
 	return m, nil
+}
+
+// readListField reads the list called field from the reply to path. A
+// reply without the list is an error rather than an empty list. Decoded as
+// empty, a reply that lacked it, such as an empty object from a proxy, made
+// a pruning sync delete every entry on the target.
+func readListField[T any](ctx context.Context, c *Client, path, field string) ([]T, error) {
+	var raw map[string]json.RawMessage
+	if err := c.Get(ctx, path, &raw); err != nil {
+		return nil, err
+	}
+	data, ok := raw[field]
+	if !ok || bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return nil, fmt.Errorf("pi-hole's reply to %s has no %q list, so it cannot be compared", path, field)
+	}
+	var out []T
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode the %q list from %s: %w", field, path, err)
+	}
+	return out, nil
 }
 
 func readLocalDNS(ctx context.Context, c *Client) (map[string]item, error) {
@@ -262,8 +287,14 @@ func readDNSArray(ctx context.Context, c *Client, field, kind string, restarts b
 	// resp.Config[field] read the wrapper, found nothing, and discarded the
 	// error, so a sync against a real Pi-hole saw zero local DNS and CNAME
 	// records and reported them as in sync.
+	//
+	// A reply without the array is an error rather than an empty list: read
+	// as empty, it made a pruning sync delete every record on the target.
 	dns, _ := resp.Config["dns"].(map[string]any)
-	raw, _ := dns[field].([]any)
+	raw, ok := dns[field].([]any)
+	if !ok {
+		return nil, fmt.Errorf("pi-hole's reply to /config/dns has no dns.%s list, so it cannot be compared", field)
+	}
 	m := make(map[string]item, len(raw))
 	for _, v := range raw {
 		s, ok := v.(string)
@@ -295,9 +326,11 @@ func readDNSArray(ctx context.Context, c *Client, field, kind string, restarts b
 // CategoryDiff holds the per-category differences between source and target.
 type CategoryDiff struct {
 	Category SyncCategory
-	added    []item
-	changed  []item
-	removed  []item
+	// sourceCount is how many entries the source has in this category.
+	sourceCount int
+	added       []item
+	changed     []item
+	removed     []item
 }
 
 // Diff is the full set of differences between a source and a target instance.
@@ -326,7 +359,7 @@ func ComputeDiff(ctx context.Context, source, target *Client, cats []SyncCategor
 			return nil, fmt.Errorf("read %s from %s: %w", cat, target.Name(), err)
 		}
 
-		cd := CategoryDiff{Category: cat}
+		cd := CategoryDiff{Category: cat, sourceCount: len(src)}
 		for _, k := range sortedKeys(src) {
 			s := src[k]
 			t, ok := tgt[k]
@@ -334,6 +367,7 @@ func ComputeDiff(ctx context.Context, source, target *Client, cats []SyncCategor
 			case !ok:
 				cd.added = append(cd.added, s)
 			case s.compare != "" && s.compare != t.compare:
+				s.before = t.compare
 				cd.changed = append(cd.changed, s)
 			}
 		}
@@ -390,6 +424,20 @@ func (d *Diff) Totals() (added, changed, removed int) {
 	return added, changed, removed
 }
 
+// PruneWipes returns the categories in which a pruning sync would delete
+// every entry on the target because the source has none. That is far more
+// often a source that is new, misconfigured or answering oddly than an intent
+// to empty the target, so the sync tool refuses it.
+func (d *Diff) PruneWipes() []CategoryCount {
+	var out []CategoryCount
+	for _, c := range d.Categories {
+		if c.sourceCount == 0 && len(c.removed) > 0 {
+			out = append(out, CategoryCount{Category: string(c.Category), Label: categoryLabels[c.Category], Removed: len(c.removed)})
+		}
+	}
+	return out
+}
+
 // InSync reports whether the target already matches the source for every
 // compared category (ignoring removals, which only matter when pruning).
 func (d *Diff) InSync(prune bool) bool {
@@ -405,6 +453,9 @@ type plannedOp struct {
 	category SyncCategory
 	action   string // add | update | delete
 	label    string
+	// from and to are the entry's compared values before and after the
+	// step, where it has them.
+	from, to string
 	run      writeFunc
 }
 
@@ -424,10 +475,10 @@ func (d *Diff) plan(prune bool) []plannedOp {
 			continue
 		}
 		for _, it := range cd.added {
-			ops = append(ops, plannedOp{cat, "add", it.label, it.add})
+			ops = append(ops, plannedOp{category: cat, action: "add", label: it.label, to: it.compare, run: it.add})
 		}
 		for _, it := range cd.changed {
-			ops = append(ops, plannedOp{cat, "update", it.label, it.update})
+			ops = append(ops, plannedOp{category: cat, action: "update", label: it.label, from: it.before, to: it.compare, run: it.update})
 		}
 	}
 	if prune {
@@ -437,7 +488,7 @@ func (d *Diff) plan(prune bool) []plannedOp {
 				continue
 			}
 			for _, it := range cd.removed {
-				ops = append(ops, plannedOp{applyOrder[i], "delete", it.label, it.delete})
+				ops = append(ops, plannedOp{category: applyOrder[i], action: "delete", label: it.label, from: it.compare, run: it.delete})
 			}
 		}
 	}
@@ -449,6 +500,10 @@ type PlanStep struct {
 	Category string `json:"category"`
 	Action   string `json:"action"`
 	Item     string `json:"item"`
+	// From and To are the entry's settings before and after the step, such
+	// as "enabled=true;comment=…", where the category compares them.
+	From string `json:"from,omitempty"`
+	To   string `json:"to,omitempty"`
 }
 
 // Plan returns the ordered reconciliation steps for display, without running
@@ -457,7 +512,7 @@ func (d *Diff) Plan(prune bool) []PlanStep {
 	ops := d.plan(prune)
 	steps := make([]PlanStep, len(ops))
 	for i, op := range ops {
-		steps[i] = PlanStep{Category: string(op.category), Action: op.action, Item: op.label}
+		steps[i] = PlanStep{Category: string(op.category), Action: op.action, Item: op.label, From: op.from, To: op.to}
 	}
 	return steps
 }
@@ -466,11 +521,15 @@ func (d *Diff) Plan(prune bool) []PlanStep {
 // operations. apply re-derives the plan from live config and requires the same
 // token, so a token mismatch means the configuration drifted since the plan was
 // produced.
+//
+// It covers each step's values as well as its entry. Built from the entries
+// alone, a token stayed valid when an entry's settings changed between plan
+// and apply, so apply could write values the plan never showed.
 func (d *Diff) Token(prune bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s->%s;prune=%v\n", d.Source, d.Target, prune)
 	for _, op := range d.plan(prune) {
-		fmt.Fprintf(&b, "%s|%s|%s\n", op.category, op.action, op.label)
+		fmt.Fprintf(&b, "%s|%s|%q|%q|%q\n", op.category, op.action, op.label, op.from, op.to)
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:])[:16]

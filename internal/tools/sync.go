@@ -191,7 +191,7 @@ func instanceDiffHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if getDetail(req) == "full" {
 			b.WriteString("\nPlan (add/update; deletes need prune):\n")
 			for _, step := range diff.Plan(false) {
-				fmt.Fprintf(&b, "- %s %s: %s\n", step.Action, step.Category, step.Item)
+				writePlanStep(&b, step)
 			}
 		}
 		b.WriteString("\nRun pihole_instance_sync to apply.")
@@ -219,6 +219,21 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		token := diff.Token(prune)
 		inSync := diff.InSync(prune)
 
+		// A source with nothing in a category, pruned against a target that
+		// has entries in it, deletes every one of them. That is far more
+		// often a new, misconfigured or misbehaving source than an intent
+		// to empty the target, so it is refused in both modes.
+		if wipes := diff.PruneWipes(); prune && len(wipes) > 0 {
+			var parts []string
+			for _, w := range wipes {
+				parts = append(parts, fmt.Sprintf("%d %s", w.Removed, w.Label))
+			}
+			return mcp.NewToolResultError(fmt.Sprintf("Refusing to prune: %s has none of the categories below, so pruning would delete all of "+
+				"%s's: %s. Nothing was changed. Check that %s is the instance you meant as the source. To empty those categories on %s, "+
+				"delete the entries there directly, or sync the other categories with prune.",
+				source.Name(), target.Name(), strings.Join(parts, ", "), source.Name(), target.Name())), nil
+		}
+
 		output := InstanceSyncOutput{
 			Source: source.Name(),
 			Target: target.Name(),
@@ -237,7 +252,7 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 				return mcp.NewToolResultStructured(output, b.String()), nil
 			}
 			for _, step := range diff.Plan(prune) {
-				fmt.Fprintf(&b, "- %s %s: %s\n", step.Action, step.Category, step.Item)
+				writePlanStep(&b, step)
 			}
 			fmt.Fprintf(&b, "\nTo apply: re-run with mode=apply and confirm_token=%s", token)
 			return mcp.NewToolResultStructured(output, b.String()), nil
@@ -259,9 +274,9 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if req.GetBool("snapshot", true) {
 			path, serr := exportSnapshot(ctx, target)
 			if serr != nil {
-				return mcp.NewToolResultError(toolErrorText(
-					fmt.Sprintf("back up %q before changing it, so nothing was changed", target.Name()), serr) +
-					" To sync without a rollback point, pass snapshot=false."), nil
+				return mcp.NewToolResultError(withAdvice(toolErrorText(
+					fmt.Sprintf("back up %q before changing it, so nothing was changed", target.Name()), serr),
+					"To sync without a rollback point, pass snapshot=false.")), nil
 			}
 			output.SnapshotPath = path
 		}
@@ -272,6 +287,9 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		output.Ops = res.Ops
 		output.Restarted = res.Restarted
 		output.RestartError = res.RestartError
+		// Every step applied, so the target now matches. in_sync used to keep
+		// the value from before the apply and read false after a clean sync.
+		output.InSync = res.Failed == 0
 
 		sendLog(ctx, mcp.LoggingLevelInfo, "sync", map[string]any{
 			"event": "instance_sync", "source": source.Name(), "target": target.Name(),
@@ -295,11 +313,24 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			fmt.Fprintf(&b, "%s restarted once to apply the CNAME changes and is answering again.\n", target.Name())
 		}
 		result := mcp.NewToolResultStructured(output, b.String())
-		if res.Failed > 0 && res.Applied == 0 {
-			return mcp.NewToolResultError(b.String()), nil
-		}
+		// When nothing applied the call failed, but the per-step results
+		// still say why; an error result without them used to drop the ops.
+		result.IsError = res.Failed > 0 && res.Applied == 0
 		return result, nil
 	}
+}
+
+// writePlanStep renders one plan step, with the settings it changes where
+// the category compares them.
+func writePlanStep(b *strings.Builder, step pihole.PlanStep) {
+	fmt.Fprintf(b, "- %s %s: %s", step.Action, step.Category, step.Item)
+	switch {
+	case step.Action == "update":
+		fmt.Fprintf(b, " (%s → %s)", step.From, step.To)
+	case step.Action == "add" && step.To != "":
+		fmt.Fprintf(b, " (%s)", step.To)
+	}
+	b.WriteString("\n")
 }
 
 // exportSnapshot downloads a teleporter backup of the client to a temp file and
