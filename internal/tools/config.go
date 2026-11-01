@@ -307,6 +307,19 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		var before pihole.ConfigResponse
 		beforeErr := c.Get(ctx, "/config?detailed=true", &before)
 
+		if key := newlineIn(leaves); key != "" {
+			return mcp.NewToolResultError(fmt.Sprintf("Refusing to write %s: its value contains a line break, which no Pi-hole "+
+				"setting needs and which Pi-hole before v6.6 wrote into dnsmasq's configuration as a new option. Nothing was changed.",
+				normaliseConfigPath(key))), nil
+		}
+		var current map[string]any
+		if beforeErr == nil {
+			current = before.Config
+		}
+		if key, r, ok := riskyChange(leaves, current); ok {
+			return refuseRiskySetting(key, r), nil
+		}
+
 		sent := time.Now()
 		var result pihole.ConfigResponse
 		if err := c.Do(ctx, "PATCH", path, map[string]any{"config": payload}, &result); err != nil {
@@ -645,6 +658,13 @@ func configAddValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if isCredentialPath(element) {
 			return refuseCredentialWrite(normaliseConfigPath(element)), nil
 		}
+		if r, risky := riskySettingFor(element); risky {
+			return refuseRiskySetting(element, r), nil
+		}
+		if hasLineBreak(value) {
+			return mcp.NewToolResultError("Invalid value: it contains a line break, which no Pi-hole setting needs and which Pi-hole " +
+				"before v6.6 wrote into dnsmasq's configuration as a new option."), nil
+		}
 
 		path := "/config/" + escapeConfigElement(element) + "/" + pihole.EscapePathSegment(value)
 
@@ -691,6 +711,13 @@ func configRemoveValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 		if isCredentialPath(element) {
 			return refuseCredentialWrite(normaliseConfigPath(element)), nil
+		}
+		if r, risky := riskySettingFor(element); risky {
+			return refuseRiskySetting(element, r), nil
+		}
+		if hasLineBreak(value) {
+			return mcp.NewToolResultError("Invalid value: it contains a line break, which no Pi-hole setting needs and which Pi-hole " +
+				"before v6.6 wrote into dnsmasq's configuration as a new option."), nil
 		}
 
 		path := "/config/" + escapeConfigElement(element) + "/" + pihole.EscapePathSegment(value)
