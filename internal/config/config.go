@@ -88,7 +88,9 @@ type Config struct {
 	RequestTimeout time.Duration
 
 	// RateLimit is the per-session request limit per minute for the HTTP/SSE
-	// transports. 0 disables rate limiting (not recommended on a LAN).
+	// transports, under a per-address ceiling of four times it. Clients on MCP
+	// revision 2026-07-28 send no session, so only the ceiling applies to them.
+	// 0 disables rate limiting (not recommended on a LAN).
 	RateLimit int
 
 	// AllowedOrigins is the Origin/Host allowlist for the HTTP/SSE transports.

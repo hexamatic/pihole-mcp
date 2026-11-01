@@ -519,3 +519,51 @@ func TestLogSafeKey(t *testing.T) {
 		}
 	}
 }
+
+// TestRateLimiter_SessionlessRequestsShareTheAddressCeiling pins what a client
+// on MCP revision 2026-07-28 gets. That revision removes Mcp-Session-Id, so a
+// modern request carries no session and creates no session bucket: it is
+// charged to its address's ceiling alone, which is ipCeilingFactor times the
+// per-session burst, and is throttled once that is spent.
+func TestRateLimiter_SessionlessRequestsShareTheAddressCeiling(t *testing.T) {
+	const burst = 3
+	rl := NewRateLimiter(60, burst)
+	defer rl.Stop()
+	h := rl.Middleware(okHandler())
+
+	var ok, limited int
+	for i := 0; i < 4*burst*ipCeilingFactor; i++ {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", nil)
+		req.RemoteAddr = "203.0.113.9:" + itoa(50000+i)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		switch rec.Code {
+		case http.StatusOK:
+			ok++
+		case http.StatusTooManyRequests:
+			limited++
+		default:
+			t.Fatalf("unexpected status %d", rec.Code)
+		}
+	}
+
+	// The ceiling refills at four times 60 a minute, four tokens a second, and
+	// the loop runs in well under a second, so at most one token can arrive
+	// mid-loop. Anything beyond that means sessionless requests are getting a
+	// bucket of their own.
+	ceiling := burst * ipCeilingFactor
+	if ok < ceiling || ok > ceiling+1 {
+		t.Errorf("sessionless requests got %d through, want the address ceiling of %d (at most one refill more)", ok, ceiling)
+	}
+	if limited == 0 {
+		t.Error("sessionless requests were never throttled; nothing limits a modern client")
+	}
+
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	for key, entry := range rl.ips {
+		if n := len(entry.sessions); n != 0 {
+			t.Errorf("address %s holds %d session buckets from requests that carried no session", key, n)
+		}
+	}
+}
