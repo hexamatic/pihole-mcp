@@ -8,6 +8,53 @@ The release body on GitHub for each tagged version is sourced from the matching 
 
 ## [Unreleased]
 
+## [v0.10.0] - 2026-11-02
+
+### Highlights
+
+Upgrade from any earlier release. Every binary and container image up to v0.9.0 was built with a Go toolchain carrying twelve reachable standard-library advisories, all disclosed after v0.9.0 shipped. `pihole_teleporter_export` could overwrite any file the server could write, and read-only mode offered it. The configuration tools could change the settings behind several published FTL advisories, two of them remote code execution. Text from the network, such as a queried domain or a device's hostname, reached the model as if the server had written it. All of that is fixed, along with more than thirty other defects, many of them tools that misreported what Pi-hole had done:
+
+- a failed export saved as a backup;
+- a gravity rebuild reported as failed when it took longer than 30 seconds, and as complete when it failed;
+- updates that created the entry they were meant to change;
+- `pihole_info_system` reporting 0% CPU and a stopped resolver on every Pi-hole;
+- the log tools showing the oldest lines instead of the newest;
+- response times read a thousand times too large.
+
+Writes that make FTL restart now wait for it, so the next change no longer loses its reply. Clients, domain rules and lists can be put in groups by name. The server warns when a Pi-hole runs an FTL release with published advisories, which today means every release before v6.8. `PIHOLE_BACKUP_DIR` keeps backups in one directory. Clients on MCP revision `2026-07-28` are served alongside those on `2025-11-25`. Every change is tested against Pi-hole FTL v6.8 as well as v6.7.
+
+Some tools now refuse what they used to do quietly, and the macOS binaries need macOS 13. Read **Upgrading from v0.9.0** before you update.
+
+### Upgrading from v0.9.0
+
+Most setups need no changes. These are the differences you might notice.
+
+- **macOS 13 Ventura or later.** Go 1.27 raised the minimum for the macOS binaries. v0.9.0 is the last release that runs on macOS 12.
+- **Startup checks.**
+  - These instance names now fail at startup: `all`, `clients`, `domains`, `lists`, `instances`, `status` and `summary`. Rename the instance.
+  - A `PIHOLE_URL` that redirects is now an error rather than being followed. The error says what to set it to; for a proxy that switches to HTTPS, that is the `https://` address.
+- **Backups.**
+  - Read-only mode no longer offers `pihole_teleporter_export`.
+  - An export is always a new `.zip` file: it never replaces an existing one, and it takes one Pi-hole at a time rather than `instance=all`.
+  - `pihole_teleporter_import` takes a backup of the current configuration first; `snapshot=false` skips it.
+- **Configuration.** `pihole_config_set`, `pihole_config_add_value` and `pihole_config_remove_value` refuse:
+  - the settings that can run programs or read files, which their descriptions name;
+  - values containing a line break;
+  - for `pihole_config_set`, any request holding a key Pi-hole does not recognise.
+
+  `pihole_config_set` replies with what changed rather than the whole configuration.
+- **Other refusals.**
+  - The update tools refuse an entry that does not exist, where they used to create it; use the add tools.
+  - `pihole_dns_set_blocking` refuses `blocking=true` with a timer while blocking is already on, since FTL v6.8 would switch it off when the timer ends.
+  - `pihole_lists_add` refuses `file://` lists on FTL before v6.5.
+  - `pihole_instance_sync` refuses a prune that would empty a category on the target.
+- **Waits.** Changes that make FTL restart, such as CNAME records, upstream servers or cache size, now return once FTL is back, about two seconds later.
+- **Prompts with `PIHOLE_TOOLSETS`.** A prompt is offered when the tools it cannot do without are selected, and it names any step to skip.
+- **Output.**
+  - `pihole_info_system`'s structured output drops `disk_percent` and `dns_running`, which were always zero and false, and reports memory in KiB.
+  - `pihole_stats_database_upstreams` no longer shows a response time, which FTL never records for that range.
+  - The log tools show the newest lines.
+
 ### Security
 
 - **Text from the network reached replies as it was, so it could pass for the server's own words.** Anyone who can make a device query a domain, name a device, or reach the web interface chooses some of what Pi-hole records: queried domains, DHCP hostnames, client user agents, log lines. A line break or backtick in one could start a heading, a list item or a code block in a reply. Every such value is now flattened onto its line, with line breaks and control characters turned to spaces and text direction controls dropped, in text, CSV, structured output and error replies alike, and values shown between backticks or in a fenced block get a fence no backtick in them can close. Nothing else changes, so a domain, regex rule, list address or group name read from a reply still works when given back to a write tool. The server instructions also say that this text is data, not instructions.
@@ -29,6 +76,17 @@ The release body on GitHub for each tagged version is sourced from the matching 
 - **`PIHOLE_BACKUP_DIR`** confines teleporter backups to one directory: exports are written only inside it, and imports read only from it. The server never removes anything there. Without it, the backups the server names in the system temp directory are removed after a day, as before, and the export now says so.
 - **The server speaks MCP revision `2026-07-28` as well as `2025-11-25`.** A client on the newer revision sends no handshake, carries its protocol version, identity and capabilities in each request, and learns what the server offers from `server/discover`; it is now served that way, from the same binary and on every transport, alongside clients on the older revision. Read-only mode and `PIHOLE_TOOLSETS` hold for both: a hidden tool is neither listed nor callable whichever revision the request arrives on, and new tests drive both eras over the wire, including against a live Pi-hole, to keep it that way.
 - **A read tool's result is capped at 512 KiB.** Nothing an ordinary call returns comes close, since a full configuration read is about 6 KiB, but a call such as `instance=all` across several large Pi-holes could produce megabytes, which a client may truncate without saying so or spend a whole context window on. A result over the cap is replaced by an error naming the tool and how to ask for less: `limit` and `offset`, `detail=minimal`, a narrower time range, or one instance. Write tools are never capped: by the time a result is measured the change has been made, and replacing the result would hide what changed, including the backup path a sync reports.
+
+### Changed
+
+- **The `investigate_domain` prompt checks local DNS and CNAME records**, the usual answer to why a domain resolves somewhere unexpected.
+- **Instance names that cannot work are refused at startup.** `all` (which `instance=all` already means), the first segment of a resource template such as `clients`, control characters and names over 64 characters. Names are now escaped in resource URIs, so a name with a space keeps working.
+- **Backups the server names itself start with `pihole-mcp-`, and only those are cleaned up after a day.** The old patterns also matched a backup someone had named, such as `pihole-backup-before-upgrade.zip`, in the temp directory.
+- **`pihole_teleporter_import` backs up the current configuration before importing**, as `pihole_instance_sync` already does before changing a target, and says where the backup is, so an import can be rolled back. `snapshot=false` skips it. `mode=plan` lists what the archive holds and what an import would replace, without importing anything. Where the archive's own configuration keeps the gravity database somewhere else, the plan follows it, as Pi-hole does, and says so when it cannot read that setting.
+- **Every change is now tested against Pi-hole FTL v6.8 as well as v6.7.** The integration tests and the end-to-end suite ran against Pi-holes pinned at FTL v6.7 (`pihole/pihole:2026.07.2`), and the Dependabot job meant to propose newer Pi-hole images had failed every week since 28 September, the first run after a newer image existed, so nothing exercised FTL v6.7.1 or v6.8. CI now runs both suites against a pair of Pi-holes on FTL v6.8 (`2026.10.1`) and another on FTL v6.7, and a change must pass on both. The development Pi-holes started by `just dev-up` move to `2026.10.1`.
+- **For clients on MCP revision `2026-07-28`, the HTTP rate limit is the per-address ceiling alone.** That revision removes the `Mcp-Session-Id` header, so such a client has no session bucket and is charged only to its address's ceiling, four times `PIHOLE_RATE_LIMIT`, shared with any other such client behind the same address. Clients on earlier revisions are limited exactly as before. The README now says so.
+- **`pihole_dns_set_blocking` is no longer marked idempotent.** Repeating a call with a timer restarts the countdown, so a client that replayed one after an unclear outcome could leave blocking off for longer than asked. The description now says so.
+- **`pihole_teleporter_import` refuses a file larger than 50 MiB before reading it.** That is FTL's own limit for an upload. The previous 512 MiB allowance let a file Pi-hole was always going to reject be read into memory and sent first. A real export is a few MB.
 
 ### Fixed
 
@@ -70,17 +128,6 @@ The release body on GitHub for each tagged version is sourced from the matching 
 - **A wrong password was reported as `authentication failed: HTTP 401`.** FTL refuses a login with its reason (`password incorrect`) in a different shape from its other errors, and the reason was dropped. It is now kept. Present since v0.6.0.
 - **Each Pi-hole's own `status` and `summary` resources answered as the default ones.** In multi-instance mode, reading `pihole://<instance>/status` returned contents labelled `pihole://status`, so a client filing them by URI put every instance's figures under the default's. Each now carries the URI that was read and names its instance in the heading. Present since v0.6.0.
 
-### Changed
-
-- **The `investigate_domain` prompt checks local DNS and CNAME records**, the usual answer to why a domain resolves somewhere unexpected.
-- **Instance names that cannot work are refused at startup.** `all` (which `instance=all` already means), the first segment of a resource template such as `clients`, control characters and names over 64 characters. Names are now escaped in resource URIs, so a name with a space keeps working.
-- **Backups the server names itself start with `pihole-mcp-`, and only those are cleaned up after a day.** The old patterns also matched a backup someone had named, such as `pihole-backup-before-upgrade.zip`, in the temp directory.
-- **`pihole_teleporter_import` backs up the current configuration before importing**, as `pihole_instance_sync` already does before changing a target, and says where the backup is, so an import can be rolled back. `snapshot=false` skips it. `mode=plan` lists what the archive holds and what an import would replace, without importing anything. Where the archive's own configuration keeps the gravity database somewhere else, the plan follows it, as Pi-hole does, and says so when it cannot read that setting.
-- **Every change is now tested against Pi-hole FTL v6.8 as well as v6.7.** The integration tests and the end-to-end suite ran against Pi-holes pinned at FTL v6.7 (`pihole/pihole:2026.07.2`), and the Dependabot job meant to propose newer Pi-hole images had failed every week since 28 September, the first run after a newer image existed, so nothing exercised FTL v6.7.1 or v6.8. CI now runs both suites against a pair of Pi-holes on FTL v6.8 (`2026.10.1`) and another on FTL v6.7, and a change must pass on both. The development Pi-holes started by `just dev-up` move to `2026.10.1`.
-- **For clients on MCP revision `2026-07-28`, the HTTP rate limit is the per-address ceiling alone.** That revision removes the `Mcp-Session-Id` header, so such a client has no session bucket and is charged only to its address's ceiling, four times `PIHOLE_RATE_LIMIT`, shared with any other such client behind the same address. Clients on earlier revisions are limited exactly as before. The README now says so.
-- **`pihole_dns_set_blocking` is no longer marked idempotent.** Repeating a call with a timer restarts the countdown, so a client that replayed one after an unclear outcome could leave blocking off for longer than asked. The description now says so.
-- **`pihole_teleporter_import` refuses a file larger than 50 MiB before reading it.** That is FTL's own limit for an upload. The previous 512 MiB allowance let a file Pi-hole was always going to reject be read into memory and sent first. A real export is a few MB.
-
 ### Dependencies
 
 - Go toolchain go1.26.7 to go1.27.3 (see Security above)
@@ -88,6 +135,53 @@ The release body on GitHub for each tagged version is sourced from the matching 
 - OpenTelemetry (`go.opentelemetry.io/otel`, its SDK and the OTLP HTTP exporter) 1.46.0 to 1.47.0, `golang.org/x/time` 0.15.0 to 0.16.0, `golang.org/x/sys` 0.47.0 to 0.49.0, `golang.org/x/text` 0.41.0 to 0.43.0
 - `golang:1.27-alpine` builder image for the root `Dockerfile`, and `gcr.io/distroless/static-debian13` base image digest `f2ea270` to `4488103`
 - Development tooling: golangci-lint 2.12 to 2.15, which is the first line with Go 1.27 support, and GoReleaser 2.18.1 to 2.19.0
+
+### Installation
+
+**MCP Registry.** Add by name in any client that supports registry install:
+```
+io.github.hexamatic/pihole-mcp
+```
+
+**Homebrew (macOS and Linux):**
+```
+brew install hexamatic/tap/pihole-mcp
+```
+
+**Scoop (Windows):**
+```
+scoop bucket add hexamatic https://github.com/hexamatic/scoop-bucket
+scoop install pihole-mcp
+```
+
+**Go install:**
+```
+go install github.com/hexamatic/pihole-mcp/cmd/pihole-mcp@v0.10.0
+```
+
+**Docker (multi-arch):**
+```
+docker pull ghcr.io/hexamatic/pihole-mcp:0.10.0
+```
+
+**Binary download:** grab the archive, `.deb` or `.rpm` for your platform from the release assets. Every archive is checksummed and cosign-signed, and ships with an SPDX SBOM and SLSA build provenance, as do the container images. [SECURITY.md](https://github.com/hexamatic/pihole-mcp/blob/main/SECURITY.md#verifying-release-artefacts) has the command to verify each.
+
+### Requirements
+
+- Pi-hole v6.2 or later with the REST API enabled, verified against FTL v6.8 and v6.7.
+  - Two tools need more: `pihole_config_properties` requires v6.6.1 and `pihole_action_flush_network` requires v6.3.
+  - Every FTL release before v6.8 is affected by published security advisories, and the server says which.
+- An admin password or [application password](https://docs.pi-hole.net/api/auth/). An application password can change settings and, on FTL v6.8, export backups, only with `webserver.api.app_sudo` turned on.
+- macOS 13 Ventura or later for the macOS binaries.
+- Docker, if installing through the MCP Registry listing, which points at the container image.
+
+### Configuration
+
+One new environment variable, optional. An existing configuration needs no changes unless an instance carries one of the reserved names listed under **Upgrading from v0.9.0**.
+
+| Variable | What it does |
+|---|---|
+| `PIHOLE_BACKUP_DIR` | An existing directory to keep teleporter backups in. Exports are written only inside it, imports read only from it, and the server never removes anything there. Unset, backups go to the system temp directory, where the server removes its own after a day. |
 
 ## [v0.9.0] - 2026-09-11
 
@@ -698,7 +792,8 @@ docker pull ghcr.io/hexamatic/pihole-mcp:0.1.0
 
 See the [README](https://github.com/hexamatic/pihole-mcp#readme) for client-specific setup guides (Claude Desktop, Cursor, Windsurf, VS Code, Cline).
 
-[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/hexamatic/pihole-mcp/compare/v0.10.0...HEAD
+[v0.10.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.9.0...v0.10.0
 [v0.9.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.8.1...v0.9.0
 [v0.8.1]: https://github.com/hexamatic/pihole-mcp/compare/v0.8.0...v0.8.1
 [v0.8.0]: https://github.com/hexamatic/pihole-mcp/compare/v0.7.0...v0.8.0
