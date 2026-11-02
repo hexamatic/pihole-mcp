@@ -161,3 +161,28 @@ func TestTeleporterExport_KeepsADayOldFileAtOutputPath(t *testing.T) {
 	}
 	rec.AssertNone(t, "", "")
 }
+
+func TestTeleporterExport_RefusesAPathThatIsNotWrittenPlainly(t *testing.T) {
+	// With ".." after a missing directory, the existence check and the
+	// clean-up saw a path that did not resolve while the open saw it
+	// cleaned, so a day-old backup at the cleaned path was replaced.
+	dir := withBackupDir(t)
+	existing := filepath.Join(dir, "pihole-mcp-backup-123.zip")
+	if err := os.WriteFile(existing, []byte("precious"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(existing, old, old); err != nil {
+		t.Fatal(err)
+	}
+	rec := exportClient(t)
+	msg := callToolExpectError(t, teleporterExportHandler, newTestClient(t, rec),
+		map[string]any{"output_path": dir + "/missing/../pihole-mcp-backup-123.zip"})
+	if !strings.Contains(msg, "written plainly") {
+		t.Errorf("expected the path to be refused, got: %s", msg)
+	}
+	if data, _ := os.ReadFile(existing); string(data) != "precious" { //nolint:gosec // test fixture
+		t.Errorf("the existing backup is now %q", data)
+	}
+	rec.AssertNone(t, "", "")
+}

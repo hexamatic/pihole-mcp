@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,7 +70,7 @@ func WithTLSSkipVerify(skip bool) Option {
 		transport.TLSClientConfig = &tls.Config{
 			InsecureSkipVerify: true, //nolint:gosec // explicit user opt-in for self-signed certificates
 		}
-		c.httpClient.Transport = transport
+		c.httpClient.Transport = &noRedirectTransport{base: transport}
 	}
 }
 
@@ -90,6 +91,37 @@ type RedirectError struct {
 func (e *RedirectError) Error() string {
 	return fmt.Sprintf("pi-hole's address redirected to %s; set PIHOLE_URL to the address it redirects to, "+
 		"since this server does not follow redirects", e.Location)
+}
+
+// noRedirectTransport turns any redirect into a *RedirectError before
+// net/http sees it. net/http parses the Location header before it consults
+// CheckRedirect, and when the header does not parse its error quotes it raw,
+// credentials and all, so refusing in CheckRedirect alone was too late.
+type noRedirectTransport struct {
+	base http.RoundTripper
+}
+
+// RoundTrip sends req through the wrapped transport and returns a redirect
+// as a *RedirectError rather than a response.
+func (t *noRedirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil || resp.StatusCode < 300 || resp.StatusCode >= 400 || resp.Header.Get("Location") == "" {
+		return resp, err
+	}
+	_ = resp.Body.Close()
+	return nil, &RedirectError{Location: redactLocation(req.URL, resp.Header.Get("Location"))}
+}
+
+// redactLocation resolves a Location header against the request and returns
+// it without credentials or query, or a placeholder when it does not parse.
+func redactLocation(base *url.URL, loc string) string {
+	u, err := base.Parse(loc)
+	if err != nil {
+		return "an address that could not be read"
+	}
+	u.User = nil
+	u.RawQuery = ""
+	return u.String()
 }
 
 // refuseRedirect stops the HTTP client following a redirect. Go copies the
@@ -129,6 +161,7 @@ func New(baseURL, password string, opts ...Option) *Client {
 		password: password,
 		httpClient: &http.Client{
 			Timeout:       30 * time.Second,
+			Transport:     &noRedirectTransport{base: http.DefaultTransport},
 			CheckRedirect: refuseRedirect,
 		},
 		retry: RetryPolicy{

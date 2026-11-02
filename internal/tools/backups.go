@@ -101,6 +101,13 @@ func checkOutputPath(outputPath string) error {
 	if !filepath.IsAbs(outputPath) {
 		return fmt.Errorf("output_path: must be an absolute path")
 	}
+	// The existence check, the clean-up's keep list and the open must all
+	// see one path. With ".." after a missing directory the first two saw a
+	// path that did not resolve while the open saw it cleaned, and a day-old
+	// backup at the cleaned path was deleted and replaced.
+	if filepath.Clean(outputPath) != outputPath {
+		return fmt.Errorf("output_path: must be written plainly, without \"..\", \".\" or doubled separators (as %s)", filepath.Clean(outputPath))
+	}
 	if !strings.EqualFold(filepath.Ext(outputPath), ".zip") {
 		return fmt.Errorf("output_path: must end in .zip")
 	}

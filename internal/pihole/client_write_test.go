@@ -325,3 +325,22 @@ func TestClient_DoesNotFollowRedirects(t *testing.T) {
 		t.Errorf("the error shows the redirect's credentials: %v", err)
 	}
 }
+
+func TestClient_AnUnreadableRedirectDoesNotShowItsCredentials(t *testing.T) {
+	// net/http parses Location before CheckRedirect runs, and its error for
+	// one that does not parse quoted it raw.
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", "http://user:hunter2@example.invalid/%zz")
+		w.WriteHeader(http.StatusFound)
+	}))
+	t.Cleanup(front.Close)
+
+	err := New(front.URL, "secret", WithRetry(0, time.Second)).Get(context.Background(), "/info/version", nil)
+	var redirect *RedirectError
+	if !errors.As(err, &redirect) {
+		t.Fatalf("err = %T %v, want a RedirectError", err, err)
+	}
+	if strings.Contains(err.Error(), "hunter2") {
+		t.Errorf("the error shows the redirect's credentials: %v", err)
+	}
+}
