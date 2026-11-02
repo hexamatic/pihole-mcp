@@ -138,14 +138,14 @@ PIHOLE_URL=http://192.168.1.2 PIHOLE_PASSWORD=your-password pihole-mcp -check
 ```
 
 ```text
-pihole-mcp 0.9.0
+pihole-mcp 0.10.0
 
-PASS  primary (http://192.168.1.2)  core v6.1.4, FTL v6.7
+PASS  primary (http://192.168.1.2)  core v6.5, FTL v6.8
 
 All 1 instance(s) reachable and authenticated.
 ```
 
-It exits non-zero if any instance fails, and prints what to change. Worth running before you wire the server into a client: most clients hide the server's output, so a bad URL or password looks the same as a server that never started.
+It exits non-zero if any instance fails, and prints what to change. It also warns when a Pi-hole runs an FTL release affected by published security advisories, naming the release that fixes them. Worth running before you wire the server into a client: most clients hide the server's output, so a bad URL or password looks the same as a server that never started.
 
 ## Configuration
 

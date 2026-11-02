@@ -176,6 +176,10 @@ jobs:
           subject-name: ghcr.io/hexamatic/pihole-mcp
           subject-digest: ${{ steps.images.outputs.digest_1 }}
           push-to-registry: true
+          # v4 also creates a storage record when pushing to a registry,
+          # which needs the artifact-metadata permission this job does not
+          # hold. The attestation in the registry is all SECURITY.md relies on.
+          create-storage-record: false
 
       - name: Attest the slim container image
         if: always() && steps.images.outputs.digest_2 != ''
@@ -184,6 +188,7 @@ jobs:
           subject-name: ghcr.io/hexamatic/pihole-mcp
           subject-digest: ${{ steps.images.outputs.digest_2 }}
           push-to-registry: true
+          create-storage-record: false
 
       # goreleaser's own error names the pipe, but it scrolls past in a long
       # log. This restates it as the one question worth answering on a failed
