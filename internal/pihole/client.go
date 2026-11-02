@@ -114,8 +114,9 @@ func (e *RedirectError) Error() string {
 }
 
 // newRedirectError describes a redirect from the request URL from to loc,
-// with credentials and query left out.
-func newRedirectError(from *url.URL, loc string) *RedirectError {
+// with credentials and query left out. apiRoot is the path of PIHOLE_URL's
+// API root, such as "/api" or "/pihole/api", or "" when it is not known.
+func newRedirectError(from *url.URL, loc, apiRoot string) *RedirectError {
 	to, err := from.Parse(loc)
 	if err != nil {
 		return &RedirectError{}
@@ -124,7 +125,18 @@ func newRedirectError(from *url.URL, loc string) *RedirectError {
 	to.RawQuery = ""
 	to.Fragment = ""
 	e := &RedirectError{Location: to.String()}
-	i := strings.Index(to.Path, "/api/")
+	// Where the redirect kept the endpoint the request was for, Pi-hole's
+	// address is whatever comes before it. A proxy prefix can itself hold
+	// "/api/", so the first one is only the fallback.
+	i := -1
+	if endpoint, ok := strings.CutPrefix(from.Path, apiRoot); ok && apiRoot != "" {
+		if tail := "/api" + endpoint; strings.HasSuffix(to.Path, tail) {
+			i = len(to.Path) - len(tail)
+		}
+	}
+	if i < 0 {
+		i = strings.Index(to.Path, "/api/")
+	}
 	if i < 0 && strings.HasSuffix(to.Path, "/api") {
 		i = len(to.Path) - len("/api")
 	}
@@ -143,6 +155,8 @@ func newRedirectError(from *url.URL, loc string) *RedirectError {
 // credentials and all, so refusing in CheckRedirect alone was too late.
 type noRedirectTransport struct {
 	base http.RoundTripper
+	// apiRoot is the path of the client's API root, set by New.
+	apiRoot string
 }
 
 // RoundTrip sends req through the wrapped transport and returns a redirect
@@ -153,7 +167,7 @@ func (t *noRedirectTransport) RoundTrip(req *http.Request) (*http.Response, erro
 		return resp, err
 	}
 	_ = resp.Body.Close()
-	return nil, newRedirectError(req.URL, resp.Header.Get("Location"))
+	return nil, newRedirectError(req.URL, resp.Header.Get("Location"), t.apiRoot)
 }
 
 // refuseRedirect stops the HTTP client following a redirect. Go copies the
@@ -166,7 +180,7 @@ func refuseRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) > 0 {
 		from = via[len(via)-1].URL
 	}
-	return newRedirectError(from, req.URL.String())
+	return newRedirectError(from, req.URL.String(), "")
 }
 
 // send performs one HTTP request. A refused redirect comes back as the bare
@@ -204,6 +218,11 @@ func New(baseURL, password string, opts ...Option) *Client {
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+	if t, ok := c.httpClient.Transport.(*noRedirectTransport); ok {
+		if u, err := url.Parse(c.baseURL); err == nil {
+			t.apiRoot = strings.TrimRight(u.Path, "/") + "/api"
+		}
 	}
 	return c
 }

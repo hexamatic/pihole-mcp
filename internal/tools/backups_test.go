@@ -136,8 +136,21 @@ func TestReapStaleBackups_KeepsEverythingInTheBackupDirectory(t *testing.T) {
 func TestTeleporterExport_SaysWhenTheBackupWillBeRemoved(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	text := callTool(t, teleporterExportHandler, newTestClient(t, exportClient(t)), nil)
-	if !strings.Contains(text, "removes its own backups after a day") {
+	if !strings.Contains(text, "which it removes after a day") {
 		t.Errorf("an export to the temp directory should say it is removed after a day, got: %s", text)
+	}
+
+	// A name of the same form chosen through output_path is cleaned up too,
+	// so the reply must not promise to keep it.
+	named := filepath.Join(os.TempDir(), "pihole-mcp-backup-123.zip")
+	text = callTool(t, teleporterExportHandler, newTestClient(t, exportClient(t)), map[string]any{"output_path": named})
+	if !strings.Contains(text, "which it removes after a day") {
+		t.Errorf("an output_path the clean-up matches should say it is removed after a day, got: %s", text)
+	}
+	other := filepath.Join(os.TempDir(), "before-upgrade.zip")
+	text = callTool(t, teleporterExportHandler, newTestClient(t, exportClient(t)), map[string]any{"output_path": other})
+	if !strings.Contains(text, "The file persists on disk") {
+		t.Errorf("an output_path the clean-up leaves alone should say it is kept, got: %s", text)
 	}
 
 	withBackupDir(t)

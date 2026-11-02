@@ -359,14 +359,34 @@ func TestRedirectError_SaysWhatToSetPIHOLE_URLTo(t *testing.T) {
 		{"sign-in page", "https://sso.lan/login?rd=pi.lan",
 			[]string{"redirected to https://sso.lan/login,", "not Pi-hole's API", "sign-in page"}},
 		{"unreadable", "http://pi.lan/%zz", []string{"could not be read"}},
+		{"prefix holding /api/", "https://proxy.lan/api/pihole/api/auth",
+			[]string{"set PIHOLE_URL to https://proxy.lan/api/pihole,"}},
+		{"plain prefix", "https://proxy.lan/x/api/auth",
+			[]string{"set PIHOLE_URL to https://proxy.lan/x,"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			msg := newRedirectError(from, tc.loc).Error()
+			msg := newRedirectError(from, tc.loc, "/api").Error()
 			for _, w := range tc.want {
 				if !strings.Contains(msg, w) {
 					t.Errorf("message %q lacks %q", msg, w)
 				}
 			}
 		})
+	}
+}
+
+func TestClient_RedirectErrorKeepsAProxyPrefix(t *testing.T) {
+	// The endpoint the request was for marks where Pi-hole's address ends,
+	// even when the proxy's own prefix holds "/api/".
+	// The login comes first, at <PIHOLE_URL>/api/auth.
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", "https://proxy.example/api/pihole/sub/api/auth")
+		w.WriteHeader(http.StatusPermanentRedirect)
+	}))
+	t.Cleanup(front.Close)
+
+	err := New(front.URL+"/sub/", "secret", WithRetry(0, time.Second)).Get(context.Background(), "/info/version", nil)
+	if err == nil || !strings.Contains(err.Error(), "set PIHOLE_URL to https://proxy.example/api/pihole/sub,") {
+		t.Errorf("err = %v, want the proxy prefix kept", err)
 	}
 }

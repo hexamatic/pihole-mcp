@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -113,9 +114,9 @@ func teleporterExportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 
 		keep := "The file persists on disk; deleting it is your responsibility."
-		if reapedBackup(out.Name(), outputPath) {
-			keep = "It is in the system temp directory, where this server removes its own backups after a day. " +
-				"Move it, or set PIHOLE_BACKUP_DIR or pass output_path, to keep it."
+		if reapedBackup(out.Name()) {
+			keep = "It is in the system temp directory under a name of the kind this server gives its own backups, " +
+				"which it removes after a day. Move it, or use another name or directory, to keep it."
 		}
 		return mcp.NewToolResultText(fmt.Sprintf(
 			"**Backup saved.** File: %s (%s bytes, %s). %s",
@@ -232,12 +233,13 @@ const maxPlanTOML = 4 << 20
 
 // archiveGravityPath reads files.gravity from an archive's pihole.toml, as
 // FTL writes it: a gravity key under a [files] table, or a dotted
-// files.gravity key at the top. ok is false when the setting is absent,
-// which leaves FTL's current one in force, or is written some other way.
-func archiveGravityPath(f *zip.File) (path string, ok bool) {
+// files.gravity key at the top. set is false when the setting is absent,
+// which leaves FTL's current one in force. unreadable is set when the
+// setting is there but written in a form this cannot read.
+func archiveGravityPath(f *zip.File) (path string, set, unreadable bool) {
 	r, err := f.Open()
 	if err != nil {
-		return "", false
+		return "", false, true
 	}
 	defer func() { _ = r.Close() }()
 	table := ""
@@ -258,27 +260,42 @@ func archiveGravityPath(f *zip.File) (path string, ok bool) {
 		}
 		key = strings.TrimSpace(key)
 		if (table == "files" && key == "gravity") || (table == "" && key == "files.gravity") {
-			return tomlString(strings.TrimSpace(value))
+			path, ok := tomlString(strings.TrimSpace(value))
+			return path, ok, !ok
+		}
+	}
+	if sc.Err() != nil {
+		return "", false, true
+	}
+	return "", false, false
+}
+
+// tomlString reads the single-line TOML string at the start of value,
+// ignoring what follows it, such as a comment. A basic string's escapes are
+// decoded; a multi-line string is not read.
+func tomlString(value string) (string, bool) {
+	if value == "" || strings.HasPrefix(value, `"""`) || strings.HasPrefix(value, "'''") {
+		return "", false
+	}
+	switch value[0] {
+	case '\'':
+		end := strings.IndexByte(value[1:], '\'')
+		if end < 1 {
+			return "", false
+		}
+		return value[1 : end+1], true
+	case '"':
+		for i := 1; i < len(value); i++ {
+			switch value[i] {
+			case '\\':
+				i++
+			case '"':
+				s, err := strconv.Unquote(value[:i+1])
+				return s, err == nil && s != ""
+			}
 		}
 	}
 	return "", false
-}
-
-// tomlString reads a TOML string without escapes at the start of value,
-// ignoring a trailing comment.
-func tomlString(value string) (string, bool) {
-	if value == "" || (value[0] != '"' && value[0] != '\'') {
-		return "", false
-	}
-	end := strings.IndexByte(value[1:], value[0])
-	if end < 0 {
-		return "", false
-	}
-	s := value[1 : end+1]
-	if value[0] == '"' && strings.ContainsRune(s, '\\') {
-		return "", false
-	}
-	return s, s != ""
 }
 
 // importPlan lists what an archive holds and what an import with the given
@@ -311,6 +328,7 @@ func importPlan(archive *os.File, info os.FileInfo, gravityEntry string, config,
 	fmt.Fprintf(&b, "**Import plan for %s.** Nothing has been changed.\n", info.Name())
 	replaces := 0
 	moved := ""
+	unread := false
 	for _, f := range zr.File {
 		part, known := parts[f.Name]
 		switch {
@@ -327,7 +345,9 @@ func importPlan(archive *os.File, info os.FileInfo, gravityEntry string, config,
 		// configuration part-way through. Entries after it are matched
 		// against the archive's own files.gravity (src/zip/teleporter.c).
 		if f.Name == "etc/pihole/pihole.toml" && config {
-			if path, ok := archiveGravityPath(f); ok {
+			path, set, unreadable := archiveGravityPath(f)
+			unread = unread || unreadable
+			if set {
 				entry := strings.TrimPrefix(path, "/")
 				if _, taken := parts[entry]; !taken {
 					gp := parts[gravityEntry]
@@ -337,6 +357,10 @@ func importPlan(archive *os.File, info os.FileInfo, gravityEntry string, config,
 				}
 			}
 		}
+	}
+	if unread {
+		b.WriteString("\nThe archive's configuration sets files.gravity in a form this plan cannot read, so the gravity entry " +
+			"Pi-hole imports after etc/pihole/pihole.toml may not be the one shown.\n")
 	}
 	if assumed {
 		b.WriteString("\nPi-hole's gravity database location (files.gravity) could not be read, so this assumes the default, etc/pihole/gravity.db.\n")

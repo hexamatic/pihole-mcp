@@ -254,10 +254,19 @@ files:
 }
 
 // reapedBackup reports whether reapStaleBackups will remove the file at path
-// once it is old enough: a name the server generated, in the system temp
-// directory, with no PIHOLE_BACKUP_DIR set.
-func reapedBackup(path, outputPath string) bool {
-	return outputPath == "" && currentBackupDir() == "" && generatedBackupName(filepath.Base(path))
+// once it is old enough: no PIHOLE_BACKUP_DIR is set, and the file is in the
+// system temp directory under a name of the form the server generates,
+// whether the server chose it or an output_path did.
+func reapedBackup(path string) bool {
+	if currentBackupDir() != "" || !generatedBackupName(filepath.Base(path)) {
+		return false
+	}
+	dir, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		return false
+	}
+	tmp, err := os.Stat(os.TempDir())
+	return err == nil && os.SameFile(dir, tmp)
 }
 
 // generatedBackupName reports whether name is one createBackupFile made

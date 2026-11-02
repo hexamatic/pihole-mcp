@@ -275,3 +275,23 @@ func TestApplyPlan_ARestartWhileWaitingForTheLockIsNotTheSyncs(t *testing.T) {
 			res.Restarted, res.RestartError)
 	}
 }
+
+func TestApplyPlan_CNAMEChangesAlreadyMadeAreNotWritten(t *testing.T) {
+	// A second sync planned before the first applied the same records. It
+	// wrote an unchanged array, which FTL does not restart for, and then
+	// waited out the restart timeout and reported a failure.
+	src := cnameSource(t, "a.home,nas.home")
+	tgtFake, tgt, rec := cnameTarget(t, nil)
+	d, err := pihole.ComputeDiff(context.Background(), src, tgt, []pihole.SyncCategory{pihole.CategoryCNAME})
+	if err != nil {
+		t.Fatalf("ComputeDiff: %v", err)
+	}
+	tgtFake.SetCNAMEs("a.home,nas.home")
+
+	res := pihole.ApplyPlan(context.Background(), tgt, d, false)
+	if res.Failed != 0 || res.Applied != 1 || res.Restarted || res.RestartError != "" {
+		t.Errorf("applied %d failed %d, Restarted %v, RestartError %q; want the step applied with no restart",
+			res.Applied, res.Failed, res.Restarted, res.RestartError)
+	}
+	rec.AssertNone(t, "PATCH", "")
+}
