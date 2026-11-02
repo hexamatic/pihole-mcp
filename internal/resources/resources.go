@@ -4,6 +4,7 @@ package resources
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/hexamatic/pihole-mcp/internal/format"
@@ -92,7 +93,7 @@ func registerPerInstance(s *server.MCPServer, r *pihole.Registry) {
 		}
 
 		s.AddResource(
-			mcp.NewResource(fmt.Sprintf("pihole://%s/status", name),
+			mcp.NewResource(instanceURI(name, "status"),
 				fmt.Sprintf("Pi-hole Status (%s)", name),
 				mcp.WithResourceDescription(fmt.Sprintf("Blocking status, version and health for the %q instance.", name)),
 				mcp.WithMIMEType("text/markdown"),
@@ -101,7 +102,7 @@ func registerPerInstance(s *server.MCPServer, r *pihole.Registry) {
 		)
 
 		s.AddResource(
-			mcp.NewResource(fmt.Sprintf("pihole://%s/summary", name),
+			mcp.NewResource(instanceURI(name, "summary"),
 				fmt.Sprintf("Query Summary (%s)", name),
 				mcp.WithResourceDescription(fmt.Sprintf("Query statistics for the %q instance.", name)),
 				mcp.WithMIMEType("text/markdown"),
@@ -109,6 +110,13 @@ func registerPerInstance(s *server.MCPServer, r *pihole.Registry) {
 			summaryResourceHandler(client, name),
 		)
 	}
+}
+
+// instanceURI is the URI of one instance's own copy of a resource. The name
+// is escaped, so an instance called "Living Room" publishes
+// pihole://Living%20Room/status rather than a URI with a space in it.
+func instanceURI(name, resource string) string {
+	return "pihole://" + url.PathEscape(name) + "/" + resource
 }
 
 func instancesResourceHandler(r *pihole.Registry) server.ResourceHandlerFunc {
@@ -122,7 +130,7 @@ func instancesResourceHandler(r *pihole.Registry) server.ResourceHandlerFunc {
 			if i == 0 {
 				b.WriteString(" (default)")
 			}
-			fmt.Fprintf(&b, " — `pihole://%s/status`, `pihole://%s/summary`\n", name, name)
+			fmt.Fprintf(&b, " — `%s`, `%s`\n", instanceURI(name, "status"), instanceURI(name, "summary"))
 		}
 		b.WriteString("\nPass `instance` to any tool to target one, or `instance=all` " +
 			"on a read-only tool to query them all at once.")
@@ -212,14 +220,30 @@ func summaryResourceHandler(c *pihole.Client, instance string) server.ResourceHa
 	}
 }
 
+// templateValue returns the value a resource URI gives for a template's one
+// variable, decoded, so it can be escaped again for the API path. Spliced in
+// raw, a value carrying "/" or "?" addressed a different API route from the
+// one the URI named.
+func templateValue(uri, prefix string) (string, error) {
+	raw := strings.TrimPrefix(uri, prefix)
+	v, err := url.PathUnescape(raw)
+	if err != nil || v == "" {
+		return "", fmt.Errorf("%s is not a valid resource URI", uri)
+	}
+	return v, nil
+}
+
 func clientResourceHandler(c *pihole.Client) server.ResourceTemplateHandlerFunc {
 	return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 		// Extract client from URI: pihole://clients/{client}
 		uri := req.Params.URI
-		client := strings.TrimPrefix(uri, "pihole://clients/")
+		client, err := templateValue(uri, "pihole://clients/")
+		if err != nil {
+			return nil, err
+		}
 
 		var result pihole.ClientsResponse
-		if err := c.Get(ctx, "/clients/"+client, &result); err != nil {
+		if err := c.Get(ctx, "/clients/"+pihole.EscapePathSegment(client), &result); err != nil {
 			return nil, fmt.Errorf("getting client %s: %w", client, err)
 		}
 
@@ -246,6 +270,12 @@ func domainListResourceHandler(c *pihole.Client) server.ResourceTemplateHandlerF
 		// Extract type/kind from URI: pihole://domains/{type}/{kind}
 		uri := req.Params.URI
 		path := strings.TrimPrefix(uri, "pihole://domains/")
+		// Both segments go into the request path, so only the four lists
+		// that exist are accepted.
+		typ, kind, ok := strings.Cut(path, "/")
+		if !ok || (typ != "allow" && typ != "deny") || (kind != "exact" && kind != "regex") {
+			return nil, fmt.Errorf("%s names no domain list: use pihole://domains/{allow|deny}/{exact|regex}", uri)
+		}
 
 		var result pihole.DomainsResponse
 		if err := c.Get(ctx, "/domains/"+path, &result); err != nil {
@@ -271,10 +301,13 @@ func domainListResourceHandler(c *pihole.Client) server.ResourceTemplateHandlerF
 func listDetailResourceHandler(c *pihole.Client) server.ResourceTemplateHandlerFunc {
 	return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 		uri := req.Params.URI
-		address := strings.TrimPrefix(uri, "pihole://lists/")
+		address, err := templateValue(uri, "pihole://lists/")
+		if err != nil {
+			return nil, err
+		}
 
 		var result pihole.ListsResponse
-		if err := c.Get(ctx, "/lists/"+address, &result); err != nil {
+		if err := c.Get(ctx, "/lists/"+pihole.EscapePathSegment(address), &result); err != nil {
 			return nil, fmt.Errorf("getting list %s: %w", address, err)
 		}
 

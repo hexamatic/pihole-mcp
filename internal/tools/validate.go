@@ -3,8 +3,6 @@ package tools
 import (
 	"fmt"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -173,35 +171,6 @@ func validateURL(s string) error {
 	return nil
 }
 
-// validateBackupFilePath returns nil if path looks like a safe teleporter
-// import target: an absolute path to an existing, regular .zip file under
-// maxTeleporterFileSize. file_path is the only tool parameter passed straight
-// to os.Open (see the //nolint:gosec at buildMultipartBody), so this is the
-// one place that risk is caught before the open, rather than trusting the
-// caller.
-func validateBackupFilePath(path string) error {
-	if path == "" {
-		return fmt.Errorf("must not be empty")
-	}
-	if !filepath.IsAbs(path) {
-		return fmt.Errorf("must be an absolute path")
-	}
-	if !strings.EqualFold(filepath.Ext(path), ".zip") {
-		return fmt.Errorf("must be a .zip file")
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("cannot access file: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("must be a regular file")
-	}
-	if info.Size() > maxTeleporterFileSize {
-		return fmt.Errorf("must be at most %d bytes (got %d)", maxTeleporterFileSize, info.Size())
-	}
-	return nil
-}
-
 // validateMaxLength returns nil if len(s) <= maxRunes (counted in UTF-8
 // runes, not bytes). name is the human-readable field name surfaced in the
 // error message.
@@ -222,4 +191,33 @@ func validateIntRange(name string, v, minVal, maxVal int) error {
 		return fmt.Errorf("%s must be between %d and %d (got %d)", name, minVal, maxVal, v)
 	}
 	return nil
+}
+
+// The values the type and kind parameters may take. They go into the request
+// path or query, so any other value addressed something else: a type of
+// "deny/regex" stored an exact-match rule as a regex while the tool reported
+// the exact one, and an approval prompt showed one entry while another changed.
+var (
+	domainTypes = []string{"allow", "deny"}
+	domainKinds = []string{"exact", "regex"}
+	listTypes   = []string{"allow", "block"}
+)
+
+// checkEnum returns an error naming the allowed values when v is not one of
+// them.
+func checkEnum(name, v string, allowed []string) error {
+	for _, a := range allowed {
+		if v == a {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s must be one of %s (got %q)", name, strings.Join(allowed, ", "), v)
+}
+
+// checkDomainTypeKind validates a domain rule's type and kind.
+func checkDomainTypeKind(t, k string) error {
+	if err := checkEnum("type", t, domainTypes); err != nil {
+		return err
+	}
+	return checkEnum("kind", k, domainKinds)
 }

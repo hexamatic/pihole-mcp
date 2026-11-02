@@ -95,7 +95,15 @@ func dhcpDeleteLeaseHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError("Parameter 'ip' is required"), nil
 		}
 
-		if err := c.Delete(ctx, "/dhcp/leases/"+ip); err != nil {
+		// The address goes into the path, so it is parsed and written back in
+		// canonical form: "10.0.0.5/../.." used to reach a different route.
+		addr, err := validateIPAddress("ip", ip)
+		if err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+		ip = addr.String()
+
+		if err := c.Delete(ctx, "/dhcp/leases/"+pihole.EscapePathSegment(ip)); err != nil {
 			return toolError("delete DHCP lease", err), nil
 		}
 

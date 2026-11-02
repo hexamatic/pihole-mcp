@@ -4,6 +4,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/hexamatic/pihole-mcp/internal/pihole"
+
+	"github.com/mark3labs/mcp-go/server"
 )
 
 // writeTestFile creates a file of exactly size bytes at path. It truncates
@@ -175,13 +179,16 @@ func TestValidateDomainName_ExactStillRejectsRegexSyntax(t *testing.T) {
 	}
 }
 
-func TestValidateBackupFilePath(t *testing.T) {
+func TestOpenBackupForImport(t *testing.T) {
 	dir := t.TempDir()
 	zipPath := dir + "/backup.zip"
 	if err := writeTestFile(t, zipPath, 1024); err != nil {
 		t.Fatalf("writing test fixture: %v", err)
 	}
-	dirPath := dir // a directory, not a regular file
+	dirPath := dir + "/folder.zip" // a directory, not a regular file
+	if err := os.Mkdir(dirPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name    string
@@ -197,26 +204,72 @@ func TestValidateBackupFilePath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateBackupFilePath(tt.in)
+			f, _, err := openBackupForImport(tt.in)
+			if err == nil {
+				_ = f.Close()
+			}
 			if (err != nil) != tt.wantErr {
-				t.Errorf("validateBackupFilePath(%q) error = %v, wantErr %v", tt.in, err, tt.wantErr)
+				t.Errorf("openBackupForImport(%q) error = %v, wantErr %v", tt.in, err, tt.wantErr)
 			}
 		})
 	}
 }
 
-func TestValidateBackupFilePath_OverSizeCap(t *testing.T) {
+func TestOpenBackupForImport_OverSizeCap(t *testing.T) {
 	dir := t.TempDir()
 	zipPath := dir + "/huge.zip"
 	if err := writeTestFile(t, zipPath, maxTeleporterFileSize+1); err != nil {
 		t.Fatalf("writing oversized fixture: %v", err)
 	}
 
-	err := validateBackupFilePath(zipPath)
+	f, _, err := openBackupForImport(zipPath)
 	if err == nil {
+		_ = f.Close()
 		t.Fatal("expected an error for a file over the size cap")
 	}
 	if !strings.Contains(err.Error(), "at most") {
 		t.Errorf("expected a size-cap message, got: %v", err)
 	}
+}
+
+func TestTypeAndKindAreChecked(t *testing.T) {
+	// type and kind go into the request path or query, so a value such as
+	// "deny/regex" addressed a different list from the one the tool named.
+	rec := piholeHandler(nil)
+	c := newTestClient(t, rec)
+	for _, tc := range []struct {
+		name    string
+		handler func(*pihole.Registry) server.ToolHandlerFunc
+		args    map[string]any
+	}{
+		{"domains_add type", domainsAddHandler, map[string]any{"type": "deny/regex", "kind": "exact", "domain": "a.example"}},
+		{"domains_delete kind", domainsDeleteHandler, map[string]any{"type": "deny", "kind": "exact/../regex", "domain": "a.example"}},
+		{"domains_list kind", domainsListHandler, map[string]any{"kind": "regex?x"}},
+		{"lists_list type", listsListHandler, map[string]any{"type": "block&type=allow"}},
+		{"lists_add type", listsAddHandler, map[string]any{"type": "gravity", "address": "https://example.com/a.txt"}},
+		{"dhcp lease ip", dhcpDeleteLeaseHandler, map[string]any{"ip": "10.0.0.5/../../config"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			callToolExpectError(t, tc.handler, c, tc.args)
+		})
+	}
+	rec.AssertNone(t, "", "")
+}
+
+func TestListsAdd_FileListsNeedAFixedRelease(t *testing.T) {
+	// Before FTL v6.5 a file:// list could read any file Pi-hole could read.
+	version := func(v string) map[string]any {
+		return map[string]any{"version": map[string]any{"ftl": map[string]any{"local": map[string]any{"version": v}}}}
+	}
+	old := piholeHandler(map[string]any{"/info/version": version("v6.4.1")})
+	callToolExpectError(t, listsAddHandler, newTestClient(t, old), map[string]any{"type": "block", "address": "file:///etc/pihole/pihole.toml"})
+	old.AssertNone(t, "POST", "")
+
+	fixed := piholeHandler(map[string]any{"/info/version": version("v6.8"), "POST /lists": map[string]any{"lists": []any{}}})
+	callTool(t, listsAddHandler, newTestClient(t, fixed), map[string]any{"type": "block", "address": "file:///opt/lists/local.txt"})
+	fixed.AssertCount(t, "POST", "/lists", 1)
+
+	web := piholeHandler(map[string]any{"POST /lists": map[string]any{"lists": []any{}}})
+	callTool(t, listsAddHandler, newTestClient(t, web), map[string]any{"type": "block", "address": "https://example.com/list.txt"})
+	web.AssertNone(t, "GET", "/info/version")
 }

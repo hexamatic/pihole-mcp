@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,58 +17,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
-
-// staleBackupAge is how long a teleporter export or sync snapshot is kept in
-// the system temp directory before it is reaped. Both file families are the
-// caller's to collect promptly (see pihole_teleporter_export's description),
-// so this is a safety net against an unbounded temp directory, not the
-// primary cleanup path.
-const staleBackupAge = 24 * time.Hour
-
-// backupFileGlobs are the two filename patterns a backup lands under: an
-// on-demand teleporter export, and the rollback snapshot pihole_instance_sync
-// takes of the target before it applies (sync.go's exportSnapshot).
-var backupFileGlobs = []string{"pihole-backup-*.zip", "pihole-*-snapshot-*.zip"}
-
-// reapStaleBackups deletes files older than staleBackupAge matching
-// backupFileGlobs from the system temp directory. Best-effort: a failure to
-// glob, stat or remove one file is skipped rather than failing the caller —
-// this runs ahead of every new export, and a full temp directory is a worse
-// failure mode to compound than a few stale files left behind.
-//
-// keep names files to leave alone whatever their age: the archive an import
-// is about to read may be an old export, and the backup taken before that
-// import used to delete it first.
-func reapStaleBackups(keep ...string) {
-	var kept []os.FileInfo
-	for _, k := range keep {
-		if info, err := os.Stat(k); err == nil {
-			kept = append(kept, info)
-		}
-	}
-	cutoff := time.Now().Add(-staleBackupAge)
-	for _, pattern := range backupFileGlobs {
-		matches, err := filepath.Glob(filepath.Join(os.TempDir(), pattern))
-		if err != nil {
-			continue
-		}
-	files:
-		for _, m := range matches {
-			info, statErr := os.Stat(m)
-			if statErr != nil || info.ModTime().After(cutoff) {
-				continue
-			}
-			// Compared as files, not paths: the temp directory has more than
-			// one spelling on some systems (/var and /private/var on macOS).
-			for _, k := range kept {
-				if os.SameFile(info, k) {
-					continue files
-				}
-			}
-			_ = os.Remove(m)
-		}
-	}
-}
 
 // zipSignature is the local file header every zip archive starts with. FTL
 // checks the same four bytes before it will import an upload.
@@ -103,9 +50,13 @@ func openBackupStream(ctx context.Context, c *pihole.Client) (archive io.Reader,
 func RegisterTeleporter(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_teleporter_export",
 		mcp.WithTitleAnnotation("Export Backup"),
-		mcp.WithDescription("Export a full Pi-hole configuration backup as a zip archive. Returns the saved file path and size. The file persists on disk after the call returns and is the caller's to move or delete; under Docker it is written inside the container unless output_path points at a mounted volume."),
-		mcp.WithString("output_path", mcp.Description("Absolute path to save the backup to. Defaults to a system temp file.")),
-		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDescription("Export a full Pi-hole configuration backup as a zip archive to a new file on the server's host, and return its path and size. It never replaces an existing file. The file persists after the call and is the caller's to move or delete; under Docker it is written inside the container unless output_path points at a mounted volume."),
+		mcp.WithString("output_path", mcp.Description("Absolute path for the new .zip file, which must not exist yet (inside PIHOLE_BACKUP_DIR when that is set). Defaults to a new file in PIHOLE_BACKUP_DIR or the system temp directory.")),
+		// It writes a file on the server's host, so it is not read-only, and
+		// it is not offered in read-only mode. It replaces nothing, so it is
+		// not destructive either.
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(false),
 	), teleporterExportHandler(r))
 
 	addTool(s, r, mcp.NewTool("pihole_teleporter_import",
@@ -129,11 +80,13 @@ func teleporterExportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 
 		outputPath := req.GetString("output_path", "")
-		if outputPath != "" && !filepath.IsAbs(outputPath) {
-			return mcp.NewToolResultError("Invalid output_path: must be an absolute path"), nil
+		// Checked before Pi-hole is asked for anything: a backup with nowhere
+		// valid to land should not be fetched at all.
+		if err := checkOutputPath(outputPath); err != nil {
+			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
-		reapStaleBackups()
+		reapStaleBackups(outputPath)
 
 		archive, done, err := openBackupStream(ctx, c)
 		if err != nil {
@@ -141,20 +94,11 @@ func teleporterExportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 		defer done()
 
-		// 0600, matching what os.CreateTemp gives the default path. The archive
-		// holds the admin password's hash in pihole.toml, every DHCP lease and
-		// the long-term query database; os.Create would have made it 0644 under
-		// the usual umask, readable by every account on the host. The mode only
-		// applies when the file is created, so a path the caller prepared with
-		// its own permissions keeps them.
-		var out *os.File
-		if outputPath != "" {
-			out, err = os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // output_path is a user-provided MCP tool parameter, validated absolute above
-		} else {
-			out, err = os.CreateTemp("", "pihole-backup-*.zip")
-		}
+		// 0600: the archive holds the admin password's hash, every DHCP lease
+		// and the long-term query database.
+		out, err := createBackupFile(outputPath, "backup")
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to create backup file: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to create the backup file, so nothing was saved: %v", err)), nil
 		}
 
 		n, err := io.Copy(out, archive)
@@ -185,9 +129,11 @@ func teleporterImportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError("Parameter 'file_path' is required"), nil
 		}
-		if err := validateBackupFilePath(filePath); err != nil {
+		archiveFile, archiveInfo, err := openBackupForImport(filePath)
+		if err != nil {
 			return mcp.NewToolResultError("Invalid file_path: " + err.Error()), nil
 		}
+		defer func() { _ = archiveFile.Close() }()
 
 		importConfig := req.GetBool("config", true)
 		importGravity := req.GetBool("gravity", true)
@@ -208,7 +154,7 @@ func teleporterImportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 
 		if req.GetString("mode", "apply") == "plan" {
-			return importPlan(filePath, gravityArchivePath(ctx, c), importConfig, importGravity, importDHCP), nil
+			return importPlan(archiveFile, archiveInfo, gravityArchivePath(ctx, c), importConfig, importGravity, importDHCP), nil
 		}
 
 		// An import replaces whole parts of the configuration and cannot be
@@ -225,7 +171,7 @@ func teleporterImportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		sent := time.Now()
 		var result pihole.TeleporterImportResponse
-		if err := c.PostMultipart(ctx, "/teleporter", filePath, importOptions, &result); err != nil {
+		if err := c.PostMultipartReader(ctx, "/teleporter", archiveInfo.Name(), archiveFile, importOptions, &result); err != nil {
 			text := toolErrorText("import backup", err)
 			if snapshot != "" {
 				text = withAdvice(text, "The configuration from before the import is backed up at "+snapshot+".")
@@ -279,12 +225,11 @@ func gravityArchivePath(ctx context.Context, c *pihole.Client) string {
 // options would replace, reading the archive locally and changing nothing.
 // gravityEntry is the entry FTL takes the gravity database from on this
 // Pi-hole; "" means it could not be read and the default is assumed.
-func importPlan(filePath, gravityEntry string, config, gravity, dhcp bool) *mcp.CallToolResult {
-	zr, err := zip.OpenReader(filePath)
+func importPlan(archive *os.File, info os.FileInfo, gravityEntry string, config, gravity, dhcp bool) *mcp.CallToolResult {
+	zr, err := zip.NewReader(archive, info.Size())
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("%s is not a readable zip archive: %v", filePath, err))
+		return mcp.NewToolResultError(fmt.Sprintf("%s is not a readable zip archive: %v", archive.Name(), err))
 	}
-	defer func() { _ = zr.Close() }()
 
 	assumed := gravityEntry == ""
 	if assumed {
@@ -303,7 +248,7 @@ func importPlan(filePath, gravityEntry string, config, gravity, dhcp bool) *mcp.
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "**Import plan for %s.** Nothing has been changed.\n", filepath.Base(filePath))
+	fmt.Fprintf(&b, "**Import plan for %s.** Nothing has been changed.\n", info.Name())
 	replaces := 0
 	for _, f := range zr.File {
 		part, known := parts[f.Name]

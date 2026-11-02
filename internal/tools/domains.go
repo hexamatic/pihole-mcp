@@ -83,7 +83,15 @@ func domainsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 		path := "/domains"
 		kind := req.GetString("kind", "")
+		if kind != "" {
+			if err := checkEnum("kind", kind, domainKinds); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+		}
 		if t := req.GetString("type", ""); t != "" {
+			if err := checkEnum("type", t, domainTypes); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 			path += "/" + t
 			if kind != "" {
 				path += "/" + kind
@@ -179,6 +187,9 @@ func domainsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		t, k, domain := vals[0], vals[1], vals[2]
+		if err := checkDomainTypeKind(t, k); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		names := splitDomains(domain, k)
 		if len(names) == 0 {
@@ -252,6 +263,9 @@ func domainsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		t, k, domain := vals[0], vals[1], vals[2]
+		if err := checkDomainTypeKind(t, k); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		if err := validateDomainName(domain, k); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid domain: %v", err)), nil
@@ -296,6 +310,9 @@ func domainsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		t, k, domain := vals[0], vals[1], vals[2]
+		if err := checkDomainTypeKind(t, k); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		if err := validateDomainName(domain, k); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid domain: %v", err)), nil

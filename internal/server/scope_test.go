@@ -15,10 +15,12 @@ import (
 // so that a filter which silently dropped or duplicated tools cannot move the
 // expectation with it.
 const (
-	toolsSingleInstance    = 82
-	toolsMultiInstance     = 84
-	readOnlySingleInstance = 49
-	readOnlyMultiInstance  = 50
+	toolsSingleInstance = 82
+	toolsMultiInstance  = 84
+	// pihole_teleporter_export left the read-only set: it writes a file on
+	// the server's host.
+	readOnlySingleInstance = 48
+	readOnlyMultiInstance  = 49
 )
 
 // newScopedDispatchServer is newDispatchServer with scoping options applied.

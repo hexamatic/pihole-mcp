@@ -53,7 +53,8 @@ func TestClient_TLSSkipVerify_AllowsSelfSigned(t *testing.T) {
 
 func TestClient_TLSSkipVerifyFalse_LeavesTransportUntouched(t *testing.T) {
 	c := New("http://example.invalid", "test", WithTLSSkipVerify(false))
-	if c.httpClient.Transport != nil {
+	// The transport is the redirect guard around Go's default, unchanged.
+	if rt, ok := c.httpClient.Transport.(*noRedirectTransport); !ok || rt.base != http.DefaultTransport {
 		t.Error("WithTLSSkipVerify(false) should not replace the default transport")
 	}
 }

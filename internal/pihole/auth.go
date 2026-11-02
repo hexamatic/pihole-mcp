@@ -23,7 +23,7 @@ func (c *Client) login(ctx context.Context) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := send(c.httpClient, req)
 	if err != nil {
 		return &loginError{fmt.Errorf("sending auth request: %w", err)}
 	}

@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,7 +70,7 @@ func WithTLSSkipVerify(skip bool) Option {
 		transport.TLSClientConfig = &tls.Config{
 			InsecureSkipVerify: true, //nolint:gosec // explicit user opt-in for self-signed certificates
 		}
-		c.httpClient.Transport = transport
+		c.httpClient.Transport = &noRedirectTransport{base: transport}
 	}
 }
 
@@ -80,13 +81,88 @@ func WithHTTPClient(hc *http.Client) Option {
 	}
 }
 
+// RedirectError is returned when Pi-hole, or something in front of it,
+// answers with a redirect.
+type RedirectError struct {
+	// Location is where the reply pointed, with any credentials hidden.
+	Location string
+}
+
+func (e *RedirectError) Error() string {
+	return fmt.Sprintf("pi-hole's address redirected to %s; set PIHOLE_URL to the address it redirects to, "+
+		"since this server does not follow redirects", e.Location)
+}
+
+// noRedirectTransport turns any redirect into a *RedirectError before
+// net/http sees it. net/http parses the Location header before it consults
+// CheckRedirect, and when the header does not parse its error quotes it raw,
+// credentials and all, so refusing in CheckRedirect alone was too late.
+type noRedirectTransport struct {
+	base http.RoundTripper
+}
+
+// RoundTrip sends req through the wrapped transport and returns a redirect
+// as a *RedirectError rather than a response.
+func (t *noRedirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil || resp.StatusCode < 300 || resp.StatusCode >= 400 || resp.Header.Get("Location") == "" {
+		return resp, err
+	}
+	_ = resp.Body.Close()
+	return nil, &RedirectError{Location: redactLocation(req.URL, resp.Header.Get("Location"))}
+}
+
+// redactLocation resolves a Location header against the request and returns
+// it without credentials or query, or a placeholder when it does not parse.
+func redactLocation(base *url.URL, loc string) string {
+	u, err := base.Parse(loc)
+	if err != nil {
+		return "an address that could not be read"
+	}
+	u.User = nil
+	u.RawQuery = ""
+	return u.String()
+}
+
+// refuseRedirect stops the HTTP client following a redirect. Go copies the
+// headers it set to the new address, X-FTL-SID among them, even on another
+// host, and a 307 or 308 sends the request body again there, which for a
+// login is the password. Pi-hole's API never redirects, so a redirect means
+// a proxy or a wrong address, and the fix is to configure the final one.
+func refuseRedirect(req *http.Request, _ []*http.Request) error {
+	loc := *req.URL
+	loc.User = nil
+	loc.RawQuery = ""
+	return &RedirectError{Location: loc.String()}
+}
+
+// send performs one HTTP request. A refused redirect comes back as the bare
+// *RedirectError: net/http wraps it in a url.Error whose URL is the raw
+// Location header, credentials and all, and that error text reached tool
+// replies and -check output.
+func send(hc *http.Client, req *http.Request) (*http.Response, error) {
+	resp, err := hc.Do(req)
+	if err != nil {
+		var redirect *RedirectError
+		if errors.As(err, &redirect) {
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
+			return nil, redirect
+		}
+	}
+	return resp, err
+}
+
 // New creates a new Pi-hole API client.
 func New(baseURL, password string, opts ...Option) *Client {
 	c := &Client{
 		baseURL:  strings.TrimRight(baseURL, "/"),
 		password: password,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:       30 * time.Second,
+			Transport:     &noRedirectTransport{base: http.DefaultTransport},
+			CheckRedirect: refuseRedirect,
 		},
 		retry: RetryPolicy{
 			MaxRetries: DefaultMaxRetries,
@@ -171,7 +247,19 @@ func (c *Client) Delete(ctx context.Context, path string) error {
 // upload, so it is not treated as idempotent: only a rate-limited rejection —
 // which Pi-hole makes before reading the body — is ever re-sent.
 func (c *Client) PostMultipart(ctx context.Context, path, filePath string, importOptions map[string]any, result any) error {
-	body, contentType, err := buildMultipartBody(filePath, importOptions)
+	f, err := os.Open(filePath) //nolint:gosec // file path is user-provided via MCP tool parameter
+	if err != nil {
+		return fmt.Errorf("opening file %s: %w", filePath, err)
+	}
+	defer func() { _ = f.Close() }()
+	return c.PostMultipartReader(ctx, path, filepath.Base(filePath), f, importOptions, result)
+}
+
+// PostMultipartReader is PostMultipart for an archive the caller has already
+// opened, so the file checked is the file sent. name is the upload's
+// filename.
+func (c *Client) PostMultipartReader(ctx context.Context, path, name string, file io.Reader, importOptions map[string]any, result any) error {
+	body, contentType, err := buildMultipartBody(name, file, importOptions)
 	if err != nil {
 		return err
 	}
@@ -212,7 +300,7 @@ func (c *Client) sendMultipart(ctx context.Context, path, sid string, body []byt
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("X-FTL-SID", sid)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := send(c.httpClient, req)
 	if err != nil {
 		return fmt.Errorf("sending multipart request: %w", err)
 	}
@@ -238,17 +326,11 @@ func (c *Client) sendMultipart(ctx context.Context, path, sid string, body []byt
 
 // buildMultipartBody encodes filePath (and any import options) as a multipart
 // form, returning the body and its Content-Type.
-func buildMultipartBody(filePath string, importOptions map[string]any) ([]byte, string, error) {
-	file, err := os.Open(filePath) //nolint:gosec // file path is user-provided via MCP tool parameter
-	if err != nil {
-		return nil, "", fmt.Errorf("opening file %s: %w", filePath, err)
-	}
-	defer func() { _ = file.Close() }()
-
+func buildMultipartBody(name string, file io.Reader, importOptions map[string]any) ([]byte, string, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
-	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+	part, err := writer.CreateFormFile("file", name)
 	if err != nil {
 		return nil, "", fmt.Errorf("creating form file: %w", err)
 	}
@@ -293,7 +375,7 @@ func (c *Client) Close() {
 	}
 	req.Header.Set("X-FTL-SID", sid)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := send(c.httpClient, req)
 	if err != nil {
 		return
 	}
@@ -373,7 +455,7 @@ func (c *Client) sendRaw(ctx context.Context, hc *http.Client, method, path, sid
 		return nil, err
 	}
 
-	resp, err := hc.Do(req) //nolint:bodyclose // closed below on error, otherwise owned and closed by the caller
+	resp, err := send(hc, req) //nolint:bodyclose // closed below on error, otherwise owned and closed by the caller
 	if err != nil {
 		return nil, fmt.Errorf("pi-hole API request failed: %w", err)
 	}
@@ -392,7 +474,7 @@ func (c *Client) doRequest(ctx context.Context, method, path, sid string, body, 
 		return err
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := send(c.httpClient, req)
 	if err != nil {
 		return fmt.Errorf("pi-hole API request failed: %w", err)
 	}

@@ -195,6 +195,13 @@ func infoVersionHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if ver.Version.Docker.Local != "" {
 			fmt.Fprintf(&b, "**Docker:** %s\n", ver.Version.Docker.Local)
 		}
+		if warning := pihole.AdvisoryWarning(ver.Version.FTL.Local.Version); warning != "" {
+			v, _ := pihole.ParseFTLVersion(ver.Version.FTL.Local.Version)
+			fmt.Fprintf(&b, "\n**Security:** %s\n", warning)
+			for _, a := range pihole.AdvisoriesFor(v) {
+				fmt.Fprintf(&b, "- %s (%s, fixed in FTL %s): %s\n", a.ID, a.Severity, a.FixedIn, a.Summary)
+			}
+		}
 
 		return mcp.NewToolResultText(b.String()), nil
 	}

@@ -216,3 +216,23 @@ func TestReadTools_RenderTheValuesPiholeSent(t *testing.T) {
 		})
 	}
 }
+
+func TestVersionAndDashboard_WarnOfPublishedAdvisories(t *testing.T) {
+	// The v6.7 captures come from a release with published advisories that
+	// v6.8 fixes; the v6.8 captures from one with none.
+	for _, tc := range []struct {
+		fixture, route string
+		handler        func(*pihole.Registry) server.ToolHandlerFunc
+	}{
+		{"info_version", "/info/version", infoVersionHandler},
+		{"padd", "/padd", paddHandler},
+	} {
+		eachFixture(t, tc.fixture, func(t *testing.T, version string, fixture any) {
+			text := callTool(t, tc.handler, newTestClient(t, piholeHandler(map[string]any{tc.route: fixture})), nil)
+			warned := strings.Contains(text, "**Security:** FTL v6.7 is affected by")
+			if want := version == "v6.7"; warned != want {
+				t.Errorf("%s on %s: warned=%v, want %v:\n%s", tc.fixture, version, warned, want, text)
+			}
+		})
+	}
+}

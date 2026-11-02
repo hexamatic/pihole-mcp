@@ -685,6 +685,14 @@ call_tool "pihole_teleporter_export"
 EXPORTED_BACKUP=$(printf '%s' "$RESULT_TEXT" | grep -oE '/[^ ]+\.zip' | head -1)
 if [ -n "$EXPORTED_BACKUP" ]; then
     call_tool_expect "pihole_teleporter_import" "{\"file_path\":\"${EXPORTED_BACKUP}\",\"config\":false,\"gravity\":true,\"dhcp_leases\":false}" "teleporter_import (round trip of this run's export)" "Import complete"
+    # The import backs the instance up first and names the file; remove it,
+    # since it holds the password hash and the query database.
+    SNAPSHOT=$(printf '%s' "$RESULT_TEXT" | grep -oE 'backed up at /[^;]+' | sed 's/^backed up at //')
+    if [ -n "$SNAPSHOT" ]; then
+        rm -f "$SNAPSHOT"
+    else
+        record_fail "teleporter_import (backup first)" "the import reply named no backup"
+    fi
     rm -f "$EXPORTED_BACKUP"
 else
     record_fail "teleporter_import (round trip)" "could not read the archive path out of the export reply"
@@ -697,6 +705,9 @@ fi
 OUTPUT_BACKUP="$(mktemp -u /tmp/pihole-e2e-export-XXXXXX.zip)"
 call_tool_expect "pihole_teleporter_export" "{\"output_path\":\"${OUTPUT_BACKUP}\"}" "teleporter_export (output_path)" "$OUTPUT_BACKUP"
 if [ -f "$OUTPUT_BACKUP" ]; then
+    # A backup never replaces a file, so a second export to the same path
+    # must be refused and leave the first in place.
+    call_tool_expect_error "pihole_teleporter_export" "{\"output_path\":\"${OUTPUT_BACKUP}\"}" "teleporter_export (refuses an existing file)" "already exists"
     rm -f "$OUTPUT_BACKUP"
 else
     record_fail "teleporter_export (output_path)" "no file was written to $OUTPUT_BACKUP"
@@ -717,6 +728,7 @@ call_tool_expect_absent "pihole_domains_list" '{"type":"deny","kind":"exact"}' "
 export PIHOLE_READ_ONLY=true
 call_tool_expect_error "pihole_domains_add" '{"domain":"e2e-readonly.example.com","type":"deny","kind":"exact"}' "modern: read-only refuses a write tool" "not found"
 call_tool_expect "pihole_dns_get_blocking" '{}' "modern: read-only still serves a read tool" "**Blocking:**"
+call_tool_expect_error "pihole_teleporter_export" '{}' "modern: read-only refuses the backup export, which writes a file" "not found"
 unset PIHOLE_READ_ONLY E2E_PROTOCOL
 # The harness itself: a JSON-RPC error carries no result, and used to be
 # scored as a pass because only result.isError was read.

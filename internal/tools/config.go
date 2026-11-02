@@ -307,6 +307,19 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		var before pihole.ConfigResponse
 		beforeErr := c.Get(ctx, "/config?detailed=true", &before)
 
+		if key := newlineIn(leaves); key != "" {
+			return mcp.NewToolResultError(fmt.Sprintf("Refusing to write %s: its value contains a line break, which no Pi-hole "+
+				"setting needs and which Pi-hole before v6.6 wrote into dnsmasq's configuration as a new option. Nothing was changed.",
+				normaliseConfigPath(key))), nil
+		}
+		var current map[string]any
+		if beforeErr == nil {
+			current = before.Config
+		}
+		if key, r, ok := riskyChange(leaves, current); ok {
+			return refuseRiskySetting(key, r), nil
+		}
+
 		sent := time.Now()
 		var result pihole.ConfigResponse
 		if err := c.Do(ctx, "PATCH", path, map[string]any{"config": payload}, &result); err != nil {
@@ -384,6 +397,9 @@ func mergeConfigKeys(dst, src map[string]any, prefix string) error {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
+		if hasControl(k) {
+			return fmt.Errorf("key %q contains a control character", k)
+		}
 		parts := strings.Split(k, ".")
 		node, path := dst, prefix
 		for _, part := range parts[:len(parts)-1] {
@@ -577,6 +593,9 @@ func configGetValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err := validateMaxLength("element", element, maxConfigPathLen); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
+		if hasControl(element) {
+			return mcp.NewToolResultError("Invalid element: it contains a control character"), nil
+		}
 		// Answered without a request: refusing after fetching would still
 		// carry the hash across the wire into this process for nothing.
 		if isCredentialPath(element) {
@@ -639,11 +658,21 @@ func configAddValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err := validateMaxLength("element", element, maxConfigPathLen); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
+		if hasControl(element) {
+			return mcp.NewToolResultError("Invalid element: it contains a control character"), nil
+		}
 		if err := validateMaxLength("value", value, maxCommentLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 		if isCredentialPath(element) {
 			return refuseCredentialWrite(normaliseConfigPath(element)), nil
+		}
+		if r, risky := riskySettingFor(element); risky {
+			return refuseRiskySetting(element, r), nil
+		}
+		if hasLineBreak(value) {
+			return mcp.NewToolResultError("Invalid value: it contains a line break, which no Pi-hole setting needs and which Pi-hole " +
+				"before v6.6 wrote into dnsmasq's configuration as a new option."), nil
 		}
 
 		path := "/config/" + escapeConfigElement(element) + "/" + pihole.EscapePathSegment(value)
@@ -686,11 +715,21 @@ func configRemoveValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err := validateMaxLength("element", element, maxConfigPathLen); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
+		if hasControl(element) {
+			return mcp.NewToolResultError("Invalid element: it contains a control character"), nil
+		}
 		if err := validateMaxLength("value", value, maxCommentLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 		if isCredentialPath(element) {
 			return refuseCredentialWrite(normaliseConfigPath(element)), nil
+		}
+		if r, risky := riskySettingFor(element); risky {
+			return refuseRiskySetting(element, r), nil
+		}
+		if hasLineBreak(value) {
+			return mcp.NewToolResultError("Invalid value: it contains a line break, which no Pi-hole setting needs and which Pi-hole " +
+				"before v6.6 wrote into dnsmasq's configuration as a new option."), nil
 		}
 
 		path := "/config/" + escapeConfigElement(element) + "/" + pihole.EscapePathSegment(value)

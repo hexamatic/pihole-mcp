@@ -346,7 +346,7 @@ func exportSnapshot(ctx context.Context, c *pihole.Client, keep ...string) (stri
 	}
 	defer done()
 
-	tmp, err := os.CreateTemp("", fmt.Sprintf("pihole-%s-snapshot-*.zip", sanitiseName(c.Name())))
+	tmp, err := createBackupFile("", sanitiseName(c.Name())+"-snapshot")
 	if err != nil {
 		return "", err
 	}

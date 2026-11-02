@@ -108,6 +108,9 @@ func paddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			format.ValueOr(p.Version.Core.Local.Version, "?"),
 			format.ValueOr(p.Version.FTL.Local.Version, "?"),
 			format.ValueOr(p.Version.Web.Local.Version, "?"))
+		if warning := pihole.AdvisoryWarning(p.Version.FTL.Local.Version); warning != "" {
+			fmt.Fprintf(&b, "**Security:** %s pihole_info_version lists them.\n", warning)
+		}
 
 		if detail == "full" {
 			if p.Iface.V4 != nil {
