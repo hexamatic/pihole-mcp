@@ -76,3 +76,19 @@ func TestConfigAddValue_RefusesRiskySettingsAndLineBreaks(t *testing.T) {
 	callToolExpectError(t, configRemoveValueHandler, c, map[string]any{"element": "files.gravity", "value": "x"})
 	rec.AssertNone(t, "", "")
 }
+
+func TestConfigTools_RefuseControlCharactersInKeys(t *testing.T) {
+	// FTL reads keys as C strings, so "dnsmasq_lines\u0000x" reached it as
+	// dnsmasq_lines while matching none of the checks here.
+	for _, payload := range []string{
+		`{"misc":{"dnsmasq_lines\u0000x":["dhcp-script=/tmp/payload"]}}`,
+		`{"webserver":{"api":{"pwhash\u0000":"x"}}}`,
+	} {
+		rec := piholeHandler(map[string]any{"GET /config": riskyDetailed()})
+		callToolExpectError(t, configSetHandler, newTestClient(t, rec), map[string]any{"config": payload})
+		rec.AssertNone(t, "PATCH", "")
+	}
+	rec := piholeHandler(nil)
+	callToolExpectError(t, configAddValueHandler, newTestClient(t, rec), map[string]any{"element": "misc.dnsmasq_lines\x00x", "value": "a"})
+	rec.AssertNone(t, "", "")
+}

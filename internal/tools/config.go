@@ -397,6 +397,9 @@ func mergeConfigKeys(dst, src map[string]any, prefix string) error {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
+		if hasControl(k) {
+			return fmt.Errorf("key %q contains a control character", k)
+		}
 		parts := strings.Split(k, ".")
 		node, path := dst, prefix
 		for _, part := range parts[:len(parts)-1] {
@@ -590,6 +593,9 @@ func configGetValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err := validateMaxLength("element", element, maxConfigPathLen); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
+		if hasControl(element) {
+			return mcp.NewToolResultError("Invalid element: it contains a control character"), nil
+		}
 		// Answered without a request: refusing after fetching would still
 		// carry the hash across the wire into this process for nothing.
 		if isCredentialPath(element) {
@@ -652,6 +658,9 @@ func configAddValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err := validateMaxLength("element", element, maxConfigPathLen); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
+		if hasControl(element) {
+			return mcp.NewToolResultError("Invalid element: it contains a control character"), nil
+		}
 		if err := validateMaxLength("value", value, maxCommentLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
@@ -705,6 +714,9 @@ func configRemoveValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 		if err := validateMaxLength("element", element, maxConfigPathLen); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+		if hasControl(element) {
+			return mcp.NewToolResultError("Invalid element: it contains a control character"), nil
 		}
 		if err := validateMaxLength("value", value, maxCommentLength); err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil

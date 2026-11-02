@@ -306,8 +306,10 @@ func TestClient_DoesNotFollowRedirects(t *testing.T) {
 		elsewhere.Add(1)
 	}))
 	t.Cleanup(other.Close)
+	// The target carries credentials, which net/http's own error quoted.
+	target := strings.Replace(other.URL, "http://", "http://user:hunter2@", 1) + "/api/elsewhere"
 	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, other.URL+"/api/elsewhere", http.StatusTemporaryRedirect)
+		http.Redirect(w, r, target, http.StatusTemporaryRedirect)
 	}))
 	t.Cleanup(front.Close)
 
@@ -318,5 +320,8 @@ func TestClient_DoesNotFollowRedirects(t *testing.T) {
 	}
 	if n := elsewhere.Load(); n != 0 {
 		t.Errorf("the redirect target received %d request(s)", n)
+	}
+	if strings.Contains(err.Error(), "hunter2") {
+		t.Errorf("the error shows the redirect's credentials: %v", err)
 	}
 }

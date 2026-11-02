@@ -86,7 +86,7 @@ func teleporterExportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 
-		reapStaleBackups()
+		reapStaleBackups(outputPath)
 
 		archive, done, err := openBackupStream(ctx, c)
 		if err != nil {

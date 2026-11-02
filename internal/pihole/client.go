@@ -104,6 +104,24 @@ func refuseRedirect(req *http.Request, _ []*http.Request) error {
 	return &RedirectError{Location: loc.String()}
 }
 
+// send performs one HTTP request. A refused redirect comes back as the bare
+// *RedirectError: net/http wraps it in a url.Error whose URL is the raw
+// Location header, credentials and all, and that error text reached tool
+// replies and -check output.
+func send(hc *http.Client, req *http.Request) (*http.Response, error) {
+	resp, err := hc.Do(req)
+	if err != nil {
+		var redirect *RedirectError
+		if errors.As(err, &redirect) {
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
+			return nil, redirect
+		}
+	}
+	return resp, err
+}
+
 // New creates a new Pi-hole API client.
 func New(baseURL, password string, opts ...Option) *Client {
 	c := &Client{
@@ -249,7 +267,7 @@ func (c *Client) sendMultipart(ctx context.Context, path, sid string, body []byt
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("X-FTL-SID", sid)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := send(c.httpClient, req)
 	if err != nil {
 		return fmt.Errorf("sending multipart request: %w", err)
 	}
@@ -324,7 +342,7 @@ func (c *Client) Close() {
 	}
 	req.Header.Set("X-FTL-SID", sid)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := send(c.httpClient, req)
 	if err != nil {
 		return
 	}
@@ -404,7 +422,7 @@ func (c *Client) sendRaw(ctx context.Context, hc *http.Client, method, path, sid
 		return nil, err
 	}
 
-	resp, err := hc.Do(req) //nolint:bodyclose // closed below on error, otherwise owned and closed by the caller
+	resp, err := send(hc, req) //nolint:bodyclose // closed below on error, otherwise owned and closed by the caller
 	if err != nil {
 		return nil, fmt.Errorf("pi-hole API request failed: %w", err)
 	}
@@ -423,7 +441,7 @@ func (c *Client) doRequest(ctx context.Context, method, path, sid string, body, 
 		return err
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := send(c.httpClient, req)
 	if err != nil {
 		return fmt.Errorf("pi-hole API request failed: %w", err)
 	}

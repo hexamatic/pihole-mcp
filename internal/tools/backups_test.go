@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // withBackupDir confines backups to a fresh directory for one test.
@@ -103,4 +104,60 @@ func TestBackupDir_ConfinesExportsAndImports(t *testing.T) {
 	if !strings.Contains(msg, "inside PIHOLE_BACKUP_DIR") {
 		t.Errorf("expected an import from outside to be refused, got: %s", msg)
 	}
+}
+
+func TestReapStaleBackups_StaysInADirectoryWithPatternCharacters(t *testing.T) {
+	// The clean-up globbed the directory name with the pattern, so a
+	// directory called "backups[1]" made it search "backups1" instead.
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "backups[1]")
+	sibling := filepath.Join(parent, "backups1")
+	for _, d := range []string{dir, sibling} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	SetBackupDir(dir)
+	t.Cleanup(func() { SetBackupDir("") })
+
+	inside := filepath.Join(dir, "pihole-mcp-backup-111.zip")
+	outside := filepath.Join(sibling, "pihole-mcp-backup-222.zip")
+	old := time.Now().Add(-48 * time.Hour)
+	for _, p := range []string{inside, outside} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	reapStaleBackups()
+	if _, err := os.Stat(inside); !os.IsNotExist(err) {
+		t.Errorf("the stale backup inside the directory survived: %v", err)
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Errorf("a file outside the backup directory was removed: %v", err)
+	}
+}
+
+func TestTeleporterExport_KeepsADayOldFileAtOutputPath(t *testing.T) {
+	// The clean-up ran before the existing-file check, so a day-old file at
+	// output_path with a name the server generates was deleted first.
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	target := filepath.Join(dir, "pihole-mcp-backup-123.zip")
+	if err := os.WriteFile(target, []byte("precious"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(target, old, old); err != nil {
+		t.Fatal(err)
+	}
+	rec := exportClient(t)
+	callToolExpectError(t, teleporterExportHandler, newTestClient(t, rec), map[string]any{"output_path": target})
+	if data, _ := os.ReadFile(target); string(data) != "precious" { //nolint:gosec // test fixture
+		t.Errorf("the file at output_path is now %q", data)
+	}
+	rec.AssertNone(t, "", "")
 }

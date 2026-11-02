@@ -95,3 +95,16 @@ func hasLineBreak(v any) bool {
 	}
 	return false
 }
+
+// hasControl reports whether s holds a control character, NUL included. FTL
+// reads config keys as C strings, so a key such as "dnsmasq_lines\x00x"
+// reached FTL as dnsmasq_lines while matching none of the checks here, the
+// risky settings and the password hashes alike. No config key contains one.
+func hasControl(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}

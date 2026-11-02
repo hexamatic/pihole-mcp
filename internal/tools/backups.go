@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -108,6 +109,13 @@ func checkOutputPath(outputPath string) error {
 			return err
 		}
 	}
+	// Refused before anything is fetched or cleaned up. The O_EXCL open
+	// refuses it again, but by then the clean-up of old backups had already
+	// deleted a day-old file at this path if its name was one the server
+	// generates.
+	if _, err := os.Lstat(outputPath); err == nil {
+		return fmt.Errorf("%s already exists, and a backup never replaces a file; choose a new name", outputPath)
+	}
 	return nil
 }
 
@@ -122,16 +130,21 @@ func openBackupForImport(filePath string) (*os.File, os.FileInfo, error) {
 	if !strings.EqualFold(filepath.Ext(filePath), ".zip") {
 		return nil, nil, fmt.Errorf("must be a .zip file")
 	}
+	// O_NONBLOCK: opening a FIFO for reading otherwise waits for a writer,
+	// so a pipe named backup.zip held the call, and a tool worker, forever,
+	// before the regular-file check below could refuse it. On a regular file
+	// it changes nothing.
+	const flags = os.O_RDONLY | syscall.O_NONBLOCK
 	var f *os.File
 	var err error
 	if dir := currentBackupDir(); dir == "" {
-		f, err = os.Open(filePath) //nolint:gosec // file_path is the caller's choice of archive; checked below
+		f, err = os.OpenFile(filePath, flags, 0) //nolint:gosec // file_path is the caller's choice of archive; checked below
 	} else {
 		root, rel, rerr := openInBackupDir(dir, filePath, "file_path")
 		if rerr != nil {
 			return nil, nil, rerr
 		}
-		f, err = root.Open(rel)
+		f, err = root.OpenFile(rel, flags, 0)
 		_ = root.Close()
 	}
 	if err != nil {
@@ -201,16 +214,20 @@ func reapStaleBackups(keep ...string) {
 	if dir == "" {
 		dir = os.TempDir()
 	}
-	matches, err := filepath.Glob(filepath.Join(dir, backupFilePrefix+"*.zip"))
+	// Listed rather than globbed: a directory name holding "[" or "*" made
+	// the glob a pattern of its own, which matched and cleaned up a
+	// different directory.
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 	cutoff := time.Now().Add(-staleBackupAge)
 files:
-	for _, m := range matches {
-		if !generatedBackupName(filepath.Base(m)) {
+	for _, e := range entries {
+		if !generatedBackupName(e.Name()) {
 			continue
 		}
+		m := filepath.Join(dir, e.Name())
 		info, statErr := os.Lstat(m)
 		if statErr != nil || !info.Mode().IsRegular() || info.ModTime().After(cutoff) {
 			continue
