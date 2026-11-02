@@ -52,22 +52,24 @@ func applyGroups(ctx context.Context, c *pihole.Client, req mcp.CallToolRequest,
 		byName[g.Name] = g.ID
 	}
 	ids := make([]int, 0, len(names))
+	added := map[int]bool{}
 	var missing []string
 	for _, n := range names {
-		id, ok := byName[n]
-		if !ok {
-			for name, gid := range byName {
-				if strings.EqualFold(name, n) {
-					id, ok = gid, true
-					break
-				}
-			}
+		id, err := groupID(byName, n)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error())
 		}
-		if !ok {
+		if id < 0 {
 			missing = append(missing, n)
 			continue
 		}
-		ids = append(ids, id)
+		// Each group once: FTL clears the entry's groups and then inserts
+		// them one by one, and a repeated ID stopped it part way, leaving the
+		// entry out of its old groups and out of the rest of the new ones.
+		if !added[id] {
+			added[id] = true
+			ids = append(ids, id)
+		}
 	}
 	if len(missing) > 0 {
 		existing := make([]string, 0, len(byName))
@@ -104,5 +106,30 @@ func groupNamer(ctx context.Context, c *pihole.Client) func([]int) string {
 			}
 		}
 		return strings.Join(out, ", ")
+	}
+}
+
+// groupID finds a group by name: the exact name first, then one that differs
+// only in case. It returns -1 when none matches, and an error when the name
+// matches several groups by case alone, since Pi-hole allows "Kids" and
+// "KIDS" side by side and picking either would be a guess.
+func groupID(byName map[string]int, name string) (int, error) {
+	if id, ok := byName[name]; ok {
+		return id, nil
+	}
+	var matches []string
+	for n := range byName {
+		if strings.EqualFold(n, name) {
+			matches = append(matches, n)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return -1, nil
+	case 1:
+		return byName[matches[0]], nil
+	default:
+		sort.Strings(matches)
+		return 0, fmt.Errorf("%q matches more than one group (%s), so nothing was changed; give the exact name", name, strings.Join(matches, ", "))
 	}
 }

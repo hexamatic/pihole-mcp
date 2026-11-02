@@ -66,3 +66,28 @@ func TestClientsList_ShowsGroupNames(t *testing.T) {
 		t.Errorf("expected group names, got: %s", text)
 	}
 }
+
+func TestGroupsArgument_EachGroupOnce(t *testing.T) {
+	// FTL stopped at a repeated ID part way through replacing membership.
+	rec := piholeHandler(map[string]any{"/groups": testGroups(), "POST /clients": map[string]any{"clients": []any{}}})
+	callTool(t, clientsAddHandler, newTestClient(t, rec), map[string]any{"client": "10.0.0.5", "groups": "Kids,kids,Guests"})
+	rec.Only(t, "POST", "/clients").AssertField(t, "groups", []any{2.0, 1.0})
+}
+
+func TestGroupsArgument_AmbiguousCaseIsRefused(t *testing.T) {
+	groups := map[string]any{"groups": []any{
+		map[string]any{"name": "Default", "id": 0},
+		map[string]any{"name": "Kids", "id": 2},
+		map[string]any{"name": "KIDS", "id": 3},
+	}}
+	rec := piholeHandler(map[string]any{"/groups": groups, "POST /clients": map[string]any{"clients": []any{}}})
+	c := newTestClient(t, rec)
+	text := callToolExpectError(t, clientsAddHandler, c, map[string]any{"client": "10.0.0.5", "groups": "kids"})
+	if !strings.Contains(text, "matches more than one group (KIDS, Kids)") {
+		t.Errorf("expected an ambiguity refusal, got: %s", text)
+	}
+	rec.AssertNone(t, "POST", "")
+	// The exact name still wins.
+	callTool(t, clientsAddHandler, c, map[string]any{"client": "10.0.0.5", "groups": "KIDS"})
+	rec.Only(t, "POST", "/clients").AssertField(t, "groups", []any{3.0})
+}
