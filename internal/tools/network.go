@@ -166,10 +166,10 @@ func networkInfoHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		var b strings.Builder
 		if routesErr != nil {
-			fmt.Fprintf(&b, "_Routes could not be read: %v._\n", routesErr)
+			fmt.Fprintf(&b, "_Routes could not be read: %s._\n", format.Untrusted(routesErr.Error()))
 		}
 		if interfacesErr != nil {
-			fmt.Fprintf(&b, "_Interfaces could not be read: %v._\n", interfacesErr)
+			fmt.Fprintf(&b, "_Interfaces could not be read: %s._\n", format.Untrusted(interfacesErr.Error()))
 		}
 
 		if len(routes.Routes) > 0 {

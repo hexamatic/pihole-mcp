@@ -106,9 +106,11 @@ func flattenInto(out *[]string, prefix string, v any) {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			child := k
+			// Keys come from Pi-hole too, and a line break in one would
+			// start a line of its own.
+			child := format.Untrusted(k)
 			if prefix != "" {
-				child = prefix + "." + k
+				child = prefix + "." + child
 			}
 			flattenInto(out, child, t[k])
 		}

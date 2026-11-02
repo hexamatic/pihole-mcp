@@ -331,7 +331,7 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if beforeErr != nil {
 			return mcp.NewToolResultText(fmt.Sprintf("**Config updated.** Pi-hole accepted the change. This server could not "+
 				"read the settings beforehand (%v), so it cannot say which of them changed or whether Pi-hole recognised "+
-				"them all. Check with pihole_config_get_value.", beforeErr)), nil
+				"them all. Check with pihole_config_get_value.", format.Untrusted(beforeErr.Error()))), nil
 		}
 
 		report := compareConfigWrite(before.Config, result.Config, leaves)
@@ -783,7 +783,7 @@ func configPropertiesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		var b strings.Builder
 		fmt.Fprintf(&b, "**%d read-only config keys:**\n", len(ros))
 		for _, p := range ros {
-			fmt.Fprintf(&b, "- `%s` (%s) — %s\n", p.Key, p.Reason, p.Description)
+			fmt.Fprintf(&b, "- %s (%s) — %s\n", format.CodeSpan(p.Key), format.Untrusted(p.Reason), format.Untrusted(p.Description))
 		}
 		return mcp.NewToolResultText(b.String()), nil
 	}

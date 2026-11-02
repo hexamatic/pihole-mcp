@@ -427,9 +427,9 @@ func infoSensorsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			if len(group.Temps) == 0 {
 				continue
 			}
-			fmt.Fprintf(&b, "**%s:**\n", format.ValueOr(deref(group.Name), group.Path))
+			fmt.Fprintf(&b, "**%s:**\n", format.Untrusted(format.ValueOr(deref(group.Name), group.Path)))
 			for _, t := range group.Temps {
-				fmt.Fprintf(&b, "- %s: %s", format.ValueOr(deref(t.Name), t.Sensor), temperature(t.Value, sensors.Unit))
+				fmt.Fprintf(&b, "- %s: %s", format.Untrusted(format.ValueOr(deref(t.Name), t.Sensor)), temperature(t.Value, sensors.Unit))
 				var limits []string
 				if t.Max != nil {
 					limits = append(limits, "high "+temperature(*t.Max, sensors.Unit))
