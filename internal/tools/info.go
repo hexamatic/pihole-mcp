@@ -100,7 +100,7 @@ func infoSystemHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		detail := getDetail(req)
 
 		output := InfoSystemOutput{
-			Hostname:    host.Nodename,
+			Hostname:    format.Untrusted(host.Nodename),
 			Uptime:      sys.Uptime,
 			LoadAverage: sys.CPU.Load.Raw[0],
 			CPUCores:    sys.CPU.Nprocs,
@@ -121,7 +121,7 @@ func infoSystemHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		var b strings.Builder
 		if host.Nodename != "" {
-			fmt.Fprintf(&b, "**Host:** %s (%s %s)\n", host.Nodename, host.Sysname, host.Machine)
+			fmt.Fprintf(&b, "**Host:** %s (%s %s)\n", format.Untrusted(host.Nodename), host.Sysname, host.Machine)
 		}
 		fmt.Fprintf(&b, "**Uptime:** %s\n", format.Duration(float64(sys.Uptime)))
 		load := sys.CPU.Load.Raw
@@ -259,7 +259,7 @@ func infoMessagesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		for _, m := range msgs.Messages {
 			// The ID is what pihole_info_dismiss_message needs, so surface it.
 			fmt.Fprintf(&b, "- `id=%d` [%s] %s (%s)\n",
-				m.ID, m.Type, m.Plain, format.Timestamp(float64(m.Timestamp)))
+				m.ID, m.Type, format.Untrusted(m.Plain), format.Timestamp(float64(m.Timestamp)))
 		}
 		b.WriteString("\nDismiss one with pihole_info_dismiss_message once you have dealt with it.")
 

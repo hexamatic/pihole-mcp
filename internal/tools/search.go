@@ -59,14 +59,14 @@ func searchDomainsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if len(s.Domains) > 0 {
 			b.WriteString("\n**Domain list matches:**\n")
 			for _, d := range s.Domains {
-				fmt.Fprintf(&b, "- %s (%s/%s, enabled=%s)\n", d.Domain, d.Type, d.Kind, format.Bool(d.Enabled))
+				fmt.Fprintf(&b, "- %s (%s/%s, enabled=%s)\n", format.Untrusted(d.Domain), d.Type, d.Kind, format.Bool(d.Enabled))
 			}
 		}
 
 		if len(s.Gravity) > 0 {
 			b.WriteString("\n**Gravity matches:**\n")
 			for _, g := range s.Gravity {
-				fmt.Fprintf(&b, "- %s via %s (%s)\n", g.Domain, g.Address, g.Type)
+				fmt.Fprintf(&b, "- %s via %s (%s)\n", format.Untrusted(g.Domain), format.Untrusted(g.Address), g.Type)
 			}
 		}
 

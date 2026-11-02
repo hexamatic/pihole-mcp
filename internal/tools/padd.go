@@ -51,17 +51,17 @@ func paddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			QueryFrequency: p.Queries.QueryFrequency,
 			ActiveClients:  p.ActiveClients,
 			GravitySize:    p.GravitySize,
-			TopDomain:      deref(p.TopDomain),
-			TopBlocked:     deref(p.TopBlocked),
-			TopClient:      deref(p.TopClient),
-			RecentBlocked:  deref(p.RecentBlocked),
+			TopDomain:      format.Untrusted(deref(p.TopDomain)),
+			TopBlocked:     format.Untrusted(deref(p.TopBlocked)),
+			TopClient:      format.Untrusted(deref(p.TopClient)),
+			RecentBlocked:  format.Untrusted(deref(p.RecentBlocked)),
 			CacheSize:      p.Cache.Size,
 			CPUPercent:     p.CPUPercent,
 			MemPercent:     p.MemPercent,
 			CoreVersion:    p.Version.Core.Local.Version,
 			FTLVersion:     p.Version.FTL.Local.Version,
 			WebVersion:     p.Version.Web.Local.Version,
-			NodeName:       p.NodeName,
+			NodeName:       format.Untrusted(p.NodeName),
 		}
 
 		if detail == "minimal" {
@@ -81,16 +81,16 @@ func paddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			p.ActiveClients, format.Number(p.GravitySize))
 
 		if t := deref(p.TopDomain); t != "" {
-			fmt.Fprintf(&b, "**Top domain:** %s\n", t)
+			fmt.Fprintf(&b, "**Top domain:** %s\n", format.Untrusted(t))
 		}
 		if t := deref(p.TopBlocked); t != "" {
-			fmt.Fprintf(&b, "**Top blocked:** %s\n", t)
+			fmt.Fprintf(&b, "**Top blocked:** %s\n", format.Untrusted(t))
 		}
 		if t := deref(p.TopClient); t != "" {
-			fmt.Fprintf(&b, "**Top client:** %s\n", t)
+			fmt.Fprintf(&b, "**Top client:** %s\n", format.Untrusted(t))
 		}
 		if t := deref(p.RecentBlocked); t != "" {
-			fmt.Fprintf(&b, "**Recently blocked:** %s\n", t)
+			fmt.Fprintf(&b, "**Recently blocked:** %s\n", format.Untrusted(t))
 		}
 
 		fmt.Fprintf(&b, "**Cache:** %s entries (%s inserted, %s evicted)\n",
@@ -98,7 +98,7 @@ func paddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		// Host line: name + FTL CPU/mem, plus CPU temperature when available.
 		fmt.Fprintf(&b, "**Host:** %s — FTL CPU %.1f%%, mem %.1f%%",
-			format.ValueOr(p.NodeName, "unknown"), p.CPUPercent, p.MemPercent)
+			format.Untrusted(format.ValueOr(p.NodeName, "unknown")), p.CPUPercent, p.MemPercent)
 		if p.Sensors.CPUTemp != nil {
 			fmt.Fprintf(&b, ", CPU temp %.1f%s", *p.Sensors.CPUTemp, format.ValueOr(p.Sensors.Unit, "C"))
 		}

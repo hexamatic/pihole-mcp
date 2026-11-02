@@ -147,7 +147,7 @@ func localRecordsListHandler(r *pihole.Registry, field, label string) server.Too
 
 		fmt.Fprintf(&b, "**%d %s record(s):**\n", len(records), label)
 		for _, rec := range records {
-			b.WriteString("- `" + rec + "`\n")
+			b.WriteString("- `" + format.Untrusted(rec) + "`\n")
 		}
 		return mcp.NewToolResultText(b.String()), nil
 	}

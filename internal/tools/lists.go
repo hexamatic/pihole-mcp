@@ -120,9 +120,9 @@ func listsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			if !l.Enabled {
 				status = "disabled"
 			}
-			fmt.Fprintf(&b, "- %s (%s, %s domains, %s)", l.Address, l.Type, format.Number(l.Number), status)
+			fmt.Fprintf(&b, "- %s (%s, %s domains, %s)", format.Untrusted(l.Address), l.Type, format.Number(l.Number), status)
 			if l.Comment != "" {
-				fmt.Fprintf(&b, " — %s", l.Comment)
+				fmt.Fprintf(&b, " — %s", format.Untrusted(l.Comment))
 			}
 			if detail == "full" {
 				fmt.Fprintf(&b, " [id=%d, updated=%s, invalid=%d]", l.ID, format.Timestamp(float64(l.DateUpdated)), l.InvalidDomains)

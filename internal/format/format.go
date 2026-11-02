@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Number formats an integer with comma separators (e.g. 45231 → "45,231").
@@ -93,6 +95,65 @@ func Clock(unix float64) string {
 	return time.Unix(int64(unix), 0).In(loc).Format("15:04:05")
 }
 
+// maxUntrustedLen bounds one value from the network in a reply. A domain is
+// at most 253 characters; this leaves room for a long comment or log line
+// while stopping one value from filling a reply.
+const maxUntrustedLen = 512
+
+// Untrusted makes text that came from the network safe to place in a reply:
+// a queried domain, a DHCP hostname, a client's user agent, a log line, a
+// comment. Whoever can make a device query a domain, or name a device,
+// chooses that text, and a line break or a backtick in it could start a
+// heading, a list item or a code block that reads as the server's own words.
+//
+// Line breaks and other control characters become spaces, backticks become
+// apostrophes, the characters that reorder text on screen are dropped, and a
+// very long value is cut short with an ellipsis. Nothing a domain name can
+// hold is changed ("_", "-", "." and letters in any script among them), so a
+// domain read from a reply can be given back to a write tool as it is.
+func Untrusted(s string) string {
+	clean := len(s) <= maxUntrustedLen
+	for _, r := range s {
+		if !clean || needsCleaning(r) {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return s
+	}
+	var b strings.Builder
+	n := 0
+	for _, r := range s {
+		if n == maxUntrustedLen {
+			b.WriteString("…")
+			break
+		}
+		switch {
+		case r == '`':
+			b.WriteRune('\'')
+		case isBidiControl(r):
+			continue
+		case unicode.IsControl(r), r == '\u2028', r == '\u2029':
+			b.WriteRune(' ')
+		default:
+			b.WriteRune(r) // invalid UTF-8 arrives as U+FFFD
+		}
+		n++
+	}
+	return b.String()
+}
+
+func needsCleaning(r rune) bool {
+	return r == '`' || r == utf8.RuneError || isBidiControl(r) || unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+}
+
+// isBidiControl reports the characters that change the direction text is
+// shown in, which can make a value read differently from what it is.
+func isBidiControl(r rune) bool {
+	return (r >= '\u202a' && r <= '\u202e') || (r >= '\u2066' && r <= '\u2069') || r == '\u200e' || r == '\u200f'
+}
+
 // CSV renders comma-separated values from headers and rows.
 // ~29% fewer tokens than Markdown tables for tabular data.
 //
@@ -110,7 +171,18 @@ func CSV(headers []string, rows [][]string) string {
 	// A strings.Builder never fails a write, so the only error csv.Writer can
 	// report here is one it cannot produce.
 	_ = w.Write(headers)
-	_ = w.WriteAll(rows)
+	// Every field passes through Untrusted. Quoting kept a line break inside
+	// its field for a CSV parser, but a reader sees a new line, which a
+	// hostname or comment from the network could use to pass for a row of
+	// its own or for the server's own words.
+	for _, row := range rows {
+		clean := make([]string, len(row))
+		for i, f := range row {
+			clean[i] = Untrusted(f)
+		}
+		_ = w.Write(clean)
+	}
+	w.Flush()
 	return b.String()
 }
 

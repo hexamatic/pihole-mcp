@@ -107,13 +107,13 @@ func networkDevicesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			for _, ip := range d.IPs {
 				name := format.StringOr(ip.Name, "")
 				if name != "" {
-					ips = append(ips, fmt.Sprintf("%s (%s)", ip.IP, name))
+					ips = append(ips, fmt.Sprintf("%s (%s)", ip.IP, format.Untrusted(name)))
 				} else {
 					ips = append(ips, ip.IP)
 				}
 			}
 			fmt.Fprintf(&b, "- [id=%d] %s [%s] — %s, %s queries, last %s\n",
-				d.ID, d.HWAddr, vendor, strings.Join(ips, ", "),
+				d.ID, format.Untrusted(d.HWAddr), format.Untrusted(vendor), strings.Join(ips, ", "),
 				format.Number(d.NumQueries), format.Timestamp(float64(d.LastQuery)))
 		}
 
@@ -254,7 +254,7 @@ func networkInterfacesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		var b strings.Builder
 		fmt.Fprintf(&b, "**%d interfaces:**\n", len(result.Interfaces))
 		for _, i := range result.Interfaces {
-			fmt.Fprintf(&b, "- **%s** (%s)", orDefault(i.Name, "?"), orDefault(i.State, "?"))
+			fmt.Fprintf(&b, "- **%s** (%s)", format.Untrusted(orDefault(i.Name, "?")), orDefault(i.State, "?"))
 			if i.Type != "" {
 				fmt.Fprintf(&b, " [%s]", i.Type)
 			}

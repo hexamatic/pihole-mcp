@@ -131,11 +131,11 @@ func domainsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if detail != "minimal" {
 			for _, d := range page {
 				domains = append(domains, DomainOutput{
-					Domain:  d.Domain,
+					Domain:  format.Untrusted(d.Domain),
 					Type:    d.Type,
 					Kind:    d.Kind,
 					Enabled: d.Enabled,
-					Comment: d.Comment,
+					Comment: format.Untrusted(d.Comment),
 				})
 			}
 		}
@@ -165,9 +165,9 @@ func domainsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			if !d.Enabled {
 				status = "disabled"
 			}
-			fmt.Fprintf(&b, "- %s (%s/%s, %s)", d.Domain, d.Type, d.Kind, status)
+			fmt.Fprintf(&b, "- %s (%s/%s, %s)", format.Untrusted(d.Domain), d.Type, d.Kind, status)
 			if d.Comment != "" {
-				fmt.Fprintf(&b, " — %s", d.Comment)
+				fmt.Fprintf(&b, " — %s", format.Untrusted(d.Comment))
 			}
 			if detail == "full" {
 				if groupNames == nil {
@@ -232,10 +232,10 @@ func domainsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		output := DomainsAddOutput{Requested: len(names), Added: []string{}, Failed: []DomainAddFailed{}}
 		if p := result.Processed; p != nil {
 			for _, ok := range p.Success {
-				output.Added = append(output.Added, ok.Item)
+				output.Added = append(output.Added, format.Untrusted(ok.Item))
 			}
 			for _, e := range p.Errors {
-				output.Failed = append(output.Failed, DomainAddFailed{Domain: e.Item, Error: e.Error})
+				output.Failed = append(output.Failed, DomainAddFailed{Domain: format.Untrusted(e.Item), Error: format.Untrusted(e.Error)})
 			}
 		} else {
 			// An FTL that does not report per-rule results added them all,
@@ -250,7 +250,7 @@ func domainsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			fmt.Fprintf(&b, "**Added %d of %d rules** to the %s/%s list. Pi-hole refused %d:\n",
 				len(output.Added), output.Requested, t, k, len(output.Failed))
 			for _, f := range output.Failed {
-				fmt.Fprintf(&b, "- Failed: %s (%s)\n", f.Domain, f.Error)
+				fmt.Fprintf(&b, "- Failed: %s (%s)\n", format.Untrusted(f.Domain), format.Untrusted(f.Error))
 			}
 		}
 		for _, a := range output.Added {

@@ -107,12 +107,12 @@ func clientsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		var b strings.Builder
 		b.WriteString(pageHeading("clients", len(page), total))
 		for _, cl := range page {
-			fmt.Fprintf(&b, "- %s", cl.Client)
+			fmt.Fprintf(&b, "- %s", format.Untrusted(cl.Client))
 			if cl.Name != "" {
-				fmt.Fprintf(&b, " (%s)", cl.Name)
+				fmt.Fprintf(&b, " (%s)", format.Untrusted(cl.Name))
 			}
 			if cl.Comment != "" {
-				fmt.Fprintf(&b, " — %s", cl.Comment)
+				fmt.Fprintf(&b, " — %s", format.Untrusted(cl.Comment))
 			}
 			fmt.Fprintf(&b, " [groups: %s]\n", groupNames(cl.Groups))
 		}
