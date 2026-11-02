@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hexamatic/pihole-mcp/internal/format"
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -107,7 +108,9 @@ func actionGravityHandler(r *pihole.Registry) server.ToolHandlerFunc {
 				prog.report(min(90, steps*10), 100, strings.TrimSpace(line))
 			}
 		}
-		output := strings.Join(lines, "\n")
+		// Fenced with more backticks than any line holds, so a line of
+		// output cannot close the block and pass for the server's text.
+		output := format.Fence(lines)
 
 		if err := scanner.Err(); err != nil {
 			// The rebuild runs in its own session on the Pi-hole and carries on
@@ -117,19 +120,19 @@ func actionGravityHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(fmt.Sprintf(
 				"Stopped receiving gravity output before the rebuild finished (%v). Pi-hole carries on with the rebuild on its own, "+
 					"so it may still be running or may already have finished. Check pihole_info_messages in a few minutes "+
-					"rather than starting another run.\n```\n%s\n```", err, output)), nil
+					"rather than starting another run.\n%s", err, output)), nil
 		}
 
 		if lastLine(lines) == gravityFailedLine {
 			sendLog(ctx, mcp.LoggingLevelError, "gravity", map[string]any{"instance": c.Name(), "event": "gravity_update_failed"})
 			return mcp.NewToolResultError(fmt.Sprintf(
-				"**Gravity update failed.** Pi-hole reported that the rebuild did not complete.%s\n```\n%s\n```",
+				"**Gravity update failed.** Pi-hole reported that the rebuild did not complete.%s\n%s",
 				problemSummary(problems), output)), nil
 		}
 
 		prog.report(100, 100, "Gravity update complete")
 		sendLog(ctx, mcp.LoggingLevelInfo, "gravity", map[string]any{"instance": c.Name(), "event": "gravity_update_complete"})
-		return mcp.NewToolResultText(fmt.Sprintf("**Gravity update complete.**%s\n```\n%s\n```", problemSummary(problems), output)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("**Gravity update complete.**%s\n%s", problemSummary(problems), output)), nil
 	}
 }
 
@@ -148,7 +151,7 @@ func problemSummary(problems []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n\nPi-hole reported %d problem(s):\n", len(problems))
 	for _, p := range problems {
-		fmt.Fprintf(&b, "- %s\n", p)
+		fmt.Fprintf(&b, "- %s\n", format.Untrusted(p))
 	}
 	return b.String()
 }

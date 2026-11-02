@@ -120,7 +120,7 @@ func logHandler(r *pihole.Registry, endpoint string) server.ToolHandlerFunc {
 			if p := deref(e.Priority); p != "" {
 				b.WriteString(p + " ")
 			}
-			b.WriteString(e.Message + "\n")
+			b.WriteString(format.Untrusted(e.Message) + "\n")
 		}
 		b.WriteString(next)
 		return mcp.NewToolResultText(b.String()), nil

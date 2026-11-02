@@ -91,3 +91,22 @@ func TestGroupsArgument_AmbiguousCaseIsRefused(t *testing.T) {
 	callTool(t, clientsAddHandler, c, map[string]any{"client": "10.0.0.5", "groups": "KIDS"})
 	rec.Only(t, "POST", "/clients").AssertField(t, "groups", []any{3.0})
 }
+
+func TestGroups_ANameCleaningChangesIsShownAndTakenByID(t *testing.T) {
+	// A hidden direction mark is dropped from the shown name, so two groups
+	// can look alike; the ID goes with the changed one, and "#<id>" names it.
+	groups := map[string]any{"groups": []any{
+		map[string]any{"name": "Kids", "id": 2},
+		map[string]any{"name": "Kids\u061c", "id": 3},
+	}}
+	c := newTestClient(t, piholeHandler(map[string]any{
+		"/groups":  groups,
+		"/clients": map[string]any{"clients": []any{map[string]any{"client": "10.0.0.5", "groups": []any{2, 3}}}},
+	}))
+	if text := callTool(t, clientsListHandler, c, nil); !strings.Contains(text, "[groups: Kids, Kids (#3)]") {
+		t.Errorf("expected the changed name with its ID, got: %s", text)
+	}
+	rec := piholeHandler(map[string]any{"/groups": groups, "POST /clients": map[string]any{"clients": []any{}}})
+	callTool(t, clientsAddHandler, newTestClient(t, rec), map[string]any{"client": "10.0.0.6", "groups": "#3"})
+	rec.Only(t, "POST", "/clients").AssertField(t, "groups", []any{3.0})
+}

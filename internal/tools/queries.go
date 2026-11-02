@@ -125,7 +125,7 @@ func queriesSearchHandler(r *pihole.Registry) server.ToolHandlerFunc {
 				client = *q.Client.Name
 			}
 			upstream := format.StringOr(q.Upstream, "-")
-			fmt.Fprintf(&b, "- %s %s %s → %s (%s, %s)", format.Timestamp(q.Time), q.Type, q.Domain, q.Status, client, upstream)
+			fmt.Fprintf(&b, "- %s %s %s → %s (%s, %s)", format.Timestamp(q.Time), q.Type, format.Untrusted(q.Domain), q.Status, format.Untrusted(client), format.Untrusted(upstream))
 			if detail == "full" {
 				// FTL reports the reply time in seconds.
 				fmt.Fprintf(&b, " [dnssec=%s, reply=%s, %s]",
@@ -189,7 +189,11 @@ func writeSuggestionList(b *strings.Builder, label string, items []string, limit
 	if len(shown) > limit {
 		shown = shown[:limit]
 	}
-	fmt.Fprintf(b, "**%s:** %s", label, strings.Join(shown, ", "))
+	clean := make([]string, len(shown))
+	for i, s := range shown {
+		clean[i] = format.Untrusted(s)
+	}
+	fmt.Fprintf(b, "**%s:** %s", label, strings.Join(clean, ", "))
 	if len(shown) < len(items) {
 		fmt.Fprintf(b, " (%d of %d; raise limit for more)", len(shown), len(items))
 	}

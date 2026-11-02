@@ -106,9 +106,9 @@ func groupsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			if !g.Enabled {
 				status = "disabled"
 			}
-			fmt.Fprintf(&b, "- %s (id=%d, %s)", g.Name, g.ID, status)
+			fmt.Fprintf(&b, "- %s (id=%d, %s)", format.Untrusted(g.Name), g.ID, status)
 			if g.Comment != "" {
-				fmt.Fprintf(&b, " — %s", g.Comment)
+				fmt.Fprintf(&b, " — %s", format.Untrusted(g.Comment))
 			}
 			b.WriteString("\n")
 		}

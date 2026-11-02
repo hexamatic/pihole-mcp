@@ -492,7 +492,7 @@ Add domains to an allow or deny list. Supports bulk add via comma-separated doma
 | `domain` | string | Yes | Domain(s) to add. Comma-separated for bulk when kind is exact; a regex is taken whole. |
 | `comment` | string | No | Comment for the entry. |
 | `enabled` | boolean | No | Enabled state (default true). |
-| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids". Omit to leave them as they are; a new entry joins Default. |
+| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids", or "#<id>" for a group listed with its ID. Omit to leave them as they are; a new entry joins Default. |
 
 ### `pihole_domains_update`
 
@@ -507,7 +507,7 @@ Update a domain entry's comment or enabled status. Changing type or kind creates
 | `domain` | string | Yes | Domain to update. |
 | `comment` | string | No | Updated comment. |
 | `enabled` | boolean | No | Updated enabled status. |
-| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids". Omit to leave them as they are; a new entry joins Default. |
+| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids", or "#<id>" for a group listed with its ID. Omit to leave them as they are; a new entry joins Default. |
 
 ### `pihole_domains_delete`
 
@@ -624,7 +624,7 @@ Add a client by IP, MAC, hostname, CIDR subnet, or interface name (prefixed with
 |---|---|---|---|
 | `client` | string | Yes | Client identifier. |
 | `comment` | string | No | Optional comment. |
-| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids". Omit to leave them as they are; a new entry joins Default. |
+| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids", or "#<id>" for a group listed with its ID. Omit to leave them as they are; a new entry joins Default. |
 
 ### `pihole_clients_update`
 
@@ -636,7 +636,7 @@ Update a configured client's comment or the groups it belongs to. Fields left ou
 |---|---|---|---|
 | `client` | string | Yes | Client identifier. |
 | `comment` | string | No | Updated comment. |
-| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids". Omit to leave them as they are; a new entry joins Default. |
+| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids", or "#<id>" for a group listed with its ID. Omit to leave them as they are; a new entry joins Default. |
 
 ### `pihole_clients_delete`
 
@@ -686,7 +686,7 @@ Subscribe to a new blocklist or allowlist URL. Run pihole_action_gravity_update 
 | `type` | string | Yes | 'allow' or 'block'. |
 | `comment` | string | No | Comment for the list. |
 | `enabled` | boolean | No | Enabled state (default true). |
-| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids". Omit to leave them as they are; a new entry joins Default. |
+| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids", or "#<id>" for a group listed with its ID. Omit to leave them as they are; a new entry joins Default. |
 
 ### `pihole_lists_update`
 
@@ -700,7 +700,7 @@ Update a blocklist or allowlist entry's comment or enabled status.
 | `type` | string | Yes | 'allow' or 'block'. |
 | `comment` | string | No | Updated comment. |
 | `enabled` | boolean | No | Updated enabled status. |
-| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids". Omit to leave them as they are; a new entry joins Default. |
+| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids", or "#<id>" for a group listed with its ID. Omit to leave them as they are; a new entry joins Default. |
 
 ### `pihole_lists_delete`
 

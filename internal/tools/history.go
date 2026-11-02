@@ -265,7 +265,7 @@ func (c clientTotal) label() string {
 	if c.name == "" {
 		return c.key
 	}
-	return fmt.Sprintf("%s (%s)", c.name, c.key)
+	return fmt.Sprintf("%s (%s)", format.Untrusted(c.name), format.Untrusted(c.key))
 }
 
 // clientHistoryText renders a client history, and when it is empty says

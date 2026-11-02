@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Number formats an integer with comma separators (e.g. 45231 → "45,231").
@@ -93,6 +95,91 @@ func Clock(unix float64) string {
 	return time.Unix(int64(unix), 0).In(loc).Format("15:04:05")
 }
 
+// Untrusted makes text that came from the network safe to place in a reply:
+// a queried domain, a DHCP hostname, a client's user agent, a log line, a
+// comment. Whoever can make a device query a domain, or name a device,
+// chooses that text, and a line break in it could start a heading or a list
+// item that reads as the server's own words.
+//
+// Line breaks and other control characters become spaces, and the
+// characters that reorder text on screen are dropped. Nothing else changes:
+// a domain, a regex rule, a list address or a group name read from a reply
+// can be given back to a write tool as it is. A value placed between
+// backticks goes through CodeSpan, and a block of lines through Fence, which
+// keep a backtick in the value from closing them.
+func Untrusted(s string) string {
+	clean := true
+	for _, r := range s {
+		if needsCleaning(r) {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case unicode.Is(unicode.Bidi_Control, r):
+			continue
+		case unicode.IsControl(r), r == '\u2028', r == '\u2029':
+			b.WriteRune(' ')
+		default:
+			b.WriteRune(r) // invalid UTF-8 arrives as U+FFFD
+		}
+	}
+	return b.String()
+}
+
+func needsCleaning(r rune) bool {
+	return r == utf8.RuneError || unicode.Is(unicode.Bidi_Control, r) || unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+}
+
+// CodeSpan renders a value from the network as inline code. The fence is one
+// backtick longer than the longest run in the value, so a backtick in it
+// cannot end the span early and let what follows read as the server's text.
+func CodeSpan(s string) string {
+	s = Untrusted(s)
+	fence := strings.Repeat("`", longestBacktickRun(s)+1)
+	if strings.HasPrefix(s, "`") || strings.HasSuffix(s, "`") {
+		return fence + " " + s + " " + fence
+	}
+	return fence + s + fence
+}
+
+// Fence renders lines from the network as a fenced code block, with a fence
+// longer than any backtick run in them so none can close it.
+func Fence(lines []string) string {
+	var body strings.Builder
+	longest := 0
+	for i, l := range lines {
+		l = Untrusted(l)
+		if n := longestBacktickRun(l); n > longest {
+			longest = n
+		}
+		if i > 0 {
+			body.WriteByte('\n')
+		}
+		body.WriteString(l)
+	}
+	fence := strings.Repeat("`", max(3, longest+1))
+	return fence + "\n" + body.String() + "\n" + fence
+}
+
+func longestBacktickRun(s string) int {
+	longest, run := 0, 0
+	for _, r := range s {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	return longest
+}
+
 // CSV renders comma-separated values from headers and rows.
 // ~29% fewer tokens than Markdown tables for tabular data.
 //
@@ -110,7 +197,18 @@ func CSV(headers []string, rows [][]string) string {
 	// A strings.Builder never fails a write, so the only error csv.Writer can
 	// report here is one it cannot produce.
 	_ = w.Write(headers)
-	_ = w.WriteAll(rows)
+	// Every field passes through Untrusted. Quoting kept a line break inside
+	// its field for a CSV parser, but a reader sees a new line, which a
+	// hostname or comment from the network could use to pass for a row of
+	// its own or for the server's own words.
+	for _, row := range rows {
+		clean := make([]string, len(row))
+		for i, f := range row {
+			clean[i] = Untrusted(f)
+		}
+		_ = w.Write(clean)
+	}
+	w.Flush()
 	return b.String()
 }
 

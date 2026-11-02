@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hexamatic/pihole-mcp/internal/format"
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -98,7 +99,7 @@ func aggregateAll(ctx context.Context, r *pihole.Registry, h server.ToolHandlerF
 			switch {
 			case err != nil:
 				ir.OK = false
-				ir.Error = err.Error()
+				ir.Error = format.Untrusted(err.Error())
 			case res != nil && res.IsError:
 				ir.OK = false
 				ir.Error = resultText(res)

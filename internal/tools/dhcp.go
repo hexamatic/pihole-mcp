@@ -77,7 +77,7 @@ func dhcpLeasesHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			if l.Expires > 0 {
 				expiry = format.Timestamp(float64(l.Expires))
 			}
-			fmt.Fprintf(&b, "- %s — %s (%s) expires %s\n", l.IP, l.Name, l.HWAddr, expiry)
+			fmt.Fprintf(&b, "- %s — %s (%s) expires %s\n", l.IP, format.Untrusted(l.Name), format.Untrusted(l.HWAddr), expiry)
 		}
 
 		return mcp.NewToolResultText(b.String()), nil

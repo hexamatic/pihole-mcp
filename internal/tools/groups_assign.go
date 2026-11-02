@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/hexamatic/pihole-mcp/internal/format"
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -17,7 +19,7 @@ import (
 // endpoints cannot change it.
 func groupsParam() mcp.ToolOption {
 	return mcp.WithString("groups", mcp.Description(
-		`Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids". Omit to leave them as they are; a new entry joins Default.`))
+		`Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids", or "#<id>" for a group listed with its ID. Omit to leave them as they are; a new entry joins Default.`))
 }
 
 // applyGroups resolves the groups argument, when the caller gave one, to the
@@ -78,7 +80,7 @@ func applyGroups(ctx context.Context, c *pihole.Client, req mcp.CallToolRequest,
 		}
 		sort.Strings(existing)
 		return mcp.NewToolResultError(fmt.Sprintf("This Pi-hole has no group named %s, so nothing was changed. Its groups are: %s. "+
-			"Create one with pihole_groups_add.", strings.Join(missing, ", "), strings.Join(existing, ", ")))
+			"Create one with pihole_groups_add.", format.Untrusted(strings.Join(missing, ", ")), format.Untrusted(strings.Join(existing, ", "))))
 	}
 	body["groups"] = ids
 	return nil
@@ -100,7 +102,13 @@ func groupNamer(ctx context.Context, c *pihole.Client) func([]int) string {
 		out := make([]string, 0, len(ids))
 		for _, id := range ids {
 			if n, ok := names[id]; ok {
-				out = append(out, n)
+				// A name that cleaning changed cannot be typed back, so its ID
+				// goes with it for the groups parameter to take as "#<id>".
+				if shown := format.Untrusted(n); shown != n {
+					out = append(out, fmt.Sprintf("%s (#%d)", shown, id))
+				} else {
+					out = append(out, n)
+				}
 			} else {
 				out = append(out, fmt.Sprintf("#%d", id))
 			}
@@ -117,6 +125,17 @@ func groupID(byName map[string]int, name string) (int, error) {
 	if id, ok := byName[name]; ok {
 		return id, nil
 	}
+	// "#3" names a group by ID, as the lists show it for a name that had to
+	// be cleaned before it could be shown, and so cannot be typed back.
+	if digits, ok := strings.CutPrefix(name, "#"); ok {
+		if id, err := strconv.Atoi(digits); err == nil {
+			for _, gid := range byName {
+				if gid == id {
+					return id, nil
+				}
+			}
+		}
+	}
 	var matches []string
 	for n := range byName {
 		if strings.EqualFold(n, name) {
@@ -130,6 +149,6 @@ func groupID(byName map[string]int, name string) (int, error) {
 		return byName[matches[0]], nil
 	default:
 		sort.Strings(matches)
-		return 0, fmt.Errorf("%q matches more than one group (%s), so nothing was changed; give the exact name", name, strings.Join(matches, ", "))
+		return 0, fmt.Errorf("%q matches more than one group (%s), so nothing was changed; give the exact name", format.Untrusted(name), format.Untrusted(strings.Join(matches, ", ")))
 	}
 }

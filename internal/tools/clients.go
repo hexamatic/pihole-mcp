@@ -107,12 +107,12 @@ func clientsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		var b strings.Builder
 		b.WriteString(pageHeading("clients", len(page), total))
 		for _, cl := range page {
-			fmt.Fprintf(&b, "- %s", cl.Client)
+			fmt.Fprintf(&b, "- %s", format.Untrusted(cl.Client))
 			if cl.Name != "" {
-				fmt.Fprintf(&b, " (%s)", cl.Name)
+				fmt.Fprintf(&b, " (%s)", format.Untrusted(cl.Name))
 			}
 			if cl.Comment != "" {
-				fmt.Fprintf(&b, " — %s", cl.Comment)
+				fmt.Fprintf(&b, " — %s", format.Untrusted(cl.Comment))
 			}
 			fmt.Fprintf(&b, " [groups: %s]\n", groupNames(cl.Groups))
 		}
@@ -144,13 +144,13 @@ func clientsSuggestionsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			ips := format.StringOr(cl.Addresses, "no IPs")
 			names := format.StringOr(cl.Names, "")
 
-			fmt.Fprintf(&b, "- %s", mac)
+			fmt.Fprintf(&b, "- %s", format.Untrusted(mac))
 			if vendor != "" {
-				fmt.Fprintf(&b, " (%s)", vendor)
+				fmt.Fprintf(&b, " (%s)", format.Untrusted(vendor))
 			}
-			fmt.Fprintf(&b, " — %s", ips)
+			fmt.Fprintf(&b, " — %s", format.Untrusted(ips))
 			if names != "" {
-				fmt.Fprintf(&b, " [%s]", names)
+				fmt.Fprintf(&b, " [%s]", format.Untrusted(names))
 			}
 			b.WriteString("\n")
 		}

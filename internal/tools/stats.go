@@ -218,7 +218,7 @@ func statsTopDomainsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		items := make([]TopItemOutput, 0, len(result.Domains))
 		for i, d := range result.Domains {
 			rows = append(rows, []string{fmt.Sprintf("%d", i+1), d.Domain, format.Number(d.Count)})
-			items = append(items, TopItemOutput{Name: d.Domain, Count: d.Count})
+			items = append(items, TopItemOutput{Name: format.Untrusted(d.Domain), Count: d.Count})
 		}
 		output := TopListOutput{Items: items, Count: len(items), Blocked: blocked}
 
@@ -233,7 +233,7 @@ func statsTopDomainsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		var b strings.Builder
 		fmt.Fprintf(&b, "**Top %s domains:**\n", label)
 		for i, d := range result.Domains {
-			fmt.Fprintf(&b, "%d. %s — %s\n", i+1, d.Domain, format.Number(d.Count))
+			fmt.Fprintf(&b, "%d. %s — %s\n", i+1, format.Untrusted(d.Domain), format.Number(d.Count))
 		}
 		return mcp.NewToolResultStructured(output, b.String()), nil
 	}
@@ -266,7 +266,7 @@ func statsTopClientsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			if id == "" {
 				id = cl.IP
 			}
-			items = append(items, TopItemOutput{Name: id, Count: cl.Count})
+			items = append(items, TopItemOutput{Name: format.Untrusted(id), Count: cl.Count})
 		}
 		output := TopListOutput{Items: items, Count: len(items), Blocked: blocked}
 
@@ -281,9 +281,9 @@ func statsTopClientsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			if name == "" {
 				name = cl.IP
 			} else {
-				name = fmt.Sprintf("%s (%s)", cl.Name, cl.IP)
+				name = fmt.Sprintf("%s (%s)", format.Untrusted(cl.Name), cl.IP)
 			}
-			fmt.Fprintf(&b, "%d. %s — %s\n", i+1, name, format.Number(cl.Count))
+			fmt.Fprintf(&b, "%d. %s — %s\n", i+1, format.Untrusted(name), format.Number(cl.Count))
 		}
 		return mcp.NewToolResultStructured(output, b.String()), nil
 	}
@@ -321,7 +321,7 @@ func statsUpstreamsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			format.Number(result.ForwardedQueries), format.Number(result.TotalQueries))
 		for _, u := range result.Upstreams {
 			name := format.StringOr(u.Name, format.StringOr(u.IP, "cache"))
-			fmt.Fprintf(&b, "- %s:%d — %s queries, avg %s", name, u.Port, format.Number(u.Count), format.ResponseTime(u.Statistics.Response))
+			fmt.Fprintf(&b, "- %s:%d — %s queries, avg %s", format.Untrusted(name), u.Port, format.Number(u.Count), format.ResponseTime(u.Statistics.Response))
 			// FTL names it variance, but it is the uncertainty of the mean,
 			// in seconds (src/api/stats.c).
 			if u.Statistics.Variance > 0 {
@@ -399,7 +399,7 @@ func statsRecentBlockedHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		var b strings.Builder
 		b.WriteString("**Recently blocked:**\n")
 		for i, domain := range result.Blocked {
-			fmt.Fprintf(&b, "%d. %s\n", i+1, domain)
+			fmt.Fprintf(&b, "%d. %s\n", i+1, format.Untrusted(domain))
 		}
 		return mcp.NewToolResultText(b.String()), nil
 	}
@@ -474,7 +474,7 @@ func statsDatabaseTopDomainsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		var b strings.Builder
 		fmt.Fprintf(&b, "**Top %s domains (database):**\n", label)
 		for i, d := range result.Domains {
-			fmt.Fprintf(&b, "%d. %s — %s\n", i+1, d.Domain, format.Number(d.Count))
+			fmt.Fprintf(&b, "%d. %s — %s\n", i+1, format.Untrusted(d.Domain), format.Number(d.Count))
 		}
 		return mcp.NewToolResultText(b.String()), nil
 	}
@@ -523,9 +523,9 @@ func statsDatabaseTopClientsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			if name == "" {
 				name = cl.IP
 			} else {
-				name = fmt.Sprintf("%s (%s)", cl.Name, cl.IP)
+				name = fmt.Sprintf("%s (%s)", format.Untrusted(cl.Name), cl.IP)
 			}
-			fmt.Fprintf(&b, "%d. %s — %s\n", i+1, name, format.Number(cl.Count))
+			fmt.Fprintf(&b, "%d. %s — %s\n", i+1, format.Untrusted(name), format.Number(cl.Count))
 		}
 		return mcp.NewToolResultText(b.String()), nil
 	}
@@ -572,7 +572,7 @@ func statsDatabaseUpstreamsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			format.Number(result.ForwardedQueries), format.Number(result.TotalQueries))
 		for _, u := range result.Upstreams {
 			name := format.StringOr(u.Name, format.StringOr(u.IP, "cache"))
-			fmt.Fprintf(&b, "- %s:%d — %s queries\n", name, u.Port, format.Number(u.Count))
+			fmt.Fprintf(&b, "- %s:%d — %s queries\n", format.Untrusted(name), u.Port, format.Number(u.Count))
 		}
 		return mcp.NewToolResultText(b.String()), nil
 	}

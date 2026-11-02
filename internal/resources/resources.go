@@ -165,7 +165,7 @@ func statusResourceHandler(c *pihole.Client, instance string) server.ResourceHan
 		var ver pihole.VersionInfo
 
 		if err := c.Get(ctx, "/dns/blocking", &blocking); err != nil {
-			return nil, fmt.Errorf("getting blocking status: %w", err)
+			return nil, fmt.Errorf("getting blocking status: %s", format.Untrusted(err.Error()))
 		}
 		_ = c.Get(ctx, "/info/version", &ver)
 
@@ -197,7 +197,7 @@ func summaryResourceHandler(c *pihole.Client, instance string) server.ResourceHa
 	return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 		var stats pihole.StatsSummary
 		if err := c.Get(ctx, "/stats/summary", &stats); err != nil {
-			return nil, fmt.Errorf("getting stats: %w", err)
+			return nil, fmt.Errorf("getting stats: %s", format.Untrusted(err.Error()))
 		}
 
 		q := stats.Queries
@@ -244,14 +244,14 @@ func clientResourceHandler(c *pihole.Client) server.ResourceTemplateHandlerFunc 
 
 		var result pihole.ClientsResponse
 		if err := c.Get(ctx, "/clients/"+pihole.EscapePathSegment(client), &result); err != nil {
-			return nil, fmt.Errorf("getting client %s: %w", client, err)
+			return nil, fmt.Errorf("getting client %s: %s", format.Untrusted(client), format.Untrusted(err.Error()))
 		}
 
 		var b strings.Builder
-		fmt.Fprintf(&b, "# Client: %s\n\n", client)
+		fmt.Fprintf(&b, "# Client: %s\n\n", format.Untrusted(client))
 		for _, cl := range result.Clients {
-			fmt.Fprintf(&b, "- **Name:** %s\n", cl.Name)
-			fmt.Fprintf(&b, "- **Comment:** %s\n", cl.Comment)
+			fmt.Fprintf(&b, "- **Name:** %s\n", format.Untrusted(cl.Name))
+			fmt.Fprintf(&b, "- **Comment:** %s\n", format.Untrusted(cl.Comment))
 			fmt.Fprintf(&b, "- **Groups:** %v\n", cl.Groups)
 		}
 
@@ -279,13 +279,13 @@ func domainListResourceHandler(c *pihole.Client) server.ResourceTemplateHandlerF
 
 		var result pihole.DomainsResponse
 		if err := c.Get(ctx, "/domains/"+path, &result); err != nil {
-			return nil, fmt.Errorf("getting domains %s: %w", path, err)
+			return nil, fmt.Errorf("getting domains %s: %s", path, format.Untrusted(err.Error()))
 		}
 
 		var b strings.Builder
 		fmt.Fprintf(&b, "# Domains: %s (%d)\n\n", path, len(result.Domains))
 		for _, d := range result.Domains {
-			fmt.Fprintf(&b, "- %s (enabled: %s)\n", d.Domain, format.Bool(d.Enabled))
+			fmt.Fprintf(&b, "- %s (enabled: %s)\n", format.Untrusted(d.Domain), format.Bool(d.Enabled))
 		}
 
 		return []mcp.ResourceContents{
@@ -308,16 +308,16 @@ func listDetailResourceHandler(c *pihole.Client) server.ResourceTemplateHandlerF
 
 		var result pihole.ListsResponse
 		if err := c.Get(ctx, "/lists/"+pihole.EscapePathSegment(address), &result); err != nil {
-			return nil, fmt.Errorf("getting list %s: %w", address, err)
+			return nil, fmt.Errorf("getting list %s: %s", format.Untrusted(address), format.Untrusted(err.Error()))
 		}
 
 		var b strings.Builder
-		fmt.Fprintf(&b, "# List: %s\n\n", address)
+		fmt.Fprintf(&b, "# List: %s\n\n", format.Untrusted(address))
 		for _, l := range result.Lists {
 			fmt.Fprintf(&b, "- **Type:** %s\n", l.Type)
 			fmt.Fprintf(&b, "- **Domains:** %s\n", format.Number(l.Number))
 			fmt.Fprintf(&b, "- **Enabled:** %s\n", format.Bool(l.Enabled))
-			fmt.Fprintf(&b, "- **Comment:** %s\n", l.Comment)
+			fmt.Fprintf(&b, "- **Comment:** %s\n", format.Untrusted(l.Comment))
 		}
 
 		return []mcp.ResourceContents{

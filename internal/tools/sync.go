@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/hexamatic/pihole-mcp/internal/format"
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -303,7 +304,7 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		}
 		for _, op := range res.Ops {
 			if op.Err != "" {
-				fmt.Fprintf(&b, "- FAILED %s %s (%s): %s\n", op.Action, op.Category, op.Item, op.Err)
+				fmt.Fprintf(&b, "- FAILED %s %s (%s): %s\n", op.Action, op.Category, format.Untrusted(op.Item), format.Untrusted(op.Err))
 			}
 		}
 		switch {
@@ -323,12 +324,12 @@ func instanceSyncHandler(r *pihole.Registry) server.ToolHandlerFunc {
 // writePlanStep renders one plan step, with the settings it changes where
 // the category compares them.
 func writePlanStep(b *strings.Builder, step pihole.PlanStep) {
-	fmt.Fprintf(b, "- %s %s: %s", step.Action, step.Category, step.Item)
+	fmt.Fprintf(b, "- %s %s: %s", step.Action, step.Category, format.Untrusted(step.Item))
 	switch {
 	case step.Action == "update":
-		fmt.Fprintf(b, " (%s → %s)", step.From, step.To)
+		fmt.Fprintf(b, " (%s → %s)", format.Untrusted(step.From), format.Untrusted(step.To))
 	case step.Action == "add" && step.To != "":
-		fmt.Fprintf(b, " (%s)", step.To)
+		fmt.Fprintf(b, " (%s)", format.Untrusted(step.To))
 	}
 	b.WriteString("\n")
 }

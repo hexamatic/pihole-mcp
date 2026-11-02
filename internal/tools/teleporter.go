@@ -195,7 +195,7 @@ func teleporterImportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		var b strings.Builder
 		fmt.Fprintf(&b, "**Import complete.** Pi-hole imported %d item(s):\n", len(imported))
 		for _, item := range imported {
-			fmt.Fprintf(&b, "- %s\n", item)
+			fmt.Fprintf(&b, "- %s\n", format.Untrusted(item))
 		}
 		if snapshot != "" {
 			fmt.Fprintf(&b, "The configuration from before the import is backed up at %s; import it to roll back.\n", snapshot)

@@ -50,7 +50,7 @@ func authSessionsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 				current = " (current)"
 			}
 			fmt.Fprintf(&b, "- Session %d: %s (%s) — expires %s%s\n",
-				s.ID, s.RemoteAddr, s.UserAgent,
+				s.ID, format.Untrusted(s.RemoteAddr), format.Untrusted(s.UserAgent),
 				format.Timestamp(s.ValidUntil), current)
 		}
 
