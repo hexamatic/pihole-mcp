@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -342,5 +343,30 @@ func TestClient_AnUnreadableRedirectDoesNotShowItsCredentials(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "hunter2") {
 		t.Errorf("the error shows the redirect's credentials: %v", err)
+	}
+}
+
+func TestRedirectError_SaysWhatToSetPIHOLE_URLTo(t *testing.T) {
+	from, _ := url.Parse("http://pi.lan/api/auth")
+	for _, tc := range []struct {
+		name, loc string
+		want      []string
+	}{
+		{"https upgrade", "https://pi.lan/api/auth",
+			[]string{"redirects from http to https", "set PIHOLE_URL to https://pi.lan,", "unencrypted"}},
+		{"path prefix", "https://proxy.lan/pihole/api/auth?x=1",
+			[]string{"redirected to https://proxy.lan/pihole/api/auth;", "set PIHOLE_URL to https://proxy.lan/pihole,"}},
+		{"sign-in page", "https://sso.lan/login?rd=pi.lan",
+			[]string{"redirected to https://sso.lan/login,", "not Pi-hole's API", "sign-in page"}},
+		{"unreadable", "http://pi.lan/%zz", []string{"could not be read"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := newRedirectError(from, tc.loc).Error()
+			for _, w := range tc.want {
+				if !strings.Contains(msg, w) {
+					t.Errorf("message %q lacks %q", msg, w)
+				}
+			}
+		})
 	}
 }

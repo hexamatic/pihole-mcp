@@ -655,3 +655,16 @@ func TestDomainsList_KindOnlyFiltersByKind(t *testing.T) {
 	}
 	rec.Only(t, "GET", "/domains").AssertRawPath(t, "/domains")
 }
+
+func TestDomainsUpdate_FoldsTheCaseOfAnExactDomain(t *testing.T) {
+	// FTL stores exact domains in lower case and lowercases the one a write
+	// names, but not the one a read names, so the read before the update
+	// found nothing for "Example.com".
+	rec := piholeHandler(map[string]any{
+		"/domains/deny/exact/example.com": map[string]any{"domains": []any{map[string]any{"domain": "example.com", "type": "deny", "kind": "exact", "comment": "old", "enabled": true}}},
+	})
+	callTool(t, domainsUpdateHandler, newTestClient(t, rec), map[string]any{
+		"type": "deny", "kind": "exact", "domain": "Example.COM", "comment": "new",
+	})
+	rec.Only(t, "PUT", "/domains/deny/exact/example.com").AssertField(t, "comment", "new")
+}

@@ -5,23 +5,25 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hexamatic/pihole-mcp/internal/format"
+
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/mark3labs/mcp-go/server"
 )
 
 // dnsLogHandler wraps logHandler for use with callTool.
 func dnsLogHandler(r *pihole.Registry) server.ToolHandlerFunc {
-	return logHandler(r, "/logs/dnsmasq")
+	return logHandler(r, "/logs/dnsmasq", false)
 }
 
 // ftlLogHandler wraps logHandler for use with callTool.
 func ftlLogHandler(r *pihole.Registry) server.ToolHandlerFunc {
-	return logHandler(r, "/logs/ftl")
+	return logHandler(r, "/logs/ftl", true)
 }
 
 // webserverLogHandler wraps logHandler for use with callTool.
 func webserverLogHandler(r *pihole.Registry) server.ToolHandlerFunc {
-	return logHandler(r, "/logs/webserver")
+	return logHandler(r, "/logs/webserver", false)
 }
 
 // next_id is what makes these three tools incremental: it is appended to the
@@ -200,18 +202,17 @@ func TestLogs_ShowTheNewestLines(t *testing.T) {
 		text := callTool(t, dnsLogHandler, c, map[string]any{"lines": 10.0})
 
 		// The rendered lines, in order, must be exactly the capture's newest
-		// ten. Each reads "- HH:MM:SS message", so the message is what
-		// follows the time.
+		// ten, each its time and then its message.
 		var got []string
 		for _, line := range strings.Split(text, "\n") {
 			if rest, ok := strings.CutPrefix(line, "- "); ok {
-				_, msg, _ := strings.Cut(rest, " ")
-				got = append(got, msg)
+				got = append(got, rest)
 			}
 		}
 		var want []string
 		for _, e := range entries[len(entries)-10:] {
-			want = append(want, e.(map[string]any)["message"].(string))
+			m := e.(map[string]any)
+			want = append(want, format.Clock(m["timestamp"].(float64))+" "+m["message"].(string))
 		}
 		if strings.Join(got, "\n") != strings.Join(want, "\n") {
 			t.Errorf("rendered lines:\n%s\nwant the newest ten:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -254,4 +255,15 @@ func TestLogs_LinesOutOfRangeIsRefused(t *testing.T) {
 	c := newTestClient(t, rec)
 	callToolExpectError(t, dnsLogHandler, c, map[string]any{"lines": 513.0})
 	rec.AssertNone(t, "GET", "/logs/dnsmasq")
+}
+
+func TestLogsDNS_LevelIsRefused(t *testing.T) {
+	// dnsmasq lines carry no level, so a level filter dropped every line and
+	// answered as if nothing had gone wrong.
+	rec := piholeHandler(nil)
+	msg := callToolExpectError(t, dnsLogHandler, newTestClient(t, rec), map[string]any{"level": "error"})
+	if !strings.Contains(msg, "cannot be filtered by level") {
+		t.Errorf("expected level to be refused on the DNS log, got: %s", msg)
+	}
+	rec.AssertNone(t, "", "")
 }

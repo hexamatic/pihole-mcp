@@ -5,42 +5,90 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// promptTools are the tools each prompt directs the reader to use. A prompt
-// is offered only when every one of them is, so a deployment narrowed with
-// PIHOLE_TOOLSETS no longer offers prompts whose steps name tools it does not
-// have. TestPromptToolsMatchTheirText keeps this in step with the prompts.
-var promptTools = map[string][]string{
-	"diagnose_slow_dns":   {"pihole_info_system", "pihole_queries_search", "pihole_stats_summary", "pihole_stats_upstreams"},
-	"investigate_domain":  {"pihole_local_cname_list", "pihole_local_dns_list", "pihole_queries_search", "pihole_search_domains"},
-	"review_top_blocked":  {"pihole_domains_list", "pihole_search_domains", "pihole_stats_top_domains"},
-	"audit_network":       {"pihole_clients_list", "pihole_clients_suggestions", "pihole_dhcp_leases", "pihole_network_devices"},
-	"optimise_blocklists": {"pihole_lists_list", "pihole_stats_summary"},
-	"daily_report":        {"pihole_info_system", "pihole_stats_summary", "pihole_stats_top_clients", "pihole_stats_top_domains", "pihole_stats_upstreams"},
-	"security_audit":      {"pihole_auth_sessions", "pihole_config_get_value", "pihole_info_ftl", "pihole_info_messages"},
-	"weekly_trends":       {"pihole_stats_database", "pihole_stats_database_top_clients", "pihole_stats_database_top_domains", "pihole_stats_database_upstreams"},
-	"upstream_health":     {"pihole_info_ftl", "pihole_info_metrics", "pihole_stats_database_upstreams", "pihole_stats_query_types", "pihole_stats_upstreams"},
+// promptNeeds are the tools a prompt's steps use.
+type promptNeeds struct {
+	// core are the tools the prompt cannot do without. It is offered only
+	// when every one of them is.
+	core []string
+	// extra are tools for steps the prompt can do without. When one is not
+	// offered, the prompt names it and says to skip the steps that use it.
+	extra []string
 }
 
-// RegisterAll registers the MCP prompts whose tools offered reports as
-// available. A nil offered registers them all.
+// promptTools are the tools each prompt directs the reader to use. A
+// deployment narrowed with PIHOLE_TOOLSETS used to offer every prompt, whose
+// steps then named tools it did not have; then only prompts whose every tool
+// it had, which took all nine from a curation setup such as
+// dashboard,domains,lists over one statistics step. A prompt now needs only
+// its core tools. TestPromptToolsMatchTheirText keeps this in step with the
+// prompts.
+var promptTools = map[string]promptNeeds{
+	"diagnose_slow_dns":   {[]string{"pihole_stats_upstreams"}, []string{"pihole_info_system", "pihole_queries_search", "pihole_stats_summary"}},
+	"investigate_domain":  {[]string{"pihole_search_domains"}, []string{"pihole_local_cname_list", "pihole_local_dns_list", "pihole_queries_search"}},
+	"review_top_blocked":  {[]string{"pihole_stats_top_domains"}, []string{"pihole_domains_list", "pihole_search_domains"}},
+	"audit_network":       {[]string{"pihole_network_devices"}, []string{"pihole_clients_list", "pihole_clients_suggestions", "pihole_dhcp_leases"}},
+	"optimise_blocklists": {[]string{"pihole_lists_list"}, []string{"pihole_stats_summary"}},
+	"daily_report":        {[]string{"pihole_stats_summary"}, []string{"pihole_info_system", "pihole_stats_top_clients", "pihole_stats_top_domains", "pihole_stats_upstreams"}},
+	"security_audit":      {[]string{"pihole_auth_sessions"}, []string{"pihole_config_get_value", "pihole_info_ftl", "pihole_info_messages"}},
+	"weekly_trends":       {[]string{"pihole_stats_database"}, []string{"pihole_stats_database_top_clients", "pihole_stats_database_top_domains", "pihole_stats_database_upstreams"}},
+	"upstream_health":     {[]string{"pihole_stats_upstreams"}, []string{"pihole_info_ftl", "pihole_info_metrics", "pihole_stats_database_upstreams", "pihole_stats_query_types"}},
+}
+
+// RegisterAll registers the MCP prompts whose core tools offered reports as
+// available. A nil offered registers them all as written.
 func RegisterAll(s *server.MCPServer, offered func(toolName string) bool) {
 	add := func(p mcp.Prompt, h server.PromptHandlerFunc) {
 		if offered != nil {
-			for _, t := range promptTools[p.Name] {
+			needs := promptTools[p.Name]
+			for _, t := range needs.core {
 				if !offered(t) {
 					return
 				}
+			}
+			var missing []string
+			for _, t := range needs.extra {
+				if !offered(t) {
+					missing = append(missing, t)
+				}
+			}
+			if len(missing) > 0 {
+				h = skipping(h, missing)
 			}
 		}
 		s.AddPrompt(p, h)
 	}
 	registerPrompts(add)
+}
+
+// skipping wraps a prompt handler to end its text by naming the tools this
+// server does not offer, so the steps that use them are skipped rather than
+// attempted.
+func skipping(h server.PromptHandlerFunc, missing []string) server.PromptHandlerFunc {
+	them := "it"
+	if len(missing) > 1 {
+		them = "them"
+	}
+	note := fmt.Sprintf("\n\nThis server does not offer %s, so skip the steps that use %s and say what was left out.",
+		strings.Join(missing, ", "), them)
+	return func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		res, err := h(ctx, req)
+		if err != nil || res == nil || len(res.Messages) == 0 {
+			return res, err
+		}
+		last := &res.Messages[len(res.Messages)-1]
+		if tc, ok := last.Content.(mcp.TextContent); ok {
+			tc.Text += note
+			last.Content = tc
+		}
+		return res, nil
+	}
 }
 
 func registerPrompts(add func(mcp.Prompt, server.PromptHandlerFunc)) {

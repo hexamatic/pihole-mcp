@@ -27,7 +27,7 @@ func RegisterConfig(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_config_set",
 		mcp.WithTitleAnnotation("Set Configuration"),
-		mcp.WithDescription("Modify Pi-hole configuration. Provide nested JSON properties to change. Changes take effect immediately and can affect DNS behaviour system-wide."),
+		mcp.WithDescription("Modify Pi-hole configuration. Provide nested JSON properties to change, or dotted keys such as {\"dns.blocking.active\":true}. Changes take effect immediately and can affect DNS behaviour system-wide. Refused: "+refusedSettings+"."),
 		mcp.WithString("config", mcp.Required(), mcp.Description("JSON config object, e.g. {\"dns\":{\"blocking\":{\"active\":true}}}")),
 		mcp.WithBoolean("restart", mcp.Description("Restart FTL after change (default true). Set false when chaining several config_set calls, so only the last one pays for the restart.")),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -43,7 +43,7 @@ func RegisterConfig(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_config_add_value",
 		mcp.WithTitleAnnotation("Add Config Array Value"),
-		mcp.WithDescription("Add a value to a configuration array such as dns.upstreams. For dns.hosts and dns.cnameRecords prefer pihole_local_dns_add and pihole_local_cname_add, which take structured arguments."),
+		mcp.WithDescription("Add a value to a configuration array such as dns.upstreams. For dns.hosts and dns.cnameRecords prefer pihole_local_dns_add and pihole_local_cname_add, which take structured arguments. Refuses the settings pihole_config_set refuses."),
 		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams, dns.hosts or dns.cnameRecords.")),
 		mcp.WithString("value", mcp.Required(), mcp.Description("Value to add.")),
 		mcp.WithBoolean("restart", mcp.Description("Restart FTL after change (default true).")),
@@ -52,7 +52,7 @@ func RegisterConfig(s *server.MCPServer, r *pihole.Registry) {
 
 	addTool(s, r, mcp.NewTool("pihole_config_remove_value",
 		mcp.WithTitleAnnotation("Remove Config Array Value"),
-		mcp.WithDescription("Remove a value from a configuration array such as dns.upstreams. For dns.hosts and dns.cnameRecords prefer pihole_local_dns_delete and pihole_local_cname_delete, which take structured arguments."),
+		mcp.WithDescription("Remove a value from a configuration array such as dns.upstreams. For dns.hosts and dns.cnameRecords prefer pihole_local_dns_delete and pihole_local_cname_delete, which take structured arguments. Refuses the settings pihole_config_set refuses."),
 		mcp.WithString("element", mcp.Required(), mcp.Description("Config element path, e.g. dns.upstreams, dns.hosts or dns.cnameRecords.")),
 		mcp.WithString("value", mcp.Required(), mcp.Description("Value to remove.")),
 		mcp.WithBoolean("restart", mcp.Description("Restart FTL after change (default true).")),
@@ -319,6 +319,13 @@ func configSetHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if key, r, ok := riskyChange(leaves, current); ok {
 			return refuseRiskySetting(key, r), nil
 		}
+		// FTL skips a key it does not know and applies the rest, so a request
+		// with one misspelt key changed the others and then reported an
+		// error, and a retry restarted FTL a second time. Refuse it whole.
+		if unknown := unknownSettings(current, leaves); len(unknown) > 0 {
+			return mcp.NewToolResultError(fmt.Sprintf("Pi-hole has no setting %s, so nothing was changed. "+
+				"Check the spelling against pihole_config_get.", strings.Join(unknown, ", "))), nil
+		}
 
 		sent := time.Now()
 		var result pihole.ConfigResponse
@@ -547,6 +554,23 @@ func compareConfigWrite(before, after map[string]any, leaves map[string]any) con
 		}
 	}
 	return r
+}
+
+// unknownSettings lists, sorted, the requested keys that name no setting in
+// the detailed configuration read before a write. It lists none when that
+// read failed (before is nil), leaving the check to compareConfigWrite.
+func unknownSettings(before map[string]any, leaves map[string]any) []string {
+	if before == nil {
+		return nil
+	}
+	var unknown []string
+	for k := range leaves {
+		if _, ok := pihole.DetailedConfigItem(before, k); !ok {
+			unknown = append(unknown, k)
+		}
+	}
+	sort.Strings(unknown)
+	return unknown
 }
 
 // configValueAt returns the value at a dotted key in a plain config tree,

@@ -192,6 +192,17 @@ func missingEntry(what, addTool string) *mcp.CallToolResult {
 		"Check the name with the matching list tool, or create it with %s.", what, addTool))
 }
 
+// asciiLower lowercases the ASCII letters in s and leaves every other byte
+// as it is, as FTL's tolower() loop over a domain does.
+func asciiLower(s string) string {
+	return strings.Map(func(r rune) rune {
+		if 'A' <= r && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		return r
+	}, s)
+}
+
 // lockEntry locks the entry at path on c across an update's read and write,
 // and returns the unlock. FTL replaces comment and enabled together, so an
 // update reads the entry to keep the field it was not given, and two at once

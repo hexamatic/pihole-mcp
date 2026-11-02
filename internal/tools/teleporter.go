@@ -50,7 +50,7 @@ func openBackupStream(ctx context.Context, c *pihole.Client) (archive io.Reader,
 func RegisterTeleporter(s *server.MCPServer, r *pihole.Registry) {
 	addTool(s, r, mcp.NewTool("pihole_teleporter_export",
 		mcp.WithTitleAnnotation("Export Backup"),
-		mcp.WithDescription("Export a full Pi-hole configuration backup as a zip archive to a new file on the server's host, and return its path and size. It never replaces an existing file. The file persists after the call and is the caller's to move or delete; under Docker it is written inside the container unless output_path points at a mounted volume."),
+		mcp.WithDescription("Export a full Pi-hole configuration backup as a zip archive to a new file on the server's host, and return its path and size. It never replaces an existing file. A file this server names in the system temp directory is removed after a day; one in PIHOLE_BACKUP_DIR or at output_path is kept. Under Docker, only a mounted volume outlives the container."),
 		mcp.WithString("output_path", mcp.Description("Absolute path for the new .zip file, which must not exist yet (inside PIHOLE_BACKUP_DIR when that is set). Defaults to a new file in PIHOLE_BACKUP_DIR or the system temp directory.")),
 		// It writes a file on the server's host, so it is not read-only, and
 		// it is not offered in read-only mode. It replaces nothing, so it is
@@ -112,10 +112,15 @@ func teleporterExportHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to save backup, so the partial file was removed: %v", err)), nil
 		}
 
+		keep := "The file persists on disk; deleting it is your responsibility."
+		if reapedBackup(out.Name(), outputPath) {
+			keep = "It is in the system temp directory, where this server removes its own backups after a day. " +
+				"Move it, or set PIHOLE_BACKUP_DIR or pass output_path, to keep it."
+		}
 		return mcp.NewToolResultText(fmt.Sprintf(
-			"**Backup saved.** File: %s (%s bytes, %s). The file persists on disk; deleting it is your responsibility.",
+			"**Backup saved.** File: %s (%s bytes, %s). %s",
 			out.Name(), format.Number(int(n)),
-			format.Timestamp(float64(time.Now().Unix())))), nil
+			format.Timestamp(float64(time.Now().Unix())), keep)), nil
 	}
 }
 

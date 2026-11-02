@@ -217,13 +217,31 @@ func clientsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		// mutable field a client row has, so an update that does not name one
 		// erases it. Read it back rather than write over it. Group membership
 		// survives a PUT that omits it, so it needs no round trip.
-		defer lockEntry(c, path)()
+		unlock := lockEntry(c, path)
+		defer func() { unlock() }()
 		var existing pihole.ClientsResponse
 		if err := c.Get(ctx, path, &existing); err != nil {
 			return toolError("read the client before updating it", err), nil
 		}
 		if len(existing.Clients) == 0 {
-			return missingEntry("client "+client, "pihole_clients_add"), nil
+			// FTL finds a client by its exact spelling, so a MAC address
+			// in the other case found nothing, and the write before this
+			// read added a second client for the same device. Look for it
+			// ignoring case, and update it under its own lock.
+			unlock()
+			stored, res := clientNamedIgnoringCase(ctx, c, client)
+			if res != nil {
+				unlock = func() {}
+				return res, nil
+			}
+			client, path = stored, "/clients/"+pihole.EscapePathSegment(stored)
+			unlock = lockEntry(c, path)
+			if err := c.Get(ctx, path, &existing); err != nil {
+				return toolError("read the client before updating it", err), nil
+			}
+			if len(existing.Clients) == 0 {
+				return missingEntry("client "+client, "pihole_clients_add"), nil
+			}
 		}
 		comment, supplied := suppliedString(req, "comment")
 		if !supplied {
@@ -272,4 +290,29 @@ func clientsDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 func clientsBatchDeleteHandler(r *pihole.Registry) server.ToolHandlerFunc {
 	return batchDeleteHandler(r, "clients")
+}
+
+// clientNamedIgnoringCase returns the stored spelling of the one configured
+// client whose name matches client ignoring case. It returns a result for the
+// caller to send back when there is no such client, or more than one.
+func clientNamedIgnoringCase(ctx context.Context, c *pihole.Client, client string) (string, *mcp.CallToolResult) {
+	var all pihole.ClientsResponse
+	if err := c.Get(ctx, "/clients", &all); err != nil {
+		return "", toolError("look the client up", err)
+	}
+	var found []string
+	for _, e := range all.Clients {
+		if strings.EqualFold(e.Client, client) {
+			found = append(found, e.Client)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return "", missingEntry("client "+client, "pihole_clients_add")
+	case 1:
+		return found[0], nil
+	default:
+		return "", mcp.NewToolResultError(fmt.Sprintf("More than one client matches %s ignoring case (%s), so nothing was changed. "+
+			"Name the one to update exactly as pihole_clients_list shows it.", client, strings.Join(found, ", ")))
+	}
 }

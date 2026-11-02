@@ -3,6 +3,9 @@ package tools
 import (
 	"strings"
 	"testing"
+
+	"github.com/hexamatic/pihole-mcp/internal/pihole/piholefake"
+	"github.com/hexamatic/pihole-mcp/internal/pihole/wiretest"
 )
 
 func TestClientsList_Normal(t *testing.T) {
@@ -305,6 +308,7 @@ func TestClientsUpdate_OmittedCommentIsPreserved(t *testing.T) {
 func TestClientsUpdate_MissingClientIsRefused(t *testing.T) {
 	rec := piholeHandler(map[string]any{
 		"GET /clients/192.168.1.50": map[string]any{"clients": []any{}},
+		"GET /clients":              map[string]any{"clients": []any{}},
 		"PUT /clients/192.168.1.50": map[string]any{"clients": []any{}},
 	})
 	c := newTestClient(t, rec)
@@ -338,4 +342,32 @@ func TestClientsAdd_MissingClientIsNamedError(t *testing.T) {
 		t.Errorf("error %q does not name the missing parameter", msg)
 	}
 	rec.AssertNone(t, "", "")
+}
+
+func TestClientsUpdate_FindsAClientWhoseCaseDiffers(t *testing.T) {
+	// FTL finds a client by its exact spelling. Before updates read first,
+	// the write for aa:bb:… added a second client next to AA:BB:…; then the
+	// read found nothing and the update was refused.
+	f := piholefake.New()
+	t.Cleanup(f.Close)
+	f.AddClient("AA:BB:CC:DD:EE:01", "old")
+	f.AddClient("192.168.1.50", "other")
+	rec := wiretest.Proxy(f.Handler())
+
+	text := callTool(t, clientsUpdateHandler, newTestClient(t, rec), map[string]any{"client": "aa:bb:cc:dd:ee:01", "comment": "laptop"})
+	if !strings.Contains(text, "AA:BB:CC:DD:EE:01") {
+		t.Errorf("expected the stored spelling in the reply, got: %s", text)
+	}
+	rec.Only(t, "PUT", "/clients/AA:BB:CC:DD:EE:01").AssertField(t, "comment", "laptop")
+
+	f.AddClient("Aa:bb:cc:dd:ee:01", "twin")
+	msg := callToolExpectError(t, clientsUpdateHandler, newTestClient(t, rec), map[string]any{"client": "aa:BB:cc:dd:ee:01", "comment": "x"})
+	if !strings.Contains(msg, "More than one client matches") {
+		t.Errorf("expected an ambiguous name to be refused, got: %s", msg)
+	}
+	msg = callToolExpectError(t, clientsUpdateHandler, newTestClient(t, rec), map[string]any{"client": "10.9.9.9", "comment": "x"})
+	if !strings.Contains(msg, "No client 10.9.9.9 exists") {
+		t.Errorf("expected a missing client to be refused, got: %s", msg)
+	}
+	rec.AssertCount(t, "PUT", "", 1)
 }
