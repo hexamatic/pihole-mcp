@@ -95,13 +95,17 @@ type item struct {
 	// before is the target's compare value, set on an entry the plan updates
 	// so the plan can show what it replaces.
 	before string
+	// entry is the API path of a list entry (a rule, list, group or
+	// client), which the sync locks as the update tools do. Empty for the
+	// DNS arrays, which lock their whole setting instead.
+	entry  string
 	add    writeFunc
 	update writeFunc
 	delete writeFunc
 }
 
 // writeFunc makes one change on the target. restart is meaningful only for a
-// category whose writes restart FTL (see restartingCategories); the rest
+// category whose writes restart FTL (dns.cnameRecords); the rest
 // ignore it.
 type writeFunc func(ctx context.Context, c *Client, restart bool) error
 
@@ -130,6 +134,7 @@ func readDomains(ctx context.Context, c *Client) (map[string]item, error) {
 		single := base + "/" + EscapePathSegment(d.Domain)
 		m[key] = item{
 			key:     key,
+			entry:   single,
 			label:   fmt.Sprintf("%s (%s/%s)", d.Domain, d.Type, d.Kind),
 			compare: fmt.Sprintf("enabled=%v;comment=%s", d.Enabled, d.Comment),
 			add: func(ctx context.Context, c *Client, _ bool) error {
@@ -158,6 +163,7 @@ func readLists(ctx context.Context, c *Client) (map[string]item, error) {
 		single := "/lists/" + EscapePathSegment(l.Address) + "?type=" + url.QueryEscape(l.Type)
 		m[key] = item{
 			key:     key,
+			entry:   single,
 			label:   fmt.Sprintf("%s (%s)", l.Address, l.Type),
 			compare: fmt.Sprintf("enabled=%v;comment=%s", l.Enabled, l.Comment),
 			add: func(ctx context.Context, c *Client, _ bool) error {
@@ -186,6 +192,7 @@ func readGroups(ctx context.Context, c *Client) (map[string]item, error) {
 		single := "/groups/" + EscapePathSegment(g.Name)
 		m[key] = item{
 			key:     key,
+			entry:   single,
 			label:   g.Name,
 			compare: fmt.Sprintf("enabled=%v;comment=%s", g.Enabled, g.Comment),
 			add: func(ctx context.Context, c *Client, _ bool) error {
@@ -214,6 +221,7 @@ func readClients(ctx context.Context, c *Client) (map[string]item, error) {
 		single := "/clients/" + EscapePathSegment(cl.Client)
 		m[key] = item{
 			key:     key,
+			entry:   single,
 			label:   cl.Client,
 			compare: "comment=" + cl.Comment,
 			add: func(ctx context.Context, c *Client, _ bool) error {
@@ -257,11 +265,6 @@ func readLocalDNS(ctx context.Context, c *Client) (map[string]item, error) {
 func readCNAMEs(ctx context.Context, c *Client) (map[string]item, error) {
 	return readDNSArray(ctx, c, "cnameRecords", "cname", true)
 }
-
-// restartingCategories are the categories whose writes make FTL restart.
-// dns.cnameRecords carries FLAG_RESTART_FTL in FTL v6.7 and v6.8; dns.hosts
-// does not.
-var restartingCategories = map[SyncCategory]bool{CategoryCNAME: true}
 
 // categorySettings are the config settings a category's writes change, which
 // a write locks so it cannot land between another writer's read of the
@@ -456,7 +459,9 @@ type plannedOp struct {
 	// from and to are the entry's compared values before and after the
 	// step, where it has them.
 	from, to string
-	run      writeFunc
+	// entry is the item's API path, locked while the step runs.
+	entry string
+	run   writeFunc
 }
 
 // plan builds the ordered list of operations needed to bring the target into
@@ -475,10 +480,10 @@ func (d *Diff) plan(prune bool) []plannedOp {
 			continue
 		}
 		for _, it := range cd.added {
-			ops = append(ops, plannedOp{category: cat, action: "add", label: it.label, to: it.compare, run: it.add})
+			ops = append(ops, plannedOp{category: cat, action: "add", label: it.label, to: it.compare, entry: it.entry, run: it.add})
 		}
 		for _, it := range cd.changed {
-			ops = append(ops, plannedOp{category: cat, action: "update", label: it.label, from: it.before, to: it.compare, run: it.update})
+			ops = append(ops, plannedOp{category: cat, action: "update", label: it.label, from: it.before, to: it.compare, entry: it.entry, run: it.update})
 		}
 	}
 	if prune {
@@ -488,7 +493,7 @@ func (d *Diff) plan(prune bool) []plannedOp {
 				continue
 			}
 			for _, it := range cd.removed {
-				ops = append(ops, plannedOp{category: applyOrder[i], action: "delete", label: it.label, from: it.compare, run: it.delete})
+				ops = append(ops, plannedOp{category: applyOrder[i], action: "delete", label: it.label, from: it.compare, entry: it.entry, run: it.delete})
 			}
 		}
 	}
@@ -573,67 +578,151 @@ func ApplyPlan(ctx context.Context, target *Client, d *Diff, prune bool) ApplyRe
 	ops := d.plan(prune)
 	res := ApplyResult{Ops: make([]OpResult, 0, len(ops))}
 
-	last := -1
-	for i, op := range ops {
-		if restartingCategories[op.category] {
-			last = i
+	var cnames []plannedOp
+	for _, op := range ops {
+		if op.category == CategoryCNAME {
+			cnames = append(cnames, op)
 		}
 	}
-	awaitingRestart := false
-	for i, op := range ops {
-		if err := ctx.Err(); err != nil {
-			res.Ops = append(res.Ops, OpResult{Category: string(op.category), Action: op.action, Item: op.label, Err: err.Error()})
-			res.Failed++
+	cnamesDone := false
+	for _, op := range ops {
+		if op.category == CategoryCNAME {
+			// Every CNAME change goes in one write, at the first of them.
+			if !cnamesDone {
+				cnamesDone = true
+				res.applyCNAMEs(ctx, target, cnames)
+			}
 			continue
 		}
-		restart := i == last
 		or := OpResult{Category: string(op.category), Action: op.action, Item: op.label}
-		sent, err := runLocked(ctx, target, op, restart)
-		var uncertain *UncertainError
-		mayBeSaved := err == nil || errors.As(err, &uncertain)
-		if err != nil {
+		if err := ctx.Err(); err != nil {
+			or.Err = err.Error()
+			res.Failed++
+		} else if err := runLocked(ctx, target, op); err != nil {
 			or.Err = err.Error()
 			res.Failed++
 		} else {
 			res.Applied++
 		}
 		res.Ops = append(res.Ops, or)
-		if !restartingCategories[op.category] || !mayBeSaved {
-			continue
-		}
-		if !restart {
-			awaitingRestart = true
-			continue
-		}
-		// The write that asked for the restart. If it lost its reply, FTL
-		// may have saved it and restarted, or may have seen nothing, so wait
-		// for a restart and ask for one only if none comes.
-		if waitErr := target.AwaitRestart(ctx, sent); waitErr == nil {
-			awaitingRestart = false
-			res.recordRestart(nil)
-		} else if err == nil {
-			awaitingRestart = false
-			res.recordRestart(waitErr)
-		} else {
-			awaitingRestart = true
-		}
-	}
-	if awaitingRestart {
-		res.restartAfterSync(ctx, target)
 	}
 	return res
 }
 
-// runLocked runs one planned write, holding the lock on the config setting
-// it changes, if it changes one, and returns when the write was sent. That is
-// after the lock was acquired: another writer holding it may restart FTL
-// meanwhile, and a restart before the write is not the one it caused.
-func runLocked(ctx context.Context, target *Client, op plannedOp, restart bool) (time.Time, error) {
+// runLocked runs one planned write, holding the lock on what it changes: the
+// list entry, as the update tools lock it, or the config setting for a DNS
+// array. A sync write landing between an update's read and its write would
+// otherwise be undone by it.
+func runLocked(ctx context.Context, target *Client, op plannedOp) error {
 	if setting, ok := categorySettings[op.category]; ok {
 		defer target.LockSettings(setting)()
+	} else if op.entry != "" {
+		defer target.LockEntry(op.entry)()
 	}
+	return op.run(ctx, target, false)
+}
+
+// applyCNAMEs makes every CNAME change of a sync in one write of the whole
+// setting, which FTL applies or refuses as a unit, and restarts FTL once.
+//
+// Written one record at a time, a pruning sync that pointed an alias
+// somewhere new added the new record first, which FTL refused because
+// dnsmasq will not take an alias twice, and then deleted the old one, so the
+// alias was gone from both. Now the old record goes and the new one arrives
+// in the same write, or, if FTL refuses it, neither changes.
+func (r *ApplyResult) applyCNAMEs(ctx context.Context, target *Client, ops []plannedOp) {
+	record := func(err error) {
+		for _, op := range ops {
+			or := OpResult{Category: string(op.category), Action: op.action, Item: op.label}
+			if err != nil {
+				or.Err = err.Error()
+				r.Failed++
+			} else {
+				r.Applied++
+			}
+			r.Ops = append(r.Ops, or)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		record(err)
+		return
+	}
+
+	unlock := target.LockSettings("dns.cnameRecords")
+	defer unlock()
+
+	current, err := readDNSValues(ctx, target, "cnameRecords")
+	if err != nil {
+		record(fmt.Errorf("read the current CNAME records: %w", err))
+		return
+	}
+	drop := map[string]bool{}
+	var add []string
+	for _, op := range ops {
+		switch op.action {
+		case "delete":
+			drop[op.label] = true
+		case "add":
+			add = append(add, op.label)
+		}
+	}
+	next := make([]string, 0, len(current)+len(add))
+	present := map[string]bool{}
+	for _, rec := range current {
+		if !drop[rec] && !present[rec] {
+			present[rec] = true
+			next = append(next, rec)
+		}
+	}
+	for _, rec := range add {
+		if !present[rec] {
+			present[rec] = true
+			next = append(next, rec)
+		}
+	}
+
+	// Taken once the lock is held: another writer holding it may have
+	// restarted FTL meanwhile, and that restart is not this write's.
 	sent := time.Now()
-	return sent, op.run(ctx, target, restart)
+	body := map[string]any{"config": map[string]any{"dns": map[string]any{"cnameRecords": next}}}
+	err = target.Do(ctx, "PATCH", "/config", body, nil)
+	record(err)
+
+	var uncertain *UncertainError
+	switch {
+	case err == nil:
+		// FTL restarts after the write that changed the setting; wait for it.
+		r.recordRestart(target.AwaitRestart(ctx, sent))
+	case errors.As(err, &uncertain):
+		// The reply was lost, so FTL may have saved the records and
+		// restarted, or seen nothing. Wait for a restart, and ask for one if
+		// none comes: saved without a restart, the records are not served.
+		if waitErr := target.AwaitRestart(ctx, sent); waitErr == nil {
+			r.recordRestart(nil)
+		} else {
+			r.restartAfterSync(ctx, target)
+		}
+	}
+}
+
+// readDNSValues reads one of the dns string arrays, requiring it present.
+func readDNSValues(ctx context.Context, c *Client, field string) ([]string, error) {
+	var resp ConfigResponse
+	if err := c.Get(ctx, "/config/dns", &resp); err != nil {
+		return nil, err
+	}
+	dns, _ := resp.Config["dns"].(map[string]any)
+	raw, ok := dns[field].([]any)
+	if !ok {
+		return nil, fmt.Errorf("pi-hole's reply to /config/dns has no dns.%s list", field)
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if str, ok := v.(string); ok {
+			out = append(out, str)
+		}
+	}
+	return out, nil
 }
 
 // restartAfterSync restarts FTL so that CNAME records the sync saved without
