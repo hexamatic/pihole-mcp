@@ -332,6 +332,91 @@ func TestTeleporterImport_PlanFollowsThePiholesGravityPath(t *testing.T) {
 	}
 }
 
+// writeArchiveEntries writes a zip holding the entries in order, each a
+// name and its content, and returns its path.
+func writeArchiveEntries(t *testing.T, entries ...[2]string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "backup.zip")
+	out, err := os.Create(path) //nolint:gosec // a path inside the test's own temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(out)
+	for _, e := range entries {
+		w, _ := zw.Create(e[0])
+		_, _ = w.Write([]byte(e[1]))
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_ = out.Close()
+	return path
+}
+
+func TestTeleporterImport_PlanFollowsTheArchivesGravityPath(t *testing.T) {
+	// An imported pihole.toml replaces FTL's configuration part-way through
+	// the import, and FTL matches the entries after it against the archive's
+	// own files.gravity, not the one it started with.
+	toml := "[dns]\n  upstreams = []\n\n[files] # paths\n  database = \"/etc/pihole/pihole-FTL.db\"\n" +
+		"  gravity = \"/data/gravity.db\" ### CHANGED, default = \"/etc/pihole/gravity.db\"\n  gravity_tmp = \"/tmp\"\n"
+	path := writeArchiveEntries(t,
+		[2]string{"etc/pihole/pihole.toml", toml},
+		[2]string{"etc/pihole/gravity.db", "data"},
+		[2]string{"data/gravity.db", "data"},
+	)
+	rec := piholeHandler(map[string]any{
+		"/config/files/gravity": map[string]any{"config": map[string]any{"files": map[string]any{"gravity": "/etc/pihole/gravity.db"}}},
+	})
+
+	text := callTool(t, teleporterImportHandler, newTestClient(t, rec), map[string]any{"file_path": path, "mode": "plan"})
+	for _, want := range []string{
+		"data/gravity.db: replaces the lists",
+		"etc/pihole/gravity.db: not imported",
+		"keeps the gravity database at `/data/gravity.db`",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("expected %q in the plan, got:\n%s", want, text)
+		}
+	}
+
+	// Without the configuration, the Pi-hole's own setting holds throughout.
+	text = callTool(t, teleporterImportHandler, newTestClient(t, rec), map[string]any{"file_path": path, "mode": "plan", "config": false})
+	if !strings.Contains(text, "etc/pihole/gravity.db: replaces the lists") || !strings.Contains(text, "data/gravity.db: not imported") ||
+		strings.Contains(text, "keeps the gravity database") {
+		t.Errorf("with config=false the plan should follow the Pi-hole's own files.gravity, got:\n%s", text)
+	}
+}
+
+func TestArchiveGravityPath(t *testing.T) {
+	for _, tc := range []struct {
+		name, toml, want string
+		ok               bool
+	}{
+		{"files table", "[files]\n  gravity = \"/data/g.db\"\n", "/data/g.db", true},
+		{"literal string", "[files]\ngravity = '/data/g.db' # moved\n", "/data/g.db", true},
+		{"dotted key", "files.gravity = \"/data/g.db\"\n[dns]\n", "/data/g.db", true},
+		{"absent", "[files]\n  database = \"/x.db\"\n", "", false},
+		{"other table", "[webserver]\n  gravity = \"/data/g.db\"\n", "", false},
+		{"not gravity_tmp", "[files]\n  gravity_tmp = \"/tmp\"\n", "", false},
+		{"commented out", "[files]\n  # gravity = \"/data/g.db\"\n", "", false},
+		{"escaped", "[files]\n  gravity = \"/data/\\u0067.db\"\n", "", false},
+		{"empty", "[files]\n  gravity = \"\"\n", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeArchiveEntries(t, [2]string{"etc/pihole/pihole.toml", tc.toml})
+			zr, err := zip.OpenReader(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = zr.Close() }()
+			got, ok := archiveGravityPath(zr.File[0])
+			if got != tc.want || ok != tc.ok {
+				t.Errorf("archiveGravityPath = %q, %v; want %q, %v", got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
 func TestTeleporterImport_PlanSaysWhenItAssumesTheGravityPath(t *testing.T) {
 	path := writeArchive(t, t.TempDir(), "backup-*.zip", "etc/pihole/gravity.db")
 	text := callTool(t, teleporterImportHandler, newTestClient(t, piholeHandler(nil)), map[string]any{"file_path": path, "mode": "plan"})

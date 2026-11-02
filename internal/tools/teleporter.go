@@ -221,6 +221,61 @@ func gravityArchivePath(ctx context.Context, c *pihole.Client) string {
 	return strings.TrimPrefix(path, "/")
 }
 
+// maxPlanTOML bounds how much of an archive's pihole.toml the plan reads.
+// FTL writes about 60 KB, comments included.
+const maxPlanTOML = 4 << 20
+
+// archiveGravityPath reads files.gravity from an archive's pihole.toml, as
+// FTL writes it: a gravity key under a [files] table, or a dotted
+// files.gravity key at the top. ok is false when the setting is absent,
+// which leaves FTL's current one in force, or is written some other way.
+func archiveGravityPath(f *zip.File) (path string, ok bool) {
+	r, err := f.Open()
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = r.Close() }()
+	table := ""
+	sc := bufio.NewScanner(io.LimitReader(r, maxPlanTOML))
+	sc.Buffer(make([]byte, 0, 64*1024), maxPlanTOML)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if strings.HasPrefix(line, "[") {
+			table = ""
+			if end := strings.IndexByte(line, ']'); end > 0 {
+				table = strings.TrimSpace(line[1:end])
+			}
+			continue
+		}
+		key, value, found := strings.Cut(line, "=")
+		if !found {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if (table == "files" && key == "gravity") || (table == "" && key == "files.gravity") {
+			return tomlString(strings.TrimSpace(value))
+		}
+	}
+	return "", false
+}
+
+// tomlString reads a TOML string without escapes at the start of value,
+// ignoring a trailing comment.
+func tomlString(value string) (string, bool) {
+	if value == "" || (value[0] != '"' && value[0] != '\'') {
+		return "", false
+	}
+	end := strings.IndexByte(value[1:], value[0])
+	if end < 0 {
+		return "", false
+	}
+	s := value[1 : end+1]
+	if value[0] == '"' && strings.ContainsRune(s, '\\') {
+		return "", false
+	}
+	return s, s != ""
+}
+
 // importPlan lists what an archive holds and what an import with the given
 // options would replace, reading the archive locally and changing nothing.
 // gravityEntry is the entry FTL takes the gravity database from on this
@@ -250,6 +305,7 @@ func importPlan(archive *os.File, info os.FileInfo, gravityEntry string, config,
 	var b strings.Builder
 	fmt.Fprintf(&b, "**Import plan for %s.** Nothing has been changed.\n", info.Name())
 	replaces := 0
+	moved := ""
 	for _, f := range zr.File {
 		part, known := parts[f.Name]
 		switch {
@@ -261,9 +317,27 @@ func importPlan(archive *os.File, info os.FileInfo, gravityEntry string, config,
 		default:
 			fmt.Fprintf(&b, "- %s: skipped, since %s=false\n", f.Name, part.option)
 		}
+		// FTL works out the gravity entry afresh for each entry, from the
+		// configuration in force, and an imported pihole.toml replaces that
+		// configuration part-way through. Entries after it are matched
+		// against the archive's own files.gravity (src/zip/teleporter.c).
+		if f.Name == "etc/pihole/pihole.toml" && config {
+			if path, ok := archiveGravityPath(f); ok {
+				entry := strings.TrimPrefix(path, "/")
+				if _, taken := parts[entry]; !taken {
+					gp := parts[gravityEntry]
+					delete(parts, gravityEntry)
+					parts[entry] = gp
+					gravityEntry, moved = entry, path
+				}
+			}
+		}
 	}
 	if assumed {
-		fmt.Fprintf(&b, "\nPi-hole's gravity database location (files.gravity) could not be read, so this assumes the default, %s.\n", gravityEntry)
+		b.WriteString("\nPi-hole's gravity database location (files.gravity) could not be read, so this assumes the default, etc/pihole/gravity.db.\n")
+	}
+	if moved != "" {
+		fmt.Fprintf(&b, "\nThe archive's configuration keeps the gravity database at %s, so entries after etc/pihole/pihole.toml are matched against %s.\n", format.CodeSpan(moved), format.CodeSpan(gravityEntry))
 	}
 	// FTL restarts after every import, whatever it replaced
 	// (src/api/teleporter.c).
