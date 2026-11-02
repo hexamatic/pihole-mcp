@@ -74,7 +74,7 @@ func TestModernDiscoverAdvertisesTheRevision(t *testing.T) {
 				t.Errorf("server/discover supportedVersions = %v, want it to include %s", versions, mcp.ProtocolVersion20260728)
 			}
 
-			if got, want := res["instructions"], instructions(readOnly); got != want {
+			if got, want := res["instructions"], instructions(readOnly, nil); got != want {
 				t.Errorf("server/discover instructions differ from the legacy handshake's:\n got %q\nwant %q", got, want)
 			}
 

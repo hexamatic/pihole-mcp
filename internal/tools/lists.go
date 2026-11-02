@@ -32,6 +32,7 @@ func RegisterLists(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithString("type", mcp.Required(), mcp.Description("'allow' or 'block'."), mcp.Enum("allow", "block")),
 		mcp.WithString("comment", mcp.Description("Comment for the list.")),
 		mcp.WithBoolean("enabled", mcp.Description("Enabled state (default true).")),
+		groupsParam(),
 		mcp.WithOpenWorldHintAnnotation(true),
 	), listsAddHandler(r))
 
@@ -42,6 +43,7 @@ func RegisterLists(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithString("type", mcp.Required(), mcp.Description("'allow' or 'block'."), mcp.Enum("allow", "block")),
 		mcp.WithString("comment", mcp.Description("Updated comment.")),
 		mcp.WithBoolean("enabled", mcp.Description("Updated enabled status.")),
+		groupsParam(),
 		mcp.WithIdempotentHintAnnotation(true),
 	), listsUpdateHandler(r))
 
@@ -158,6 +160,9 @@ func listsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
+		if res := applyGroups(ctx, c, req, body); res != nil {
+			return res, nil
+		}
 
 		path := "/lists?type=" + url.QueryEscape(t)
 		var result pihole.ListsResponse
@@ -205,6 +210,9 @@ func listsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		body, err := crudUpdateBody(req, current)
 		if err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+		if res := applyGroups(ctx, c, req, body); res != nil {
+			return res, nil
 		}
 		body["type"] = t
 

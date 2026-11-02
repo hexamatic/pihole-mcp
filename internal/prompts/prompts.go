@@ -4,18 +4,51 @@ package prompts
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// RegisterAll registers all MCP prompts.
-func RegisterAll(s *server.MCPServer) {
-	s.AddPrompt(mcp.NewPrompt("diagnose_slow_dns",
+// promptTools are the tools each prompt directs the reader to use. A prompt
+// is offered only when every one of them is, so a deployment narrowed with
+// PIHOLE_TOOLSETS no longer offers prompts whose steps name tools it does not
+// have. TestPromptToolsMatchTheirText keeps this in step with the prompts.
+var promptTools = map[string][]string{
+	"diagnose_slow_dns":   {"pihole_info_system", "pihole_queries_search", "pihole_stats_summary", "pihole_stats_upstreams"},
+	"investigate_domain":  {"pihole_local_cname_list", "pihole_local_dns_list", "pihole_queries_search", "pihole_search_domains"},
+	"review_top_blocked":  {"pihole_domains_list", "pihole_search_domains", "pihole_stats_top_domains"},
+	"audit_network":       {"pihole_clients_list", "pihole_clients_suggestions", "pihole_dhcp_leases", "pihole_network_devices"},
+	"optimise_blocklists": {"pihole_lists_list", "pihole_stats_summary"},
+	"daily_report":        {"pihole_info_system", "pihole_stats_summary", "pihole_stats_top_clients", "pihole_stats_top_domains", "pihole_stats_upstreams"},
+	"security_audit":      {"pihole_auth_sessions", "pihole_config_get_value", "pihole_info_ftl", "pihole_info_messages"},
+	"weekly_trends":       {"pihole_stats_database", "pihole_stats_database_top_clients", "pihole_stats_database_top_domains", "pihole_stats_database_upstreams"},
+	"upstream_health":     {"pihole_info_ftl", "pihole_info_metrics", "pihole_stats_database_upstreams", "pihole_stats_query_types", "pihole_stats_upstreams"},
+}
+
+// RegisterAll registers the MCP prompts whose tools offered reports as
+// available. A nil offered registers them all.
+func RegisterAll(s *server.MCPServer, offered func(toolName string) bool) {
+	add := func(p mcp.Prompt, h server.PromptHandlerFunc) {
+		if offered != nil {
+			for _, t := range promptTools[p.Name] {
+				if !offered(t) {
+					return
+				}
+			}
+		}
+		s.AddPrompt(p, h)
+	}
+	registerPrompts(add)
+}
+
+func registerPrompts(add func(mcp.Prompt, server.PromptHandlerFunc)) {
+	add(mcp.NewPrompt("diagnose_slow_dns",
 		mcp.WithPromptDescription("Diagnose DNS performance issues by analysing upstream response times, query patterns, and system resources."),
 	), diagnoseSlowDNSHandler)
 
-	s.AddPrompt(mcp.NewPrompt("investigate_domain",
+	add(mcp.NewPrompt("investigate_domain",
 		mcp.WithPromptDescription("Investigate why a domain is blocked or allowed by searching across all lists and checking recent query logs."),
 		mcp.WithArgument("domain",
 			mcp.ArgumentDescription("The domain to investigate"),
@@ -23,37 +56,37 @@ func RegisterAll(s *server.MCPServer) {
 		),
 	), investigateDomainHandler)
 
-	s.AddPrompt(mcp.NewPrompt("review_top_blocked",
+	add(mcp.NewPrompt("review_top_blocked",
 		mcp.WithPromptDescription("Review the top blocked domains and identify potential false positives that should be allowlisted."),
 		mcp.WithArgument("count",
 			mcp.ArgumentDescription("Number of top blocked domains to review (default 20)"),
 		),
 	), reviewTopBlockedHandler)
 
-	s.AddPrompt(mcp.NewPrompt("audit_network",
+	add(mcp.NewPrompt("audit_network",
 		mcp.WithPromptDescription("Audit network devices, configured clients, and DHCP leases to identify unknown or suspicious devices."),
 	), auditNetworkHandler)
 
-	s.AddPrompt(mcp.NewPrompt("optimise_blocklists",
+	add(mcp.NewPrompt("optimise_blocklists",
 		mcp.WithPromptDescription("Analyse configured blocklists and suggest consolidation or removal of redundant lists."),
 	), optimiseBlocklistsHandler)
 
-	s.AddPrompt(mcp.NewPrompt("daily_report",
+	add(mcp.NewPrompt("daily_report",
 		mcp.WithPromptDescription("Generate a comprehensive daily Pi-hole summary covering queries, blocking, clients, upstreams, and system health."),
 	), dailyReportHandler)
 
-	s.AddPrompt(mcp.NewPrompt("security_audit",
+	add(mcp.NewPrompt("security_audit",
 		mcp.WithPromptDescription("Review active API sessions, authentication configuration, and diagnostic messages to detect potential unauthorised access."),
 	), securityAuditHandler)
 
-	s.AddPrompt(mcp.NewPrompt("weekly_trends",
+	add(mcp.NewPrompt("weekly_trends",
 		mcp.WithPromptDescription("Compare this week's DNS statistics to last week using long-term database queries to identify trends."),
 		mcp.WithArgument("weeks_back",
 			mcp.ArgumentDescription("Number of weeks to compare against (default 1)"),
 		),
 	), weeklyTrendsHandler)
 
-	s.AddPrompt(mcp.NewPrompt("upstream_health",
+	add(mcp.NewPrompt("upstream_health",
 		mcp.WithPromptDescription("Deep analysis of DNS resolver performance, cache efficiency, and upstream response times with historical comparison."),
 	), upstreamHealthHandler)
 }
@@ -89,8 +122,9 @@ func investigateDomainHandler(_ context.Context, req mcp.GetPromptRequest) (*mcp
 					"Follow these steps:\n"+
 					"1. Use pihole_search_domains with domain='%s' to check if it appears in any allow/deny lists or gravity blocklists\n"+
 					"2. Use pihole_queries_search with domain='%s' to find recent query history for this domain\n"+
-					"3. Based on the results, explain:\n"+
-					"   - Is this domain currently blocked? If so, by which mechanism (gravity, exact deny, regex)?\n"+
+					"3. Use pihole_local_dns_list and pihole_local_cname_list to see whether this Pi-hole answers for the domain itself\n"+
+					"4. Based on the results, explain:\n"+
+					"   - Is this domain currently blocked, or answered by a local record? If blocked, by which mechanism (gravity, exact deny, regex)?\n"+
 					"   - What list is responsible for the block?\n"+
 					"   - How frequently is it queried and from which clients?\n"+
 					"   - Recommend whether to allowlist, keep blocked, or take other action.",
@@ -140,7 +174,7 @@ func auditNetworkHandler(_ context.Context, _ mcp.GetPromptRequest) (*mcp.GetPro
 					"- Identify any devices that are not configured as Pi-hole clients\n"+
 					"- Flag devices with unknown or suspicious MAC vendors\n"+
 					"- Highlight devices with unusually high query counts\n"+
-					"- Recommend group assignments for unconfigured clients\n"+
+					"- Recommend group assignments for unconfigured clients (the clients add and update tools take a groups parameter)\n"+
 					"- Note any DHCP leases that don't match known devices.",
 			)),
 		},
@@ -213,30 +247,45 @@ func securityAuditHandler(_ context.Context, _ mcp.GetPromptRequest) (*mcp.GetPr
 }
 
 func weeklyTrendsHandler(_ context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-	weeksBack := req.Params.Arguments["weeks_back"]
-	if weeksBack == "" {
-		weeksBack = "1"
+	weeksBack := 1
+	if v := req.Params.Arguments["weeks_back"]; v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 52 {
+			return nil, fmt.Errorf("weeks_back must be a whole number of weeks from 1 to 52 (got %q)", v)
+		}
+		weeksBack = n
 	}
+
+	// The periods are worked out here and given as timestamps. Left to the
+	// reader, they were computed from a date the model assumed, and a wrong
+	// guess compared the wrong weeks without anything showing it.
+	const week = 7 * 24 * time.Hour
+	now := time.Now()
+	thisFrom, thisUntil := now.Add(-week).Unix(), now.Unix()
+	thenUntil := now.Add(-time.Duration(weeksBack) * week)
+	thenFrom := thenUntil.Add(-week).Unix()
 
 	return &mcp.GetPromptResult{
 		Description: "Weekly DNS trend analysis",
 		Messages: []mcp.PromptMessage{
 			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(
-				fmt.Sprintf("Analyse DNS trends by comparing this week to %s week(s) ago.\n\n"+
-					"Follow these steps:\n"+
-					"1. Use pihole_stats_database with this week's date range to get current totals\n"+
-					"2. Use pihole_stats_database with last week's equivalent date range for comparison\n"+
-					"3. Use pihole_stats_database_top_domains with blocked=true for both periods to compare top blocked domains\n"+
-					"4. Use pihole_stats_database_top_clients for both periods to compare client activity\n"+
-					"5. Use pihole_stats_database_upstreams for both periods to compare how many queries each upstream answered\n\n"+
+				fmt.Sprintf("Analyse DNS trends by comparing the last seven days with the same seven days %d week(s) earlier.\n\n"+
+					"The periods, as Unix timestamps:\n"+
+					"- This week: from=%d until=%d\n"+
+					"- Comparison week: from=%d until=%d\n\n"+
+					"Follow these steps, once for each period:\n"+
+					"1. Use pihole_stats_database with the period's from and until to get its totals\n"+
+					"2. Use pihole_stats_database_top_domains with blocked=true to compare top blocked domains\n"+
+					"3. Use pihole_stats_database_top_clients to compare client activity\n"+
+					"4. Use pihole_stats_database_upstreams to compare how many queries each upstream answered\n\n"+
 					"Present your findings as a trend report:\n"+
 					"- Query volume change (increase/decrease percentage)\n"+
 					"- Blocking rate change\n"+
-					"- New domains appearing in top blocked that weren't there last week\n"+
+					"- New domains appearing in top blocked that weren't there in the comparison week\n"+
 					"- Client activity changes (new high-volume clients, departures)\n"+
 					"- Changes in how queries were spread across upstream servers\n"+
 					"- Overall assessment and recommendations",
-					weeksBack),
+					weeksBack, thisFrom, thisUntil, thenFrom, thenUntil.Unix()),
 			)),
 		},
 	}, nil

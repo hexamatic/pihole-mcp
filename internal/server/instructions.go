@@ -1,6 +1,11 @@
 package server
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+
+	"github.com/hexamatic/pihole-mcp/internal/toolsets"
+)
 
 // Instructions are injected into every conversation, so a sentence that is
 // wrong for a deployment is wrong in every turn of it.
@@ -36,13 +41,45 @@ var (
 )
 
 // instructions builds the server instruction string for a deployment.
-func instructions(readOnly bool) string {
-	sentences := make([]string, 0, len(baseInstructionSentences)+len(writeInstructionSentences)+1)
-	sentences = append(sentences, baseInstructionSentences...)
+// selected is the resolved PIHOLE_TOOLSETS selection, nil for every toolset.
+//
+// A sentence that names a tool is kept only when every tool it names belongs
+// to a selected toolset. The instructions used to name tools whatever the
+// selection, so a deployment narrowed to the DNS toolset was told in every
+// conversation to start with pihole_padd, which it did not have.
+func instructions(readOnly bool, selected map[string]bool) string {
+	candidates := baseInstructionSentences
+	if !readOnly {
+		candidates = append(candidates[:len(candidates):len(candidates)], writeInstructionSentences...)
+	}
+	sentences := make([]string, 0, len(candidates)+1)
+	for _, s := range candidates {
+		if namesOnlySelectedTools(s, selected) {
+			sentences = append(sentences, s)
+		}
+	}
 	if readOnly {
 		sentences = append(sentences, readOnlyInstructionSentence)
-	} else {
-		sentences = append(sentences, writeInstructionSentences...)
 	}
 	return strings.Join(sentences, " ")
+}
+
+// toolNamePattern finds tool names in a sentence, a trailing "*" included
+// for a family such as pihole_stats_database_*.
+var toolNamePattern = regexp.MustCompile(`pihole_[a-z_]+\*?`)
+
+// namesOnlySelectedTools reports whether every tool a sentence names belongs
+// to a selected toolset. Toolset membership follows from the name alone
+// (toolsets.Of), so this needs no registered tools and keeps instructions
+// network-free for cmd/toolsdoc.
+func namesOnlySelectedTools(sentence string, selected map[string]bool) bool {
+	if selected == nil {
+		return true
+	}
+	for _, name := range toolNamePattern.FindAllString(sentence, -1) {
+		if set, ok := toolsets.Of(name); !ok || !selected[set] {
+			return false
+		}
+	}
+	return true
 }

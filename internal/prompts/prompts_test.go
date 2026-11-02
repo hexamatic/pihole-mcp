@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -137,7 +138,7 @@ func TestWeeklyTrends_WeeksBackDefault(t *testing.T) {
 
 func TestRegisterAll(t *testing.T) {
 	s := server.NewMCPServer("test", "0.0.0", server.WithPromptCapabilities(false))
-	RegisterAll(s) // must not panic; registration is the only observable effect
+	RegisterAll(s, nil) // must not panic; registration is the only observable effect
 }
 
 // TestPromptsReferenceOnlyReadOnlyTools pins a fact that is true today and
@@ -198,5 +199,59 @@ func TestPromptsReferenceOnlyReadOnlyTools(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Error("no tool names were found in the prompt sources; this test is no longer checking anything")
+	}
+}
+
+func TestPromptToolsMatchTheirText(t *testing.T) {
+	// promptTools decides which prompts a narrowed deployment offers, so it
+	// must list exactly the tools each prompt's text names.
+	handlers := map[string]server.PromptHandlerFunc{}
+	registerPrompts(func(p mcp.Prompt, h server.PromptHandlerFunc) { handlers[p.Name] = h })
+	if len(handlers) != len(promptTools) {
+		t.Fatalf("%d prompts registered, %d in promptTools", len(handlers), len(promptTools))
+	}
+	re := regexp.MustCompile(`pihole_[a-z_]+`)
+	for name, h := range handlers {
+		req := mcp.GetPromptRequest{}
+		req.Params.Arguments = map[string]string{"domain": "example.com", "count": "5", "weeks_back": "2"}
+		res, err := h(context.Background(), req)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		seen := map[string]bool{}
+		for _, m := range res.Messages {
+			if tc, ok := m.Content.(mcp.TextContent); ok {
+				for _, tool := range re.FindAllString(tc.Text, -1) {
+					seen[tool] = true
+				}
+			}
+		}
+		var got []string
+		for tool := range seen {
+			got = append(got, tool)
+		}
+		sort.Strings(got)
+		want := append([]string(nil), promptTools[name]...)
+		sort.Strings(want)
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s names %v, promptTools lists %v", name, got, want)
+		}
+	}
+}
+
+func TestWeeklyTrends_GivesThePeriodsAsTimestamps(t *testing.T) {
+	req := mcp.GetPromptRequest{}
+	req.Params.Arguments = map[string]string{"weeks_back": "3"}
+	res, err := weeklyTrendsHandler(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := res.Messages[0].Content.(mcp.TextContent).Text
+	if !strings.Contains(text, "This week: from=") || !strings.Contains(text, "3 week(s) earlier") {
+		t.Errorf("expected explicit periods, got:\n%s", text)
+	}
+	req.Params.Arguments = map[string]string{"weeks_back": "lots"}
+	if _, err := weeklyTrendsHandler(context.Background(), req); err == nil {
+		t.Error("a weeks_back that is not a number should be refused")
 	}
 }

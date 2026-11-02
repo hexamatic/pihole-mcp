@@ -34,14 +34,16 @@ func RegisterClients(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithDescription("Add a client by IP, MAC, hostname, CIDR subnet, or interface name (prefixed with colon, e.g. :eth0)."),
 		mcp.WithString("client", mcp.Required(), mcp.Description("Client identifier.")),
 		mcp.WithString("comment", mcp.Description("Optional comment.")),
+		groupsParam(),
 		mcp.WithOpenWorldHintAnnotation(true),
 	), clientsAddHandler(r))
 
 	addTool(s, r, mcp.NewTool("pihole_clients_update",
 		mcp.WithTitleAnnotation("Update Client"),
-		mcp.WithDescription("Update a configured client's comment. Group assignments are managed through the group tools."),
+		mcp.WithDescription("Update a configured client's comment or the groups it belongs to. Fields left out keep their current values."),
 		mcp.WithString("client", mcp.Required(), mcp.Description("Client identifier.")),
 		mcp.WithString("comment", mcp.Description("Updated comment.")),
+		groupsParam(),
 		mcp.WithIdempotentHintAnnotation(true),
 	), clientsUpdateHandler(r))
 
@@ -92,11 +94,12 @@ func clientsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		start, end := pageBounds(total, limit, offset)
 		page := result.Clients[start:end]
 
+		groupNames := groupNamer(ctx, c)
 		if wantCSV(req) {
 			headers := []string{"Client", "Name", "Comment", "Groups"}
 			rows := make([][]string, 0, len(page))
 			for _, cl := range page {
-				rows = append(rows, []string{cl.Client, cl.Name, cl.Comment, fmt.Sprintf("%v", cl.Groups)})
+				rows = append(rows, []string{cl.Client, cl.Name, cl.Comment, groupNames(cl.Groups)})
 			}
 			return mcp.NewToolResultText(format.CSV(headers, rows) + format.Truncate(len(page), total)), nil
 		}
@@ -111,7 +114,7 @@ func clientsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			if cl.Comment != "" {
 				fmt.Fprintf(&b, " — %s", cl.Comment)
 			}
-			fmt.Fprintf(&b, " [groups: %v]\n", cl.Groups)
+			fmt.Fprintf(&b, " [groups: %s]\n", groupNames(cl.Groups))
 		}
 
 		return mcp.NewToolResultText(b.String()), nil
@@ -179,6 +182,9 @@ func clientsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 		body := map[string]any{"client": client, "comment": comment}
+		if res := applyGroups(ctx, c, req, body); res != nil {
+			return res, nil
+		}
 
 		var result pihole.ClientsResponse
 		if err := c.Post(ctx, "/clients", body, &result); err != nil {
@@ -227,6 +233,9 @@ func clientsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 		body := map[string]any{"comment": comment}
+		if res := applyGroups(ctx, c, req, body); res != nil {
+			return res, nil
+		}
 
 		var result pihole.ClientsResponse
 		if err := c.Put(ctx, path, body, &result); err != nil {

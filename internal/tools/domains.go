@@ -35,6 +35,7 @@ func RegisterDomains(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithString("domain", mcp.Required(), mcp.Description("Domain(s) to add. Comma-separated for bulk when kind is exact; a regex is taken whole.")),
 		mcp.WithString("comment", mcp.Description("Comment for the entry.")),
 		mcp.WithBoolean("enabled", mcp.Description("Enabled state (default true).")),
+		groupsParam(),
 		mcp.WithOutputSchema[DomainsAddOutput](),
 		mcp.WithOpenWorldHintAnnotation(true),
 	), domainsAddHandler(r))
@@ -47,6 +48,7 @@ func RegisterDomains(s *server.MCPServer, r *pihole.Registry) {
 		mcp.WithString("domain", mcp.Required(), mcp.Description("Domain to update.")),
 		mcp.WithString("comment", mcp.Description("Updated comment.")),
 		mcp.WithBoolean("enabled", mcp.Description("Updated enabled status.")),
+		groupsParam(),
 		mcp.WithIdempotentHintAnnotation(true),
 	), domainsUpdateHandler(r))
 
@@ -157,6 +159,7 @@ func domainsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 
 		var b strings.Builder
 		b.WriteString(pageHeading("domains", len(page), total))
+		var groupNames func([]int) string
 		for _, d := range page {
 			status := "enabled"
 			if !d.Enabled {
@@ -167,7 +170,10 @@ func domainsListHandler(r *pihole.Registry) server.ToolHandlerFunc {
 				fmt.Fprintf(&b, " — %s", d.Comment)
 			}
 			if detail == "full" {
-				fmt.Fprintf(&b, " [id=%d, groups=%v]", d.ID, d.Groups)
+				if groupNames == nil {
+					groupNames = groupNamer(ctx, c)
+				}
+				fmt.Fprintf(&b, " [id=%d, groups: %s]", d.ID, groupNames(d.Groups))
 			}
 			b.WriteString("\n")
 		}
@@ -207,6 +213,9 @@ func domainsAddHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		body, err := crudAddBody(req, "domain", names)
 		if err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+		if res := applyGroups(ctx, c, req, body); res != nil {
+			return res, nil
 		}
 
 		path := fmt.Sprintf("/domains/%s/%s", t, k)
@@ -288,6 +297,9 @@ func domainsUpdateHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		body, err := crudUpdateBody(req, current)
 		if err != nil {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
+		}
+		if res := applyGroups(ctx, c, req, body); res != nil {
+			return res, nil
 		}
 
 		var result pihole.DomainsResponse
