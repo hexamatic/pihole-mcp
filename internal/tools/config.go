@@ -626,7 +626,7 @@ func configGetValueHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			for _, v := range value {
 				switch v.(type) {
 				case string, float64, bool, nil:
-					formatted = fmt.Sprintf("%v", v)
+					formatted = format.Untrusted(fmt.Sprintf("%v", v))
 				default:
 					j, _ := json.Marshal(v)
 					formatted = string(j)

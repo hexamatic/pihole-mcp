@@ -189,7 +189,11 @@ func writeSuggestionList(b *strings.Builder, label string, items []string, limit
 	if len(shown) > limit {
 		shown = shown[:limit]
 	}
-	fmt.Fprintf(b, "**%s:** %s", label, strings.Join(shown, ", "))
+	clean := make([]string, len(shown))
+	for i, s := range shown {
+		clean[i] = format.Untrusted(s)
+	}
+	fmt.Fprintf(b, "**%s:** %s", label, strings.Join(clean, ", "))
 	if len(shown) < len(items) {
 		fmt.Fprintf(b, " (%d of %d; raise limit for more)", len(shown), len(items))
 	}

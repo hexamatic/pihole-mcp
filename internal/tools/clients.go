@@ -144,13 +144,13 @@ func clientsSuggestionsHandler(r *pihole.Registry) server.ToolHandlerFunc {
 			ips := format.StringOr(cl.Addresses, "no IPs")
 			names := format.StringOr(cl.Names, "")
 
-			fmt.Fprintf(&b, "- %s", mac)
+			fmt.Fprintf(&b, "- %s", format.Untrusted(mac))
 			if vendor != "" {
-				fmt.Fprintf(&b, " (%s)", vendor)
+				fmt.Fprintf(&b, " (%s)", format.Untrusted(vendor))
 			}
-			fmt.Fprintf(&b, " — %s", ips)
+			fmt.Fprintf(&b, " — %s", format.Untrusted(ips))
 			if names != "" {
-				fmt.Fprintf(&b, " [%s]", names)
+				fmt.Fprintf(&b, " [%s]", format.Untrusted(names))
 			}
 			b.WriteString("\n")
 		}

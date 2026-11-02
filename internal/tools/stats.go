@@ -399,7 +399,7 @@ func statsRecentBlockedHandler(r *pihole.Registry) server.ToolHandlerFunc {
 		var b strings.Builder
 		b.WriteString("**Recently blocked:**\n")
 		for i, domain := range result.Blocked {
-			fmt.Fprintf(&b, "%d. %s\n", i+1, domain)
+			fmt.Fprintf(&b, "%d. %s\n", i+1, format.Untrusted(domain))
 		}
 		return mcp.NewToolResultText(b.String()), nil
 	}

@@ -95,26 +95,22 @@ func Clock(unix float64) string {
 	return time.Unix(int64(unix), 0).In(loc).Format("15:04:05")
 }
 
-// maxUntrustedLen bounds one value from the network in a reply. A domain is
-// at most 253 characters; this leaves room for a long comment or log line
-// while stopping one value from filling a reply.
-const maxUntrustedLen = 512
-
 // Untrusted makes text that came from the network safe to place in a reply:
 // a queried domain, a DHCP hostname, a client's user agent, a log line, a
 // comment. Whoever can make a device query a domain, or name a device,
-// chooses that text, and a line break or a backtick in it could start a
-// heading, a list item or a code block that reads as the server's own words.
+// chooses that text, and a line break in it could start a heading or a list
+// item that reads as the server's own words.
 //
-// Line breaks and other control characters become spaces, backticks become
-// apostrophes, the characters that reorder text on screen are dropped, and a
-// very long value is cut short with an ellipsis. Nothing a domain name can
-// hold is changed ("_", "-", "." and letters in any script among them), so a
-// domain read from a reply can be given back to a write tool as it is.
+// Line breaks and other control characters become spaces, and the
+// characters that reorder text on screen are dropped. Nothing else changes:
+// a domain, a regex rule, a list address or a group name read from a reply
+// can be given back to a write tool as it is. A value placed between
+// backticks goes through CodeSpan, and a block of lines through Fence, which
+// keep a backtick in the value from closing them.
 func Untrusted(s string) string {
-	clean := len(s) <= maxUntrustedLen
+	clean := true
 	for _, r := range s {
-		if !clean || needsCleaning(r) {
+		if needsCleaning(r) {
 			clean = false
 			break
 		}
@@ -123,35 +119,65 @@ func Untrusted(s string) string {
 		return s
 	}
 	var b strings.Builder
-	n := 0
 	for _, r := range s {
-		if n == maxUntrustedLen {
-			b.WriteString("…")
-			break
-		}
 		switch {
-		case r == '`':
-			b.WriteRune('\'')
-		case isBidiControl(r):
+		case unicode.Is(unicode.Bidi_Control, r):
 			continue
 		case unicode.IsControl(r), r == '\u2028', r == '\u2029':
 			b.WriteRune(' ')
 		default:
 			b.WriteRune(r) // invalid UTF-8 arrives as U+FFFD
 		}
-		n++
 	}
 	return b.String()
 }
 
 func needsCleaning(r rune) bool {
-	return r == '`' || r == utf8.RuneError || isBidiControl(r) || unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+	return r == utf8.RuneError || unicode.Is(unicode.Bidi_Control, r) || unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
 }
 
-// isBidiControl reports the characters that change the direction text is
-// shown in, which can make a value read differently from what it is.
-func isBidiControl(r rune) bool {
-	return (r >= '\u202a' && r <= '\u202e') || (r >= '\u2066' && r <= '\u2069') || r == '\u200e' || r == '\u200f'
+// CodeSpan renders a value from the network as inline code. The fence is one
+// backtick longer than the longest run in the value, so a backtick in it
+// cannot end the span early and let what follows read as the server's text.
+func CodeSpan(s string) string {
+	s = Untrusted(s)
+	fence := strings.Repeat("`", longestBacktickRun(s)+1)
+	if strings.HasPrefix(s, "`") || strings.HasSuffix(s, "`") {
+		return fence + " " + s + " " + fence
+	}
+	return fence + s + fence
+}
+
+// Fence renders lines from the network as a fenced code block, with a fence
+// longer than any backtick run in them so none can close it.
+func Fence(lines []string) string {
+	var body strings.Builder
+	longest := 0
+	for i, l := range lines {
+		l = Untrusted(l)
+		if n := longestBacktickRun(l); n > longest {
+			longest = n
+		}
+		if i > 0 {
+			body.WriteByte('\n')
+		}
+		body.WriteString(l)
+	}
+	fence := strings.Repeat("`", max(3, longest+1))
+	return fence + "\n" + body.String() + "\n" + fence
+}
+
+func longestBacktickRun(s string) int {
+	longest, run := 0, 0
+	for _, r := range s {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	return longest
 }
 
 // CSV renders comma-separated values from headers and rows.

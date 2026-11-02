@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/hexamatic/pihole-mcp/internal/format"
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -82,7 +83,9 @@ func toolErrorText(action string, err error) string {
 		}
 	}
 
-	return msg
+	// Message and hint come from Pi-hole and can carry text from the
+	// network; the rest of msg is this server's own and has no line breaks.
+	return format.Untrusted(msg)
 }
 
 // TransportHint returns the fix for a connection-level failure, or "" when the

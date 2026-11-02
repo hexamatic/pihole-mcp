@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hexamatic/pihole-mcp/internal/format"
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -122,7 +123,7 @@ func flattenInto(out *[]string, prefix string, v any) {
 // unambiguous and never emits Go's scientific notation for a plain integer.
 func renderLeaf(v any) string {
 	if s, ok := v.(string); ok {
-		return s
+		return format.Untrusted(s)
 	}
 	// Everything reaching here came out of a JSON decode, so it is a bool, a
 	// number, nil, or a slice or map of those. None of them can fail to

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hexamatic/pihole-mcp/internal/format"
 	"github.com/hexamatic/pihole-mcp/internal/pihole"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -78,7 +79,7 @@ func applyGroups(ctx context.Context, c *pihole.Client, req mcp.CallToolRequest,
 		}
 		sort.Strings(existing)
 		return mcp.NewToolResultError(fmt.Sprintf("This Pi-hole has no group named %s, so nothing was changed. Its groups are: %s. "+
-			"Create one with pihole_groups_add.", strings.Join(missing, ", "), strings.Join(existing, ", ")))
+			"Create one with pihole_groups_add.", format.Untrusted(strings.Join(missing, ", ")), format.Untrusted(strings.Join(existing, ", "))))
 	}
 	body["groups"] = ids
 	return nil
@@ -100,7 +101,7 @@ func groupNamer(ctx context.Context, c *pihole.Client) func([]int) string {
 		out := make([]string, 0, len(ids))
 		for _, id := range ids {
 			if n, ok := names[id]; ok {
-				out = append(out, n)
+				out = append(out, format.Untrusted(n))
 			} else {
 				out = append(out, fmt.Sprintf("#%d", id))
 			}
