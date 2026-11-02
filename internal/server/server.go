@@ -137,6 +137,23 @@ func (o options) filters() []server.ToolFilterFunc {
 	return out
 }
 
+// offers returns whether a registered tool survives this configuration's
+// filters, for deciding which prompts to offer: a prompt whose steps name a
+// tool the deployment does not have is no use to anyone.
+func (o options) offers(s *server.MCPServer) func(name string) bool {
+	return func(name string) bool {
+		st := s.GetTool(name)
+		if st == nil {
+			return false
+		}
+		kept := []mcp.Tool{st.Tool}
+		for _, f := range o.filters() {
+			kept = f(context.Background(), kept)
+		}
+		return len(kept) == 1
+	}
+}
+
 // ExposedTools reports which of a server's registered tools the supplied
 // scoping actually offers a client.
 //
@@ -192,7 +209,7 @@ func New(registry *pihole.Registry, opts ...Option) *server.MCPServer {
 		server.WithDescription(config.ServerDescription),
 		server.WithWebsiteURL(config.ServerWebsiteURL),
 		server.WithIcons(icons()...),
-		server.WithInstructions(instructions(o.readOnly)),
+		server.WithInstructions(instructions(o.readOnly, toolsets.Resolve(o.toolsets))),
 	}
 
 	for _, f := range o.filters() {
@@ -217,7 +234,7 @@ func New(registry *pihole.Registry, opts ...Option) *server.MCPServer {
 
 	tools.RegisterAll(s, registry)
 	resources.RegisterAll(s, registry)
-	prompts.RegisterAll(s)
+	prompts.RegisterAll(s, o.offers(s))
 
 	return s
 }

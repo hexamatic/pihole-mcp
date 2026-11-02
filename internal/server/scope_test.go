@@ -224,7 +224,7 @@ func TestReadOnlyInstructionsNameNoWriteTool(t *testing.T) {
 		t.Fatal("the tool catalogue is empty; another test must register first")
 	}
 
-	for _, name := range toolNamesIn(instructions(true)) {
+	for _, name := range toolNamesIn(instructions(true, nil)) {
 		ro, known := readOnly[name]
 		if !known {
 			t.Errorf("read-only instructions name %s, which is not a registered tool", name)
@@ -240,7 +240,7 @@ func TestReadOnlyInstructionsNameNoWriteTool(t *testing.T) {
 // was false for most of the surface: 15 tools take detail and 20 take format,
 // out of 84.
 func TestInstructionsRewordedFromTheOverclaim(t *testing.T) {
-	text := instructions(false)
+	text := instructions(false, nil)
 	if strings.Contains(text, "Tools accept optional") {
 		t.Error("instructions still claim every tool accepts detail and format")
 	}
