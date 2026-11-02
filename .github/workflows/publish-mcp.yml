@@ -93,7 +93,7 @@ jobs:
 
       - name: Install mcp-publisher
         env:
-          MCP_PUBLISHER_VERSION: "1.8.0"
+          MCP_PUBLISHER_VERSION: "1.8.7"
         run: |
           base="https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}"
           curl -fsSL -o mcp-publisher.tar.gz "${base}/mcp-publisher_linux_amd64.tar.gz"
