@@ -106,6 +106,60 @@ func TestBackupDir_ConfinesExportsAndImports(t *testing.T) {
 	}
 }
 
+// writeStale writes a file dated two days ago.
+func writeStale(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReapStaleBackups_KeepsEverythingInTheBackupDirectory(t *testing.T) {
+	// PIHOLE_BACKUP_DIR is where someone keeps backups. Cleaning it up
+	// deleted last week's export when this week's was taken.
+	dir := withBackupDir(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	kept := filepath.Join(dir, "pihole-mcp-backup-111.zip")
+	writeStale(t, kept)
+
+	reapStaleBackups()
+	if _, err := os.Stat(kept); err != nil {
+		t.Errorf("a backup in PIHOLE_BACKUP_DIR was removed: %v", err)
+	}
+}
+
+func TestTeleporterExport_SaysWhenTheBackupWillBeRemoved(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	text := callTool(t, teleporterExportHandler, newTestClient(t, exportClient(t)), nil)
+	if !strings.Contains(text, "which it removes after a day") {
+		t.Errorf("an export to the temp directory should say it is removed after a day, got: %s", text)
+	}
+
+	// A name of the same form chosen through output_path is cleaned up too,
+	// so the reply must not promise to keep it.
+	named := filepath.Join(os.TempDir(), "pihole-mcp-backup-123.zip")
+	text = callTool(t, teleporterExportHandler, newTestClient(t, exportClient(t)), map[string]any{"output_path": named})
+	if !strings.Contains(text, "which it removes after a day") {
+		t.Errorf("an output_path the clean-up matches should say it is removed after a day, got: %s", text)
+	}
+	other := filepath.Join(os.TempDir(), "before-upgrade.zip")
+	text = callTool(t, teleporterExportHandler, newTestClient(t, exportClient(t)), map[string]any{"output_path": other})
+	if !strings.Contains(text, "The file persists on disk") {
+		t.Errorf("an output_path the clean-up leaves alone should say it is kept, got: %s", text)
+	}
+
+	withBackupDir(t)
+	text = callTool(t, teleporterExportHandler, newTestClient(t, exportClient(t)), nil)
+	if !strings.Contains(text, "The file persists on disk") {
+		t.Errorf("an export to PIHOLE_BACKUP_DIR should say it is kept, got: %s", text)
+	}
+}
+
 func TestReapStaleBackups_StaysInADirectoryWithPatternCharacters(t *testing.T) {
 	// The clean-up globbed the directory name with the pattern, so a
 	// directory called "backups[1]" made it search "backups1" instead.
@@ -117,8 +171,7 @@ func TestReapStaleBackups_StaysInADirectoryWithPatternCharacters(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	SetBackupDir(dir)
-	t.Cleanup(func() { SetBackupDir("") })
+	t.Setenv("TMPDIR", dir)
 
 	inside := filepath.Join(dir, "pihole-mcp-backup-111.zip")
 	outside := filepath.Join(sibling, "pihole-mcp-backup-222.zip")

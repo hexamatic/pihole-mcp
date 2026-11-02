@@ -346,3 +346,20 @@ func TestUntrusted_LeavesDomainNamesAsTheyAre(t *testing.T) {
 		}
 	}
 }
+
+func TestClockAt(t *testing.T) {
+	loc := time.FixedZone("ACST", 9*3600+1800)
+	now := time.Date(2026, 11, 2, 10, 0, 0, 0, loc)
+	for _, tc := range []struct {
+		at   time.Time
+		want string
+	}{
+		{time.Date(2026, 11, 2, 3, 12, 5, 0, loc), "03:12:05"},
+		{time.Date(2026, 11, 1, 23, 59, 0, 0, loc), "1 Nov 23:59:00"},
+		{time.Date(2025, 11, 2, 3, 12, 5, 0, loc), "2 Nov 2025 03:12:05"},
+	} {
+		if got := ClockAt(float64(tc.at.Unix()), now); got != tc.want {
+			t.Errorf("ClockAt(%v) = %q, want %q", tc.at, got, tc.want)
+		}
+	}
+}

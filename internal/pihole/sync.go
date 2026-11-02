@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -679,6 +680,15 @@ func (r *ApplyResult) applyCNAMEs(ctx context.Context, target *Client, ops []pla
 			present[rec] = true
 			next = append(next, rec)
 		}
+	}
+
+	// Another writer, such as a second sync, may have made these changes
+	// while this one waited for the lock. FTL does not restart for a write
+	// that changes nothing, so sending one would wait out the restart
+	// timeout and report a failure.
+	if slices.Equal(next, current) {
+		record(nil)
+		return
 	}
 
 	// Taken once the lock is held: another writer holding it may have

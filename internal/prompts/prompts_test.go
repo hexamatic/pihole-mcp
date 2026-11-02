@@ -231,7 +231,7 @@ func TestPromptToolsMatchTheirText(t *testing.T) {
 			got = append(got, tool)
 		}
 		sort.Strings(got)
-		want := append([]string(nil), promptTools[name]...)
+		want := append(append([]string(nil), promptTools[name].core...), promptTools[name].extra...)
 		sort.Strings(want)
 		if strings.Join(got, ",") != strings.Join(want, ",") {
 			t.Errorf("%s names %v, promptTools lists %v", name, got, want)

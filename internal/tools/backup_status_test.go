@@ -390,17 +390,19 @@ func TestTeleporterImport_PlanFollowsTheArchivesGravityPath(t *testing.T) {
 func TestArchiveGravityPath(t *testing.T) {
 	for _, tc := range []struct {
 		name, toml, want string
-		ok               bool
+		ok, unreadable   bool
 	}{
-		{"files table", "[files]\n  gravity = \"/data/g.db\"\n", "/data/g.db", true},
-		{"literal string", "[files]\ngravity = '/data/g.db' # moved\n", "/data/g.db", true},
-		{"dotted key", "files.gravity = \"/data/g.db\"\n[dns]\n", "/data/g.db", true},
-		{"absent", "[files]\n  database = \"/x.db\"\n", "", false},
-		{"other table", "[webserver]\n  gravity = \"/data/g.db\"\n", "", false},
-		{"not gravity_tmp", "[files]\n  gravity_tmp = \"/tmp\"\n", "", false},
-		{"commented out", "[files]\n  # gravity = \"/data/g.db\"\n", "", false},
-		{"escaped", "[files]\n  gravity = \"/data/\\u0067.db\"\n", "", false},
-		{"empty", "[files]\n  gravity = \"\"\n", "", false},
+		{"files table", "[files]\n  gravity = \"/data/g.db\"\n", "/data/g.db", true, false},
+		{"literal string", "[files]\ngravity = '/data/g.db' # moved\n", "/data/g.db", true, false},
+		{"dotted key", "files.gravity = \"/data/g.db\"\n[dns]\n", "/data/g.db", true, false},
+		{"absent", "[files]\n  database = \"/x.db\"\n", "", false, false},
+		{"other table", "[webserver]\n  gravity = \"/data/g.db\"\n", "", false, false},
+		{"not gravity_tmp", "[files]\n  gravity_tmp = \"/tmp\"\n", "", false, false},
+		{"commented out", "[files]\n  # gravity = \"/data/g.db\"\n", "", false, false},
+		{"escaped", "[files]\n  gravity = \"/data/\\u0067.db\"\n", "/data/g.db", true, false},
+		{"escaped quote", "[files]\n  gravity = \"/data/\\\"q\\\".db\" # x\n", "/data/\"q\".db", true, false},
+		{"multi-line", "[files]\n  gravity = \"\"\"\n/data/g.db\"\"\"\n", "", false, true},
+		{"empty", "[files]\n  gravity = \"\"\n", "", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeArchiveEntries(t, [2]string{"etc/pihole/pihole.toml", tc.toml})
@@ -409,11 +411,25 @@ func TestArchiveGravityPath(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _ = zr.Close() }()
-			got, ok := archiveGravityPath(zr.File[0])
-			if got != tc.want || ok != tc.ok {
-				t.Errorf("archiveGravityPath = %q, %v; want %q, %v", got, ok, tc.want, tc.ok)
+			got, ok, unreadable := archiveGravityPath(zr.File[0])
+			if got != tc.want || ok != tc.ok || unreadable != tc.unreadable {
+				t.Errorf("archiveGravityPath = %q, %v, %v; want %q, %v, %v", got, ok, unreadable, tc.want, tc.ok, tc.unreadable)
 			}
 		})
+	}
+}
+
+func TestTeleporterImport_PlanSaysWhenItCannotReadTheArchivesGravityPath(t *testing.T) {
+	path := writeArchiveEntries(t,
+		[2]string{"etc/pihole/pihole.toml", "[files]\n  gravity = \"\"\"\n/data/g.db\"\"\"\n"},
+		[2]string{"etc/pihole/gravity.db", "data"},
+	)
+	rec := piholeHandler(map[string]any{
+		"/config/files/gravity": map[string]any{"config": map[string]any{"files": map[string]any{"gravity": "/etc/pihole/gravity.db"}}},
+	})
+	text := callTool(t, teleporterImportHandler, newTestClient(t, rec), map[string]any{"file_path": path, "mode": "plan"})
+	if !strings.Contains(text, "in a form this plan cannot read") {
+		t.Errorf("expected the plan to say it could not read files.gravity, got:\n%s", text)
 	}
 }
 

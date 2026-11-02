@@ -45,9 +45,8 @@ func currentBackupDir() string {
 const backupFilePrefix = "pihole-mcp-"
 
 // staleBackupAge is how long a default export or rollback snapshot is kept
-// before it is reaped. Both are the caller's to collect promptly (see
-// pihole_teleporter_export's description), so this is a safety net against an
-// unbounded temp directory, not the primary clean-up.
+// in the system temp directory before it is reaped, a safety net against an
+// unbounded temp directory. The export says so when it writes one there.
 const staleBackupAge = 24 * time.Hour
 
 // createBackupFile creates a new file for a backup and returns it open for
@@ -198,10 +197,14 @@ func relInBackupDir(dir, path, param string) (string, error) {
 }
 
 // reapStaleBackups deletes the backups this server created under a name of
-// its own choosing once they are older than staleBackupAge, from
-// PIHOLE_BACKUP_DIR or the system temp directory. Best-effort: a failure on
-// one file is skipped rather than failing the caller, since this runs ahead of
-// every new backup and a full disk is a worse failure to compound.
+// its own choosing in the system temp directory once they are older than
+// staleBackupAge. Best-effort: a failure on one file is skipped rather than
+// failing the caller, since this runs ahead of every new backup and a full
+// disk is a worse failure to compound.
+//
+// It does nothing when PIHOLE_BACKUP_DIR is set. That is a directory someone
+// chose to keep backups in, and cleaning it up deleted last week's backup
+// when this week's was taken.
 //
 // Only names this server generates are touched: backupFilePrefix, a kind,
 // and os.CreateTemp's random number. The patterns used to be broad enough to
@@ -217,10 +220,10 @@ func reapStaleBackups(keep ...string) {
 			kept = append(kept, info)
 		}
 	}
-	dir := currentBackupDir()
-	if dir == "" {
-		dir = os.TempDir()
+	if currentBackupDir() != "" {
+		return
 	}
+	dir := os.TempDir()
 	// Listed rather than globbed: a directory name holding "[" or "*" made
 	// the glob a pattern of its own, which matched and cleaned up a
 	// different directory.
@@ -248,6 +251,22 @@ files:
 		}
 		_ = os.Remove(m)
 	}
+}
+
+// reapedBackup reports whether reapStaleBackups will remove the file at path
+// once it is old enough: no PIHOLE_BACKUP_DIR is set, and the file is in the
+// system temp directory under a name of the form the server generates,
+// whether the server chose it or an output_path did.
+func reapedBackup(path string) bool {
+	if currentBackupDir() != "" || !generatedBackupName(filepath.Base(path)) {
+		return false
+	}
+	dir, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		return false
+	}
+	tmp, err := os.Stat(os.TempDir())
+	return err == nil && os.SameFile(dir, tmp)
 }
 
 // generatedBackupName reports whether name is one createBackupFile made

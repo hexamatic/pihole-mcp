@@ -92,3 +92,30 @@ func TestConfigTools_RefuseControlCharactersInKeys(t *testing.T) {
 	callToolExpectError(t, configAddValueHandler, newTestClient(t, rec), map[string]any{"element": "misc.dnsmasq_lines\x00x", "value": "a"})
 	rec.AssertNone(t, "", "")
 }
+
+func TestRefuseRiskySetting_SaysWhereEachCanBeChanged(t *testing.T) {
+	// FTL v6.8 refuses dnsmasq_lines through its API too, so pointing at the
+	// web interface sent people somewhere that cannot change it either.
+	c := newTestClient(t, piholeHandler(nil))
+	text := callToolExpectError(t, configAddValueHandler, c, map[string]any{"element": "misc.dnsmasq_lines", "value": "address=/lab/10.0.0.5"})
+	if !strings.Contains(text, "pihole-FTL --config") || strings.Contains(text, "web interface or") {
+		t.Errorf("a host-only setting should point at pihole.toml, got: %s", text)
+	}
+	text = callToolExpectError(t, configAddValueHandler, c, map[string]any{"element": "webserver.tls.cert", "value": "x"})
+	if !strings.Contains(text, "web interface or pihole.toml") {
+		t.Errorf("a setting the web interface can change should say so, got: %s", text)
+	}
+}
+
+func TestRefusedSettingsNamesEveryRiskySetting(t *testing.T) {
+	listed := strings.ToLower(refusedSettings)
+	for _, r := range riskySettings {
+		name := r.path
+		if strings.HasSuffix(name, ".") {
+			name += "*"
+		}
+		if !strings.Contains(listed, name) {
+			t.Errorf("the config tools' descriptions do not name %s", name)
+		}
+	}
+}

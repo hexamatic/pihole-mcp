@@ -498,7 +498,7 @@ Add domains to an allow or deny list. Supports bulk add via comma-separated doma
 
 *destructive*
 
-Update a domain entry's comment or enabled status. Changing type or kind creates a duplicate rather than moving the entry; delete the original separately if that is what you want.
+Update an existing domain rule's comment, enabled status or groups. type and kind identify the rule as it is; to move it to another, add it there and delete the original.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -742,7 +742,7 @@ Get Pi-hole configuration as dotted key/value lines. Name a section (dns, webser
 
 *destructive*
 
-Modify Pi-hole configuration. Provide nested JSON properties to change. Changes take effect immediately and can affect DNS behaviour system-wide.
+Modify Pi-hole configuration. Provide nested JSON properties to change, or dotted keys such as {"dns.blocking.active":true}. Changes take effect immediately and can affect DNS behaviour system-wide. Refused: misc.dnsmasq_lines, misc.etc_dnsmasq_d, webserver.advancedOpts, webserver.paths.*, webserver.serve_all, webserver.tls.cert, files.* and the password hashes.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -761,7 +761,7 @@ Get a specific configuration value by dotted path (e.g. dns.upstreams, webserver
 
 ### `pihole_config_add_value`
 
-Add a value to a configuration array such as dns.upstreams. For dns.hosts and dns.cnameRecords prefer pihole_local_dns_add and pihole_local_cname_add, which take structured arguments.
+Add a value to a configuration array such as dns.upstreams. For dns.hosts and dns.cnameRecords prefer pihole_local_dns_add and pihole_local_cname_add, which take structured arguments. Refuses the settings pihole_config_set refuses.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -773,7 +773,7 @@ Add a value to a configuration array such as dns.upstreams. For dns.hosts and dn
 
 *destructive*
 
-Remove a value from a configuration array such as dns.upstreams. For dns.hosts and dns.cnameRecords prefer pihole_local_dns_delete and pihole_local_cname_delete, which take structured arguments.
+Remove a value from a configuration array such as dns.upstreams. For dns.hosts and dns.cnameRecords prefer pihole_local_dns_delete and pihole_local_cname_delete, which take structured arguments. Refuses the settings pihole_config_set refuses.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -956,7 +956,7 @@ Toolset: `teleporter`
 
 ### `pihole_teleporter_export`
 
-Export a full Pi-hole configuration backup as a zip archive to a new file on the server's host, and return its path and size. It never replaces an existing file. The file persists after the call and is the caller's to move or delete; under Docker it is written inside the container unless output_path points at a mounted volume.
+Export a full Pi-hole configuration backup as a zip archive to a new file on the server's host, and return its path and size. It never replaces an existing file. A file this server names in the system temp directory is removed after a day; one in PIHOLE_BACKUP_DIR or at output_path is kept. Under Docker, only a mounted volume outlives the container.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|

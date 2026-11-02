@@ -86,13 +86,27 @@ func TimestampIn(unix float64, loc *time.Location) string {
 }
 
 // Clock formats a Unix timestamp as a time of day (15:04:05) in the
-// configured location, for lines whose date the reader already knows.
+// configured location, with the date in front when it is not today: FTL's
+// log buffer can span days, and a bare "03:12" reads as this morning.
 func Clock(unix float64) string {
 	loc := location.Load()
 	if loc == nil {
 		loc = time.Local
 	}
-	return time.Unix(int64(unix), 0).In(loc).Format("15:04:05")
+	return ClockAt(unix, time.Now().In(loc))
+}
+
+// ClockAt is Clock with the current time given, in the location to use.
+func ClockAt(unix float64, now time.Time) string {
+	t := time.Unix(int64(unix), 0).In(now.Location())
+	switch {
+	case t.Year() == now.Year() && t.YearDay() == now.YearDay():
+		return t.Format("15:04:05")
+	case t.Year() == now.Year():
+		return t.Format("2 Jan 15:04:05")
+	default:
+		return t.Format("2 Jan 2006 15:04:05")
+	}
 }
 
 // Untrusted makes text that came from the network safe to place in a reply:

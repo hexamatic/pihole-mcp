@@ -69,23 +69,22 @@ func TestConfigSet_RestartFalseSaysWhenTheChangeTakesEffect(t *testing.T) {
 	rec.AssertCount(t, "GET", "/info/ftl", 0)
 }
 
-func TestConfigSet_UnknownKeyIsAnError(t *testing.T) {
-	// FTL skips keys it does not know and answers 200, so a typo used to be
-	// reported as "Config updated".
-	c := newTestClient(t, piholeHandler(map[string]any{
+func TestConfigSet_UnknownKeyIsRefusedBeforeAnythingIsWritten(t *testing.T) {
+	// FTL skips keys it does not know, answers 200 and applies the rest. A
+	// typo used to be reported as "Config updated"; then as an error after
+	// the other keys had changed, so a retry restarted FTL a second time.
+	rec := piholeHandler(map[string]any{
 		"GET /config":   detailedConfig(),
-		"PATCH /config": configAfter(10000),
-	}))
-
-	text := callToolExpectError(t, configSetHandler, c, map[string]any{
-		"config": `{"dns":{"cache":{"sise":20000},"blocking":{"active":true}}}`,
+		"PATCH /config": configAfter(20000),
 	})
-	if !strings.Contains(text, "does not recognise dns.cache.sise") {
-		t.Errorf("error should name the ignored key, got:\n%s", text)
+
+	text := callToolExpectError(t, configSetHandler, newTestClient(t, rec), map[string]any{
+		"config": `{"dns":{"cache":{"size":20000},"blockng":{"active":true}}}`,
+	})
+	if !strings.Contains(text, "Pi-hole has no setting dns.blockng.active, so nothing was changed") {
+		t.Errorf("error should name the unknown key and say nothing changed, got:\n%s", text)
 	}
-	if !strings.Contains(text, "Already set: dns.blocking.active") {
-		t.Errorf("error should still account for the recognised key, got:\n%s", text)
-	}
+	rec.AssertNone(t, "PATCH", "")
 }
 
 func TestConfigSet_NothingChanged(t *testing.T) {

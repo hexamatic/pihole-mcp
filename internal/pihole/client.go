@@ -84,13 +84,69 @@ func WithHTTPClient(hc *http.Client) Option {
 // RedirectError is returned when Pi-hole, or something in front of it,
 // answers with a redirect.
 type RedirectError struct {
-	// Location is where the reply pointed, with any credentials hidden.
+	// Location is where the reply pointed, with any credentials hidden, or
+	// "" when it could not be read.
 	Location string
+	// Base is the address to set PIHOLE_URL to: Location up to its /api
+	// path. "" when Location is not under one, as for a sign-in page.
+	Base string
+	// Upgrade is set when the redirect moves the same host from http to
+	// https, as a proxy's automatic HTTPS does.
+	Upgrade bool
 }
 
 func (e *RedirectError) Error() string {
-	return fmt.Sprintf("pi-hole's address redirected to %s; set PIHOLE_URL to the address it redirects to, "+
-		"since this server does not follow redirects", e.Location)
+	const follow = "this server does not follow redirects"
+	switch {
+	case e.Location == "":
+		return "pi-hole's address answered with a redirect to an address that could not be read; " + follow +
+			", so set PIHOLE_URL to Pi-hole's own address"
+	case e.Upgrade:
+		return fmt.Sprintf("pi-hole's address redirects from http to https; set PIHOLE_URL to %s, since %s. "+
+			"Until then every request, the login included, goes out unencrypted before it is redirected", e.Base, follow)
+	case e.Base != "":
+		return fmt.Sprintf("pi-hole's address redirected to %s; set PIHOLE_URL to %s, since %s", e.Location, e.Base, follow)
+	default:
+		return fmt.Sprintf("pi-hole's address redirected to %s, which is not Pi-hole's API: probably a sign-in page "+
+			"or another service in front of it. This server needs the API itself, and %s, "+
+			"so set PIHOLE_URL to an address that reaches Pi-hole without redirecting", e.Location, follow)
+	}
+}
+
+// newRedirectError describes a redirect from the request URL from to loc,
+// with credentials and query left out. apiRoot is the path of PIHOLE_URL's
+// API root, such as "/api" or "/pihole/api", or "" when it is not known.
+func newRedirectError(from *url.URL, loc, apiRoot string) *RedirectError {
+	to, err := from.Parse(loc)
+	if err != nil {
+		return &RedirectError{}
+	}
+	to.User = nil
+	to.RawQuery = ""
+	to.Fragment = ""
+	e := &RedirectError{Location: to.String()}
+	// Where the redirect kept the endpoint the request was for, Pi-hole's
+	// address is whatever comes before it. A proxy prefix can itself hold
+	// "/api/", so the first one is only the fallback.
+	i := -1
+	if endpoint, ok := strings.CutPrefix(from.Path, apiRoot); ok && apiRoot != "" {
+		if tail := "/api" + endpoint; strings.HasSuffix(to.Path, tail) {
+			i = len(to.Path) - len(tail)
+		}
+	}
+	if i < 0 {
+		i = strings.Index(to.Path, "/api/")
+	}
+	if i < 0 && strings.HasSuffix(to.Path, "/api") {
+		i = len(to.Path) - len("/api")
+	}
+	if i >= 0 {
+		base := *to
+		base.Path, base.RawPath = to.Path[:i], ""
+		e.Base = base.String()
+		e.Upgrade = from.Scheme == "http" && to.Scheme == "https" && strings.EqualFold(from.Hostname(), to.Hostname())
+	}
+	return e
 }
 
 // noRedirectTransport turns any redirect into a *RedirectError before
@@ -99,6 +155,8 @@ func (e *RedirectError) Error() string {
 // credentials and all, so refusing in CheckRedirect alone was too late.
 type noRedirectTransport struct {
 	base http.RoundTripper
+	// apiRoot is the path of the client's API root, set by New.
+	apiRoot string
 }
 
 // RoundTrip sends req through the wrapped transport and returns a redirect
@@ -109,19 +167,7 @@ func (t *noRedirectTransport) RoundTrip(req *http.Request) (*http.Response, erro
 		return resp, err
 	}
 	_ = resp.Body.Close()
-	return nil, &RedirectError{Location: redactLocation(req.URL, resp.Header.Get("Location"))}
-}
-
-// redactLocation resolves a Location header against the request and returns
-// it without credentials or query, or a placeholder when it does not parse.
-func redactLocation(base *url.URL, loc string) string {
-	u, err := base.Parse(loc)
-	if err != nil {
-		return "an address that could not be read"
-	}
-	u.User = nil
-	u.RawQuery = ""
-	return u.String()
+	return nil, newRedirectError(req.URL, resp.Header.Get("Location"), t.apiRoot)
 }
 
 // refuseRedirect stops the HTTP client following a redirect. Go copies the
@@ -129,11 +175,12 @@ func redactLocation(base *url.URL, loc string) string {
 // host, and a 307 or 308 sends the request body again there, which for a
 // login is the password. Pi-hole's API never redirects, so a redirect means
 // a proxy or a wrong address, and the fix is to configure the final one.
-func refuseRedirect(req *http.Request, _ []*http.Request) error {
-	loc := *req.URL
-	loc.User = nil
-	loc.RawQuery = ""
-	return &RedirectError{Location: loc.String()}
+func refuseRedirect(req *http.Request, via []*http.Request) error {
+	from := req.URL
+	if len(via) > 0 {
+		from = via[len(via)-1].URL
+	}
+	return newRedirectError(from, req.URL.String(), "")
 }
 
 // send performs one HTTP request. A refused redirect comes back as the bare
@@ -171,6 +218,11 @@ func New(baseURL, password string, opts ...Option) *Client {
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+	if t, ok := c.httpClient.Transport.(*noRedirectTransport); ok {
+		if u, err := url.Parse(c.baseURL); err == nil {
+			t.apiRoot = strings.TrimRight(u.Path, "/") + "/api"
+		}
 	}
 	return c
 }

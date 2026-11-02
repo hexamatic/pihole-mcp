@@ -50,7 +50,7 @@ func RegisterLogs(s *server.MCPServer, r *pihole.Registry) {
 				mcp.Description("Only show lines at this severity or worse: warning includes errors (default all).")))
 		}
 		opts = append(opts, mcp.WithReadOnlyHintAnnotation(true))
-		addTool(s, r, mcp.NewTool(l.name, opts...), logHandler(r, l.endpoint))
+		addTool(s, r, mcp.NewTool(l.name, opts...), logHandler(r, l.endpoint, l.levels))
 	}
 }
 
@@ -60,7 +60,7 @@ func RegisterLogs(s *server.MCPServer, r *pihole.Registry) {
 // and report the cursor past the last line, so the newest lines, the ones a
 // caller is usually after, were never shown, and polling from the cursor
 // skipped everything after the 50th line for good.
-func logHandler(r *pihole.Registry, endpoint string) server.ToolHandlerFunc {
+func logHandler(r *pihole.Registry, endpoint string, levels bool) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		c, err := getInstance(req, r)
 		if err != nil {
@@ -71,6 +71,12 @@ func logHandler(r *pihole.Registry, endpoint string) server.ToolHandlerFunc {
 			return mcp.NewToolResultError("Invalid " + err.Error()), nil
 		}
 		level := req.GetString("level", "all")
+		// dnsmasq and web server lines carry no level, so filtering them
+		// would drop every line and read as an all-clear.
+		if !levels && level != "all" {
+			return mcp.NewToolResultError("This log's lines carry no level, so it cannot be filtered by level; " +
+				"only pihole_logs_ftl can."), nil
+		}
 		var keep []string
 		switch level {
 		case "all":

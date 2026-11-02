@@ -20,17 +20,26 @@ type riskySetting struct {
 	// setting under it.
 	path string
 	why  string
+	// hostOnly marks a setting FTL v6.8 itself refuses through its API, the
+	// web interface included (FLAG_API_READ_ONLY in src/config/config.c).
+	hostOnly bool
 }
 
 var riskySettings = []riskySetting{
-	{"misc.dnsmasq_lines", "it passes lines straight to dnsmasq, some of which run programs or read files (GHSA-ww5x-xx4x-qvjr)"},
-	{"misc.etc_dnsmasq_d", "it makes dnsmasq load every file in /etc/dnsmasq.d"},
-	{"webserver.advancedopts", "it passes options straight to the web server, some of which run programs (GHSA-2794-hrj8-5jg9)"},
-	{"webserver.paths.", "it moves the files the web server serves, which has been used to read any file (GHSA-gx63-h4w6-f46g, GHSA-2h7g-g549-hf74)"},
-	{"webserver.serve_all", "it makes the web server serve every file under its root (GHSA-2h7g-g549-hf74)"},
-	{"webserver.tls.cert", "it points the web server at a file to read"},
-	{"files.", "it moves Pi-hole's databases and logs to other files (GHSA-gx63-h4w6-f46g)"},
+	{"misc.dnsmasq_lines", "it passes lines straight to dnsmasq, some of which run programs or read files (GHSA-ww5x-xx4x-qvjr)", true},
+	{"misc.etc_dnsmasq_d", "it makes dnsmasq load every file in /etc/dnsmasq.d", false},
+	{"webserver.advancedopts", "it passes options straight to the web server, some of which run programs (GHSA-2794-hrj8-5jg9)", true},
+	{"webserver.paths.", "it moves the files the web server serves, which has been used to read any file (GHSA-gx63-h4w6-f46g, GHSA-2h7g-g549-hf74)", true},
+	{"webserver.serve_all", "it makes the web server serve every file under its root (GHSA-2h7g-g549-hf74)", false},
+	{"webserver.tls.cert", "it points the web server at a file to read", false},
+	{"files.", "it moves Pi-hole's databases and logs to other files (GHSA-gx63-h4w6-f46g)", false},
 }
+
+// refusedSettings names the settings the config write tools refuse, for
+// their descriptions. TestRefusedSettingsNamesEveryRiskySetting keeps it in
+// step with riskySettings.
+const refusedSettings = "misc.dnsmasq_lines, misc.etc_dnsmasq_d, webserver.advancedOpts, webserver.paths.*, " +
+	"webserver.serve_all, webserver.tls.cert, files.* and the password hashes"
 
 // riskySettingFor returns the entry covering a dotted config path, if any.
 func riskySettingFor(path string) (riskySetting, bool) {
@@ -44,8 +53,13 @@ func riskySettingFor(path string) (riskySetting, bool) {
 }
 
 func refuseRiskySetting(path string, r riskySetting) *mcp.CallToolResult {
-	return mcp.NewToolResultError(fmt.Sprintf("Refusing to change %s: %s. Nothing was changed. "+
-		"Change it in Pi-hole's web interface or pihole.toml if you mean to.", normaliseConfigPath(path), r.why))
+	where := "Change it in Pi-hole's web interface or pihole.toml if you mean to."
+	if r.hostOnly {
+		where = "From v6.8 Pi-hole refuses it through its API as well, the web interface included: set it in pihole.toml, " +
+			"through an environment variable or with pihole-FTL --config on the Pi-hole host."
+	}
+	return mcp.NewToolResultError(fmt.Sprintf("Refusing to change %s: %s. Nothing was changed. %s",
+		normaliseConfigPath(path), r.why, where))
 }
 
 // riskyChange returns the first risky setting a config_set payload would

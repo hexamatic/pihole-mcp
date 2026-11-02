@@ -89,6 +89,8 @@ brew install hexamatic/tap/pihole-mcp
 
 Installs on both macOS and Linux (Homebrew on Linux). On macOS the cask clears the
 quarantine attribute during install, so the binary runs without a Gatekeeper prompt.
+From v0.10.0 the macOS binaries need macOS 13 Ventura or later; v0.9.0 is the last
+release that runs on macOS 12.
 
 ### Scoop (Windows)
 
@@ -123,7 +125,7 @@ sudo rpm -i pihole-mcp_X.Y.Z_linux_amd64.rpm
 
 ### Binary Download
 
-Pre-built binaries for Linux, macOS, and Windows (amd64 and arm64) are available on the [Releases](https://github.com/hexamatic/pihole-mcp/releases) page.
+Pre-built binaries for Linux, macOS 13 or later, and Windows (amd64 and arm64) are available on the [Releases](https://github.com/hexamatic/pihole-mcp/releases) page.
 
 Releases are checksummed, signed with keyless cosign, and ship SPDX SBOMs and SLSA build provenance. See [SECURITY.md](SECURITY.md#verifying-release-artefacts) for the verification commands.
 
@@ -161,7 +163,7 @@ It exits non-zero if any instance fails, and prints what to change. Worth runnin
 | `PIHOLE_RATE_LIMIT` | No | `120` | Requests per minute per MCP session on the HTTP/SSE transports, under a per-address ceiling of four times that. Clients on MCP revision `2026-07-28` send no session, so only the ceiling applies to them. `0` disables. |
 | `PIHOLE_ALLOWED_ORIGINS` | No | `localhost,127.0.0.1,[::1]` | Comma-separated Origin/Host allowlist for HTTP/SSE transports. The literal `*` disables enforcement (unsafe). Not authentication. |
 | `PIHOLE_TRUSTED_PROXIES` | No | - | Comma-separated IPs or CIDR blocks whose `X-Forwarded-For` the rate limiter believes. Unset means the header is ignored. |
-| `PIHOLE_BACKUP_DIR` | No | - | Absolute path of a directory to keep teleporter backups in. When set, `pihole_teleporter_export` writes only inside it and `pihole_teleporter_import` reads only from it. Unset, backups go to the system temp directory by default and any absolute path is accepted. |
+| `PIHOLE_BACKUP_DIR` | No | - | Absolute path of an existing directory to keep teleporter backups in. When set, `pihole_teleporter_export` writes only inside it and `pihole_teleporter_import` reads only from it, and the server never removes anything there. Unset, backups go to the system temp directory by default, where the server removes its own after a day, and any absolute path is accepted. |
 | `PIHOLE_TLS_SKIP_VERIFY` | No | `false` | Disable TLS certificate verification for Pi-hole connections. Only for instances serving self-signed certificates. A trusted certificate is preferable where possible. |
 | `TZ` | No | System timezone (UTC in Docker) | IANA timezone for rendered timestamps (e.g. `Australia/Adelaide`). Timezone data is embedded in the binary, so this works in the Docker image out of the box. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | - | OpenTelemetry collector endpoint. Setting it enables tracing; ignored in slim builds. |
@@ -424,6 +426,7 @@ For clients that support Docker-based MCP servers:
         "-e", "PIHOLE_URL=http://192.168.1.2",
         "-e", "PIHOLE_PASSWORD=your-password",
         "-e", "TZ=Australia/Adelaide",
+        "-e", "PIHOLE_BACKUP_DIR=/backups",
         "-v", "/host/path/for/backups:/backups",
         "ghcr.io/hexamatic/pihole-mcp:latest"]
     }
@@ -433,7 +436,7 @@ For clients that support Docker-based MCP servers:
 
 Useful when you don't have Go installed or want to run the server on a remote host.
 
-The `-v` mount is there for `pihole_teleporter_export`. Without it, a backup is written inside the container's own filesystem and is gone as soon as `--rm` removes the container on exit. Pass `output_path` pointing inside the mount (e.g. `/backups/pihole.zip`) to keep it on the host.
+The `-v` mount is there for `pihole_teleporter_export`. Without it, a backup is written inside the container's own filesystem and is gone as soon as `--rm` removes the container on exit. Add `-e PIHOLE_BACKUP_DIR=/backups` to keep every backup on the host under a name of its own, or pass an `output_path` inside the mount (e.g. `/backups/pihole-2026-11-02.zip`). An export never replaces an existing file, so a fixed `output_path` works only once.
 
 To check the container can reach your Pi-hole, run the same image with `-check`. Remember that `localhost` inside a container is the container itself, which is the usual cause of a failure here:
 
