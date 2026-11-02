@@ -63,7 +63,7 @@ func RegisterSync(s *server.MCPServer, r *pihole.Registry) {
 
 	diffTool := mcp.NewTool("pihole_instance_diff",
 		mcp.WithTitleAnnotation("Compare Instances"),
-		mcp.WithDescription("Compare configuration between two Pi-hole instances (adlists, allow/deny rules, groups, clients, local DNS). Read-only — reports what a sync would change."),
+		mcp.WithDescription("Compare configuration between two Pi-hole instances (adlists, allow/deny rules, groups, clients, local DNS). Read-only: reports what a sync would change. Which groups an entry belongs to is not compared."),
 		mcp.WithString("source", mcp.Description("Source-of-truth instance name. Default: the first configured instance.")),
 		mcp.WithString("target", mcp.Required(), mcp.Description("Instance compared against the source.")),
 		mcp.WithString("categories", mcp.Description(syncCategoriesDesc)),
@@ -79,7 +79,7 @@ func RegisterSync(s *server.MCPServer, r *pihole.Registry) {
 
 	syncTool := mcp.NewTool("pihole_instance_sync",
 		mcp.WithTitleAnnotation("Sync Instances"),
-		mcp.WithDescription("Reconcile a target Pi-hole towards a source. Runs as a dry-run plan by default; re-call with mode=apply and the returned confirm_token to apply. Pushes one direction only (source to target)."),
+		mcp.WithDescription("Reconcile a target Pi-hole towards a source. Runs as a dry-run plan by default; re-call with mode=apply and the returned confirm_token to apply. Pushes one direction only (source to target). Which groups an entry belongs to is not synced, since group IDs differ between Pi-holes; set them with the groups parameter of the add and update tools."),
 		mcp.WithString("source", mcp.Description("Source-of-truth instance name. Default: the first configured instance.")),
 		mcp.WithString("target", mcp.Required(), mcp.Description("Instance to update. Only this instance is written to.")),
 		mcp.WithString("categories", mcp.Description(syncCategoriesDesc)),

@@ -492,6 +492,7 @@ Add domains to an allow or deny list. Supports bulk add via comma-separated doma
 | `domain` | string | Yes | Domain(s) to add. Comma-separated for bulk when kind is exact; a regex is taken whole. |
 | `comment` | string | No | Comment for the entry. |
 | `enabled` | boolean | No | Enabled state (default true). |
+| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids". Omit to leave them as they are; a new entry joins Default. |
 
 ### `pihole_domains_update`
 
@@ -506,6 +507,7 @@ Update a domain entry's comment or enabled status. Changing type or kind creates
 | `domain` | string | Yes | Domain to update. |
 | `comment` | string | No | Updated comment. |
 | `enabled` | boolean | No | Updated enabled status. |
+| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids". Omit to leave them as they are; a new entry joins Default. |
 
 ### `pihole_domains_delete`
 
@@ -622,17 +624,19 @@ Add a client by IP, MAC, hostname, CIDR subnet, or interface name (prefixed with
 |---|---|---|---|
 | `client` | string | Yes | Client identifier. |
 | `comment` | string | No | Optional comment. |
+| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids". Omit to leave them as they are; a new entry joins Default. |
 
 ### `pihole_clients_update`
 
 *destructive*
 
-Update a configured client's comment. Group assignments are managed through the group tools.
+Update a configured client's comment or the groups it belongs to. Fields left out keep their current values.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `client` | string | Yes | Client identifier. |
 | `comment` | string | No | Updated comment. |
+| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids". Omit to leave them as they are; a new entry joins Default. |
 
 ### `pihole_clients_delete`
 
@@ -682,6 +686,7 @@ Subscribe to a new blocklist or allowlist URL. Run pihole_action_gravity_update 
 | `type` | string | Yes | 'allow' or 'block'. |
 | `comment` | string | No | Comment for the list. |
 | `enabled` | boolean | No | Enabled state (default true). |
+| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids". Omit to leave them as they are; a new entry joins Default. |
 
 ### `pihole_lists_update`
 
@@ -695,6 +700,7 @@ Update a blocklist or allowlist entry's comment or enabled status.
 | `type` | string | Yes | 'allow' or 'block'. |
 | `comment` | string | No | Updated comment. |
 | `enabled` | boolean | No | Updated enabled status. |
+| `groups` | string | No | Comma-separated names of the groups to put the entry in, replacing the groups it is in now, e.g. "Default,Kids". Omit to leave them as they are; a new entry joins Default. |
 
 ### `pihole_lists_delete`
 
@@ -1001,7 +1007,7 @@ Toolset: `instance`
 
 *read-only · structured output*
 
-Compare configuration between two Pi-hole instances (adlists, allow/deny rules, groups, clients, local DNS). Read-only — reports what a sync would change.
+Compare configuration between two Pi-hole instances (adlists, allow/deny rules, groups, clients, local DNS). Read-only: reports what a sync would change. Which groups an entry belongs to is not compared.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -1014,7 +1020,7 @@ Compare configuration between two Pi-hole instances (adlists, allow/deny rules, 
 
 *destructive · structured output*
 
-Reconcile a target Pi-hole towards a source. Runs as a dry-run plan by default; re-call with mode=apply and the returned confirm_token to apply. Pushes one direction only (source to target).
+Reconcile a target Pi-hole towards a source. Runs as a dry-run plan by default; re-call with mode=apply and the returned confirm_token to apply. Pushes one direction only (source to target). Which groups an entry belongs to is not synced, since group IDs differ between Pi-holes; set them with the groups parameter of the add and update tools.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|

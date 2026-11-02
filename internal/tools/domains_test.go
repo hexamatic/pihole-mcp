@@ -54,14 +54,16 @@ func TestDomainsList_Full(t *testing.T) {
 				map[string]any{"domain": "example.com", "type": "deny", "kind": "exact", "enabled": true, "comment": "", "id": 5, "groups": []any{0, 2}},
 			},
 		},
+		"/groups": testGroups(),
 	}))
 
 	text := callTool(t, domainsListHandler, c, map[string]any{"detail": "full"})
 	if !strings.Contains(text, "id=5") {
 		t.Errorf("expected id in full detail, got: %s", text)
 	}
-	if !strings.Contains(text, "groups=") {
-		t.Errorf("expected groups in full detail, got: %s", text)
+	// Names, not IDs, which mean nothing to a reader.
+	if !strings.Contains(text, "groups: Default, Kids") {
+		t.Errorf("expected group names in full detail, got: %s", text)
 	}
 }
 
